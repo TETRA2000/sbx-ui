@@ -22,6 +22,7 @@ struct SessionPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("backToDashboard")
 
                 Spacer()
             }
@@ -36,9 +37,6 @@ struct SessionPanelView: View {
 
             // Agent status bar
             AgentStatusBar(sandbox: sandbox)
-
-            // Chat input
-            ChatInputView(ptyManager: ptyManager)
         }
         .background(Color.surfaceLowest)
         .task {

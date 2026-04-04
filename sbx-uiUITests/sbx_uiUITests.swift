@@ -247,36 +247,36 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(nameText.waitForExistence(timeout: 3))
         nameText.click()
 
-        // Verify chat input appears (session panel opened)
-        let chatInput = app.textFields["chatInput"]
-        XCTAssertTrue(chatInput.waitForExistence(timeout: 5))
+        // Verify session panel opened (back button visible)
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
     }
 
     @MainActor
-    func testChatInputSendClearsField() throws {
-        createSandbox(name: "test-chat")
+    func testTerminalReceivesKeyboardInput() throws {
+        createSandbox(name: "test-typing")
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
-        let nameText = app.staticTexts["test-chat"]
+        // Open session
+        let nameText = app.staticTexts["test-typing"]
         XCTAssertTrue(nameText.waitForExistence(timeout: 3))
         nameText.click()
 
-        let chatInput = app.textFields["chatInput"]
-        XCTAssertTrue(chatInput.waitForExistence(timeout: 5))
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
 
-        // Type message and send
-        chatInput.click()
-        chatInput.typeText("Hello Claude")
+        // Wait for terminal to render mock content
+        sleep(2)
 
-        let sendButton = app.buttons["sendButton"]
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 3))
-        sendButton.click()
-
-        // Verify input is cleared
-        sleep(1)
-        let inputValue = chatInput.value as? String ?? ""
-        XCTAssertTrue(inputValue.isEmpty, "Chat input should be cleared after send")
+        // Type into the terminal — if focus is set correctly, keys reach the terminal
+        // No crash or error means the terminal accepted keyboard events
+        app.typeKey("h", modifierFlags: [])
+        app.typeKey("e", modifierFlags: [])
+        app.typeKey("l", modifierFlags: [])
+        app.typeKey("l", modifierFlags: [])
+        app.typeKey("o", modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
     }
 }

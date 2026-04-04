@@ -24,12 +24,17 @@ struct TerminalViewWrapper: NSViewRepresentable {
         let manager = ptyManager
         DispatchQueue.main.async {
             manager.attach(name: name, terminalView: terminalView, isMock: mock)
+            terminalView.window?.makeFirstResponder(terminalView)
         }
 
         return terminalView
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
+        if !context.coordinator.didFocus, let window = nsView.window {
+            window.makeFirstResponder(nsView)
+            context.coordinator.didFocus = true
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -38,5 +43,6 @@ struct TerminalViewWrapper: NSViewRepresentable {
 
     class Coordinator {
         var terminalView: LocalProcessTerminalView?
+        var didFocus = false
     }
 }

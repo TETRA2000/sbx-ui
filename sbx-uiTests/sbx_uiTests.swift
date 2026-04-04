@@ -357,6 +357,22 @@ struct MockPtyEmitterTests {
     }
 }
 
+// MARK: - TerminalViewWrapper Coordinator Tests
+
+struct TerminalViewWrapperTests {
+    @Test func coordinatorStartsUnfocused() {
+        let coordinator = TerminalViewWrapper.Coordinator()
+        #expect(coordinator.didFocus == false)
+        #expect(coordinator.terminalView == nil)
+    }
+
+    @Test func coordinatorDidFocusCanBeSet() {
+        let coordinator = TerminalViewWrapper.Coordinator()
+        coordinator.didFocus = true
+        #expect(coordinator.didFocus == true)
+    }
+}
+
 // MARK: - SbxOutputParser Tests
 
 struct SbxOutputParserTests {

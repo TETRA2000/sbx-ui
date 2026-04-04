@@ -34,6 +34,7 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 - Progress check: `/kiro:spec-status {feature}` (use anytime)
 
 ## Development Rules
+- **ALWAYS write and run tests after ANY code change** — this is non-negotiable. Write both unit tests and UI/E2E tests as appropriate, then run the full test suite to confirm no regressions before considering work done.
 - 3-phase approval workflow: Requirements → Design → Tasks → Implementation
 - Human review required each phase; use `-y` only for intentional fast-track
 - Keep steering current and verify alignment with `/kiro:spec-status`
@@ -65,7 +66,11 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
 - `ENABLE_APP_SANDBOX = NO` — required for CLI spawning
 - SwiftTerm 1.13+ via SPM for terminal rendering
 
-### Running the App
+### Building & Running
+- **Prefer Xcode MCP tools** over `xcodebuild` CLI
+  - `mcp__xcode__XcodeListWindows` → get `tabIdentifier`
+  - `mcp__xcode__BuildProject` → build
+  - `mcp__xcode__RunAllTests` / `mcp__xcode__RunSomeTests` → run tests
 - Open `sbx-ui.xcodeproj` in Xcode
 - Set `SBX_MOCK=1` in scheme environment variables for development without Docker
 - Build and run (Cmd+R)
@@ -77,9 +82,13 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
 - **UI/E2E tests**: `sbx-uiUITests/sbx_uiUITests.swift` — XCTest (`XCTestCase`, `XCTAssertTrue`)
 - All tests run against `MockSbxService` (no Docker required)
 
+### Test Strategy
+- **Always write and run tests after any code change** — both unit tests and UI/E2E tests
+- Run the full suite to confirm no regressions before considering work done
+
 ### Running Tests
-- Xcode: Product → Test (Cmd+U) runs all 72 tests
-- Xcode MCP: `RunAllTests` or `RunSomeTests` with target/identifier
+- Xcode: Product → Test (Cmd+U) runs all 76 tests
+- Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
 
 ### Writing Unit Tests
 
@@ -161,4 +170,4 @@ private func createSandbox(name: String) {
 - **Create Sheet**: `browseButton`, `sandboxNameField`, `deployButton`
 - **Policies**: `addPolicyButton`, `removePolicy-{resources}`, `domainInput`, `decisionPicker`, `submitPolicyButton`, `logSandboxFilter`, `blockedOnlyToggle`
 - **Ports**: `addPortButton`, `hostPortField`, `sbxPortField`, `publishPortButton`, `unpublishPort-{hostPort}`
-- **Session**: `terminalView`, `agentStatusBar`, `chatInput`, `sendButton`
+- **Session**: `terminalView`, `agentStatusBar`, `backToDashboard`
