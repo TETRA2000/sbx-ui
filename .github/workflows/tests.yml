@@ -30,7 +30,7 @@ jobs:
       - name: Setup mock-sbx
         run: |
           chmod +x tools/mock-sbx
-          ls -la tools/sbx  # Verify symlink exists
+          ls -la tools/sbx
 
       - name: Test mock-sbx script
         run: bash tools/mock-sbx-tests.sh
@@ -43,49 +43,36 @@ jobs:
 
       - name: Build for testing
         run: |
-          set -o pipefail
           xcodebuild build-for-testing \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
             -skipPackagePluginValidation \
-            2>&1 | xcpretty --color
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Run Unit Tests
         run: |
-          set -o pipefail
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
-            -only-testing:sbx-uiTests \
-            2>&1 | xcpretty --color --report junit --output test-results/unit-tests.xml
+            -only-testing:sbx-uiTests
 
       - name: Run UI Tests (in-memory mock)
         run: |
-          set -o pipefail
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
             -only-testing:sbx-uiUITests/sbx_uiUITests \
-            -only-testing:sbx-uiUITests/sbx_uiUITestsLaunchTests \
-            2>&1 | xcpretty --color --report junit --output test-results/ui-tests.xml
+            -only-testing:sbx-uiUITests/sbx_uiUITestsLaunchTests
 
       - name: Run UI Tests (CLI mock)
         run: |
-          set -o pipefail
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
-            -only-testing:sbx-uiUITests/sbx_uiCliMockUITests \
-            2>&1 | xcpretty --color --report junit --output test-results/cli-mock-ui-tests.xml
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: test-results/
-          retention-days: 7
+            -only-testing:sbx-uiUITests/sbx_uiCliMockUITests
