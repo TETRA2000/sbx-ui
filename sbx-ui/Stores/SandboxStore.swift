@@ -19,6 +19,7 @@ import SwiftUI
             error = nil
         } catch {
             self.error = error.localizedDescription
+            appLog(.error, "SandboxStore", "fetchSandboxes failed", detail: error.localizedDescription)
         }
     }
 
@@ -26,23 +27,28 @@ import SwiftUI
     func createSandbox(workspace: String, name: String?) async throws -> Sandbox {
         loading = true
         defer { loading = false }
+        appLog(.info, "SandboxStore", "Creating sandbox", detail: "workspace=\(workspace) name=\(name ?? "<auto>")")
         let opts = RunOptions(name: name)
         let sandbox = try await service.run(agent: "claude", workspace: workspace, opts: opts)
+        appLog(.info, "SandboxStore", "Sandbox created: \(sandbox.name) [\(sandbox.status.rawValue)]")
         await fetchSandboxes()
         return sandbox
     }
 
     func stopSandbox(name: String) async throws {
+        appLog(.info, "SandboxStore", "Stopping sandbox: \(name)")
         try await service.stop(name: name)
         await fetchSandboxes()
     }
 
     func removeSandbox(name: String) async throws {
+        appLog(.info, "SandboxStore", "Removing sandbox: \(name)")
         try await service.rm(name: name)
         await fetchSandboxes()
     }
 
     func publishPort(name: String, hostPort: Int, sbxPort: Int) async throws {
+        appLog(.info, "SandboxStore", "Publishing port \(hostPort):\(sbxPort) on \(name)")
         _ = try await service.portsPublish(name: name, hostPort: hostPort, sbxPort: sbxPort)
         await fetchSandboxes()
     }
@@ -54,6 +60,7 @@ import SwiftUI
 
     func startPolling() {
         stopPolling()
+        appLog(.debug, "SandboxStore", "Polling started (3s interval)")
         pollingTask = Task {
             while !Task.isCancelled {
                 await fetchSandboxes()

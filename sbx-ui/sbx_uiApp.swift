@@ -7,6 +7,7 @@ struct sbx_uiApp: App {
     @State private var sessionStore: SessionStore
     @State private var settingsStore = SettingsStore()
     @State private var toastManager = ToastManager()
+    @State private var logStore = LogStore.shared
 
     init() {
         let service = ServiceFactory.create()

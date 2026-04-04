@@ -35,6 +35,7 @@ struct CliExecutor: CliExecutorProtocol, Sendable {
 
     func exec(command: String, args: [String]) async throws -> CliResult {
         let resolvedCommand = resolveCommand(command)
+        let cmdLine = "\(resolvedCommand) \(args.joined(separator: " "))"
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -60,22 +61,31 @@ struct CliExecutor: CliExecutorProtocol, Sendable {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
-            process.terminationHandler = { process in
+            process.terminationHandler = { [cmdLine] process in
                 let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                 let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
                 let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 
-                continuation.resume(returning: CliResult(
-                    stdout: stdout,
-                    stderr: stderr,
-                    exitCode: process.terminationStatus
-                ))
+                let result = CliResult(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
+                DispatchQueue.main.async {
+                    if result.exitCode != 0 {
+                        appLog(.error, "CLI", "$ \(cmdLine) → exit \(result.exitCode)",
+                               detail: "stderr: \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))\nstdout: \(stdout.prefix(500))")
+                    } else {
+                        appLog(.debug, "CLI", "$ \(cmdLine) → exit 0",
+                               detail: stdout.count > 200 ? "\(stdout.prefix(200))..." : (stdout.isEmpty ? nil : stdout.trimmingCharacters(in: .whitespacesAndNewlines)))
+                    }
+                }
+                continuation.resume(returning: result)
             }
 
             do {
                 try process.run()
             } catch {
+                DispatchQueue.main.async {
+                    appLog(.error, "CLI", "Failed to launch: \(cmdLine)", detail: error.localizedDescription)
+                }
                 continuation.resume(throwing: SbxServiceError.cliError("Failed to launch process: \(error.localizedDescription)"))
             }
         }

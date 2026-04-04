@@ -13,6 +13,7 @@ final class PtySessionManager {
     }
 
     func attach(name: String, terminalView: LocalProcessTerminalView, isMock: Bool) {
+        appLog(.info, "PTY", "Attaching session: \(name) (mode: \(isMock ? "mock" : "real"))")
         // Dispose existing session for this name
         if sessions[name] != nil {
             dispose(name: name)
@@ -62,6 +63,7 @@ final class PtySessionManager {
 
     func dispose(name: String) {
         guard let session = sessions[name] else { return }
+        appLog(.info, "PTY", "Disposing session: \(name)")
         session.emitter?.dispose()
         sessions.removeValue(forKey: name)
     }

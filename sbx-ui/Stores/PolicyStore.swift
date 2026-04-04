@@ -26,15 +26,18 @@ import Foundation
             error = nil
         } catch {
             self.error = error.localizedDescription
+            appLog(.error, "PolicyStore", "fetchPolicies failed", detail: error.localizedDescription)
         }
     }
 
     func addAllow(resources: String) async throws {
+        appLog(.info, "PolicyStore", "Adding allow rule: \(resources)")
         _ = try await service.policyAllow(resources: resources)
         await fetchPolicies()
     }
 
     func addDeny(resources: String) async throws {
+        appLog(.info, "PolicyStore", "Adding deny rule: \(resources)")
         _ = try await service.policyDeny(resources: resources)
         await fetchPolicies()
     }
