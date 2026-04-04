@@ -2,11 +2,11 @@
 
 ## Overview
 
-**Purpose**: sbx-ui delivers a desktop GUI that wraps the Docker Sandbox (`sbx`) CLI, enabling developers to manage sandbox lifecycles, network policies, port forwarding, and Claude Code agent sessions without terminal interaction.
+**Purpose**: sbx-ui delivers a macOS native desktop GUI that wraps the Docker Sandbox (`sbx`) CLI, enabling developers to manage sandbox lifecycles, network policies, port forwarding, and Claude Code agent sessions without terminal interaction.
 
 **Users**: Individual developers and small teams using Docker Sandbox for AI-assisted coding. Primary workflow: create a project from a local Git repo, launch Claude Code, interact via chat-style UI, manage security policies, and inspect sandbox state — all from a single application window.
 
-**Impact**: Introduces a new Electron application. No existing systems are modified. The app wraps the `sbx` CLI as an external dependency and can operate entirely against an in-memory mock for development and testing.
+**Impact**: Introduces a new macOS native application built with SwiftUI and Swift. No existing systems are modified. The app wraps the `sbx` CLI as an external dependency and can operate entirely against an in-memory mock for development and testing.
 
 ### Goals
 - Provide a visual interface for all Phase 1 `sbx` CLI operations (lifecycle, policies, ports, sessions)
@@ -24,6 +24,7 @@
 - Shared workspaces across agents (Phase 2)
 - Organization-level governance UI (Phase 2)
 - Windows and Linux support (Phase 2)
+- Mac App Store distribution (requires App Sandbox, incompatible with CLI spawning)
 
 ## Architecture
 
@@ -31,45 +32,50 @@
 
 ### Architecture Pattern & Boundary Map
 
-**Selected pattern**: Layered architecture following Electron's native Main/Preload/Renderer process boundary. The `SbxService` interface acts as the primary ports-and-adapters boundary between the application and the `sbx` CLI, enabling transparent mock/real implementation swapping.
+**Selected pattern**: Single-process SwiftUI application with `@Observable` model layer and protocol-based service injection. `SbxServiceProtocol` acts as the primary ports-and-adapters boundary between the application and the `sbx` CLI, enabling transparent mock/real implementation swapping.
 
 **Domain boundaries**:
-- **Main Process**: Owns all system I/O — CLI spawning, PTY management, filesystem dialogs, external terminal launching. No UI logic.
-- **Preload**: Thin typed bridge. Maps IPC channels to the `window.sbx` API. No business logic.
-- **Renderer**: Owns all UI state and presentation. Communicates exclusively through `window.sbx`. No direct Node.js or Electron main-process access.
+- **Service Layer**: Owns all system I/O — CLI spawning, PTY management, external terminal launching. Defined by Swift protocols. Runs on background actors for thread safety.
+- **Model Layer**: `@Observable` classes managing domain state (sandboxes, policies, sessions). Bridge between services and views.
+- **View Layer**: SwiftUI views. Reads `@Observable` models. No direct service access — all mutations go through model methods.
 
 **Existing patterns preserved**: N/A (greenfield project)
 
-**New components rationale**: All components are new. The SbxService interface is the foundational abstraction enabling mock-driven development and E2E testing.
+**New components rationale**: All components are new. SbxServiceProtocol is the foundational abstraction enabling mock-driven development and E2E testing.
 
-**Steering compliance**: Follows `tech.md` stack choices (Electron 36+, React 19, Zustand, xterm.js, node-pty, electron-vite). Follows `structure.md` directory organization (layer-first, domain-grouped components, one store per domain).
+**Steering compliance**: macOS native (SwiftUI + Swift), replacing the original Electron stack. Follows "The Technical Monolith" design system via SwiftUI color/font extensions.
 
 ```mermaid
 graph TB
-    subgraph Renderer["Renderer - React SPA"]
-        UI_Layout[Shell Layout]
-        UI_Dashboard[Dashboard Components]
-        UI_Policies[Policy Components]
-        UI_Session[Session Components]
-        UI_Ports[Port Components]
-        Stores[Zustand Stores]
-        XTerm[xterm.js]
+    subgraph Views["SwiftUI Views"]
+        V_Shell[Shell - NavigationSplitView]
+        V_Dashboard[Dashboard Views]
+        V_Policies[Policy Views]
+        V_Session[Session Views]
+        V_Ports[Port Views]
+        V_Terminal[TerminalViewWrapper - NSViewRepresentable]
     end
 
-    subgraph Preload["Preload - contextBridge"]
-        Bridge[PreloadBridge]
+    subgraph Models["Observable Models"]
+        M_Sandbox[SandboxStore]
+        M_Policy[PolicyStore]
+        M_Session[SessionStore]
+        M_Settings[SettingsStore]
     end
 
-    subgraph Main["Main Process - Node.js"]
-        IPC[IpcHandlers]
-        Factory[ServiceFactory]
+    subgraph Services["Service Layer - Protocols"]
+        SvcProto[SbxServiceProtocol]
         RealSvc[RealSbxService]
         MockSvc[MockSbxService]
-        PtyMgr[PtyManager]
-        MockPty[MockPtyEmitter]
-        CLI[CliExecutor]
-        Parser[SbxOutputParser]
+        Factory[ServiceFactory]
         TermLauncher[ExternalTerminalLauncher]
+    end
+
+    subgraph Infrastructure["Infrastructure"]
+        CliExec[CliExecutor]
+        Parser[SbxOutputParser]
+        SwiftTermLib[SwiftTerm MacLocalTerminalView]
+        MockPty[MockPtyEmitter]
     end
 
     subgraph External["External Dependencies"]
@@ -78,32 +84,31 @@ graph TB
         TermApp[Terminal or iTerm]
     end
 
-    UI_Layout --> UI_Dashboard
-    UI_Layout --> UI_Policies
-    UI_Layout --> UI_Session
-    UI_Layout --> UI_Ports
-    UI_Dashboard --> Stores
-    UI_Policies --> Stores
-    UI_Session --> Stores
-    UI_Session --> XTerm
-    UI_Ports --> Stores
-    Stores --> Bridge
+    V_Shell --> V_Dashboard
+    V_Shell --> V_Policies
+    V_Shell --> V_Session
+    V_Shell --> V_Ports
+    V_Session --> V_Terminal
 
-    Bridge -->|IPC invoke| IPC
-    IPC -->|session data events| Bridge
+    V_Dashboard --> M_Sandbox
+    V_Policies --> M_Policy
+    V_Session --> M_Session
+    V_Ports --> M_Sandbox
 
-    IPC --> Factory
-    IPC --> PtyMgr
-    IPC --> TermLauncher
+    M_Sandbox --> SvcProto
+    M_Policy --> SvcProto
+    M_Session --> SvcProto
+    M_Settings --> TermLauncher
+
     Factory --> RealSvc
     Factory --> MockSvc
-
-    RealSvc --> CLI
-    CLI --> Parser
-    CLI --> SbxCLI
+    RealSvc --> CliExec
+    CliExec --> Parser
+    CliExec --> SbxCLI
     SbxCLI --> Docker
 
-    PtyMgr --> MockPty
+    V_Terminal --> SwiftTermLib
+    V_Terminal --> MockPty
     TermLauncher --> TermApp
 ```
 
@@ -111,18 +116,19 @@ graph TB
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| Frontend | React 19 + TypeScript strict | SPA UI, component rendering, hooks | Domain-grouped components |
-| Styling | Tailwind CSS 4 | Design system implementation | "The Technical Monolith" tokens |
-| State | Zustand | Sandbox, policy, session stores | One store per domain |
-| Terminal Rendering | xterm.js 5 | ANSI terminal output in renderer | Addons: fit, weblinks |
-| PTY | node-pty | Pseudo-terminal spawning in main | One PTY per attached session |
-| Shell | Electron 36+ | Desktop framework, IPC, native dialogs | contextBridge for security |
-| IPC | Electron contextBridge | Typed window.sbx API | Preload script only |
-| Build | electron-vite | Dev server with HMR, production bundling | ESM-native, single config |
-| Package Manager | pnpm | Dependency management | min-release-age=14d for supply-chain hardening |
-| Package | electron-builder | macOS DMG distribution | Signed if certs available |
-| Unit Testing | Vitest | Service, parser, store tests | Fast, ESM-native |
-| E2E Testing | Playwright with Electron | Full UI flow testing against mock | SBX_MOCK=1 forced |
+| UI Framework | SwiftUI (macOS 15+) | Declarative UI, navigation, layout | NavigationSplitView for sidebar+detail |
+| AppKit Interop | NSViewRepresentable | Terminal view bridge | SwiftTerm NSView in SwiftUI |
+| State | @Observable (Observation framework) | Reactive model layer | One @Observable class per domain |
+| Terminal | SwiftTerm 1.13+ | PTY management + ANSI rendering | MacLocalTerminalView for real; headless Terminal for mock |
+| CLI Execution | Foundation Process | Spawns sbx CLI commands | Array-form args prevent injection |
+| Async | Swift Concurrency | async/await, actor, AsyncStream | Polling, background CLI operations |
+| Persistence | UserDefaults | User preferences (terminal choice) | Simple key-value; SwiftData not needed |
+| App Security | Hardened Runtime (no App Sandbox) | Notarization, direct distribution | Required for CLI tool access |
+| Distribution | DMG via create-dmg or Xcode archive | macOS direct distribution | Signed + notarized |
+| Unit Testing | Swift Testing (Xcode 16+) | Service, parser, model tests | @Test, #expect, parameterized |
+| UI Testing | XCUITest | E2E user flow tests | Mock mode via launch environment |
+| Snapshot Testing | swift-snapshot-testing | Visual regression | NSHostingView wrapping |
+| Package Manager | Swift Package Manager | SwiftTerm dependency | Package.swift |
 
 ## System Flows
 
@@ -150,151 +156,145 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     participant User
-    participant Renderer
-    participant Bridge as PreloadBridge
-    participant IPC as IpcHandlers
-    participant Pty as PtyManager
+    participant View as SessionView
+    participant Model as SessionStore
+    participant Service as SbxServiceProtocol
+    participant Term as SwiftTerm LocalProcess
 
-    User->>Renderer: Click running sandbox card
-    Renderer->>Bridge: attachSession name
-    Bridge->>IPC: sbx:session:attach
-    IPC->>Pty: attach name
-    Pty-->>IPC: data events begin
-    IPC-->>Bridge: sbx:session:data
-    Bridge-->>Renderer: onSessionData callback
-    Renderer->>Renderer: xterm.js renders output
+    User->>View: Click running sandbox card
+    View->>Model: attach name
+    Model->>Service: attach name
+    Service->>Term: startProcess sbx run name
+    Term-->>View: TerminalView renders PTY output
 
-    User->>Renderer: Type message and send
-    Renderer->>Bridge: sendMessage name msg
-    Bridge->>IPC: sbx:session:send
-    IPC->>Pty: write msg plus newline
-    Pty-->>IPC: response data stream
-    IPC-->>Bridge: sbx:session:data
-    Bridge-->>Renderer: xterm.js renders response
+    User->>View: Type message and send
+    View->>Model: sendMessage msg
+    Model->>Service: sendMessage name msg
+    Service->>Term: write msg plus newline to PTY
+    Term-->>View: TerminalView renders response
 
-    User->>Renderer: Navigate away
-    Renderer->>Bridge: detachSession name
-    Bridge->>IPC: sbx:session:detach
-    IPC->>Pty: dispose
+    User->>View: Navigate away
+    View->>Model: detach
+    Model->>Service: detachSession name
+    Service->>Term: terminate process
 ```
 
 **Key decisions**:
-- `attachSession` spawns a PTY (real: `node-pty` running `sbx run <name>`, mock: `MockPtyEmitter`)
-- `sendMessage` writes text + newline to PTY stdin, simulating terminal input (6.3)
+- `attach` spawns a PTY via SwiftTerm's `LocalProcess` (real mode) or feeds `MockPtyEmitter` data to a headless `Terminal` (mock mode)
+- `sendMessage` writes text + newline to PTY stdin (6.3)
 - Session auto-reattaches when a stopped sandbox resumes if the session panel is open (6.5)
 - Only one session active at a time per current UI design
+- SwiftTerm's `TerminalView` (NSView) is wrapped via `NSViewRepresentable` for SwiftUI integration
 
 ## Requirements Traceability
 
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
-| 1.1 | Directory picker on deploy button | CreateProjectDialog | selectDirectory | — |
-| 1.2 | Create sandbox from selected directory | CreateProjectDialog, SandboxStore | SbxService.run | Lifecycle |
-| 1.3 | Auto-generate sandbox name | SbxService.run, MockSbxService | RunOptions | — |
-| 1.4 | Cancel picker without side effects | CreateProjectDialog | selectDirectory | — |
-| 1.5 | Return existing for duplicate workspace | SbxService.run, MockSbxService | SbxService.run | — |
-| 2.1 | Grid layout of sandbox cards | SandboxGrid, SandboxCard | SandboxStoreState | — |
-| 2.2 | Card shows name, agent, status, workspace | SandboxCard | Sandbox type | — |
-| 2.3 | Green LED pulse for running | StatusChip | SandboxStatus | — |
-| 2.4 | STOPPED chip without animation | StatusChip | SandboxStatus | — |
-| 2.5 | Spinner and disabled during transitions | SandboxCard, StatusChip | SandboxStatus | — |
-| 2.6 | Global stats bar | GlobalStats | SandboxStoreState | — |
-| 2.7 | Poll sandbox list every 3s | SandboxStore | SbxService.list | — |
-| 3.1 | Launch sandbox | SandboxStore, SandboxCard | SbxService.run | Lifecycle |
-| 3.2 | Stop running sandbox | SandboxStore, SandboxCard | SbxService.stop | Lifecycle |
-| 3.3 | Resume stopped sandbox | SandboxStore, SandboxCard | SbxService.run | Lifecycle |
-| 3.4 | Confirmation before termination | SandboxCard | — | — |
-| 3.5 | Remove after confirmation | SandboxStore | SbxService.rm | Lifecycle |
-| 3.6 | Cancel termination does nothing | SandboxCard | — | — |
-| 4.1 | Policy panel listing rules | PolicyPanel, PolicyRuleRow | PolicyStoreState | — |
-| 4.2 | Pre-seeded Balanced defaults | MockSbxService, RealSbxService | SbxService.policyList | — |
-| 4.3 | Allow policy submission | AddPolicyDialog, PolicyStore | SbxService.policyAllow | — |
-| 4.4 | Deny policy submission | AddPolicyDialog, PolicyStore | SbxService.policyDeny | — |
-| 4.5 | Remove policy rule | PolicyRuleRow, PolicyStore | SbxService.policyRemove | — |
-| 4.6 | Network activity log table | PolicyLogViewer | SbxService.policyLog | — |
-| 4.7 | Log filtering by sandbox and blocked | PolicyLogViewer | PolicyStoreState | — |
-| 5.1 | Port panel per sandbox | PortPanel, PortMappingRow | SbxService.portsList | — |
-| 5.2 | Publish port mapping | AddPortDialog, PortPanel | SbxService.portsPublish | — |
-| 5.3 | Unpublish port mapping | PortMappingRow | SbxService.portsUnpublish | — |
-| 5.4 | Port chips on sandbox card | SandboxCard | Sandbox.ports | — |
-| 5.5 | Reject duplicate host port | SbxService.portsPublish | SbxServiceError | — |
-| 5.6 | Disable port publish when stopped | PortPanel | SandboxStatus | — |
-| 5.7 | Clear ports on stop | MockSbxService, SandboxStore | SbxService.stop | Lifecycle |
-| 6.1 | Session panel with split layout | SessionPanel | SessionStoreState | Session |
-| 6.2 | xterm.js with ANSI support | MiniTerminal | onSessionData | Session |
-| 6.3 | Send message to PTY stdin | ChatInput, SessionStore | SbxService.sendMessage | Session |
+| 1.1 | Directory picker on deploy button | CreateProjectSheet | NSOpenPanel | — |
+| 1.2 | Create sandbox from selected directory | CreateProjectSheet, SandboxStore | SbxServiceProtocol.run | Lifecycle |
+| 1.3 | Auto-generate sandbox name | SbxServiceProtocol.run, MockSbxService | RunOptions | — |
+| 1.4 | Cancel picker without side effects | CreateProjectSheet | NSOpenPanel | — |
+| 1.5 | Return existing for duplicate workspace | SbxServiceProtocol.run, MockSbxService | SbxServiceProtocol.run | — |
+| 2.1 | Grid layout of sandbox cards | SandboxGridView, SandboxCardView | SandboxStore | — |
+| 2.2 | Card shows name, agent, status, workspace | SandboxCardView | Sandbox type | — |
+| 2.3 | Green LED pulse for running | StatusChipView | SandboxStatus | — |
+| 2.4 | STOPPED chip without animation | StatusChipView | SandboxStatus | — |
+| 2.5 | Spinner and disabled during transitions | SandboxCardView, StatusChipView | SandboxStatus | — |
+| 2.6 | Global stats bar | GlobalStatsView | SandboxStore | — |
+| 2.7 | Poll sandbox list every 3s | SandboxStore | SbxServiceProtocol.list | — |
+| 3.1 | Launch sandbox | SandboxStore, SandboxCardView | SbxServiceProtocol.run | Lifecycle |
+| 3.2 | Stop running sandbox | SandboxStore, SandboxCardView | SbxServiceProtocol.stop | Lifecycle |
+| 3.3 | Resume stopped sandbox | SandboxStore, SandboxCardView | SbxServiceProtocol.run | Lifecycle |
+| 3.4 | Confirmation before termination | SandboxCardView | — | — |
+| 3.5 | Remove after confirmation | SandboxStore | SbxServiceProtocol.rm | Lifecycle |
+| 3.6 | Cancel termination does nothing | SandboxCardView | — | — |
+| 4.1 | Policy panel listing rules | PolicyPanelView, PolicyRuleRow | PolicyStore | — |
+| 4.2 | Pre-seeded Balanced defaults | MockSbxService, RealSbxService | SbxServiceProtocol.policyList | — |
+| 4.3 | Allow policy submission | AddPolicySheet, PolicyStore | SbxServiceProtocol.policyAllow | — |
+| 4.4 | Deny policy submission | AddPolicySheet, PolicyStore | SbxServiceProtocol.policyDeny | — |
+| 4.5 | Remove policy rule | PolicyRuleRow, PolicyStore | SbxServiceProtocol.policyRemove | — |
+| 4.6 | Network activity log table | PolicyLogView | SbxServiceProtocol.policyLog | — |
+| 4.7 | Log filtering by sandbox and blocked | PolicyLogView | PolicyStore | — |
+| 5.1 | Port panel per sandbox | PortPanelView, PortMappingRow | SbxServiceProtocol.portsList | — |
+| 5.2 | Publish port mapping | AddPortSheet, PortPanelView | SbxServiceProtocol.portsPublish | — |
+| 5.3 | Unpublish port mapping | PortMappingRow | SbxServiceProtocol.portsUnpublish | — |
+| 5.4 | Port chips on sandbox card | SandboxCardView | Sandbox.ports | — |
+| 5.5 | Reject duplicate host port | SbxServiceProtocol.portsPublish | SbxServiceError | — |
+| 5.6 | Disable port publish when stopped | PortPanelView | SandboxStatus | — |
+| 5.7 | Clear ports on stop | MockSbxService, SandboxStore | SbxServiceProtocol.stop | Lifecycle |
+| 6.1 | Session panel with split layout | SessionPanelView | SessionStore | Session |
+| 6.2 | Terminal with ANSI support | TerminalViewWrapper | SwiftTerm | Session |
+| 6.3 | Send message to PTY stdin | ChatInputView, SessionStore | SbxServiceProtocol.sendMessage | Session |
 | 6.4 | Agent status bar | AgentStatusBar | Sandbox type | — |
-| 6.5 | Auto-reattach on resume | SessionStore | SbxService.attach | Session |
-| 6.6 | Detach on navigate away | SessionStore | SbxService.detachSession | Session |
+| 6.5 | Auto-reattach on resume | SessionStore | SbxServiceProtocol.attach | Session |
+| 6.6 | Detach on navigate away | SessionStore | SbxServiceProtocol.detachSession | Session |
 | 7.1 | Mock mode via SBX_MOCK env | ServiceFactory | — | — |
-| 7.2 | MockSbxService implements full interface | MockSbxService | SbxService | — |
+| 7.2 | MockSbxService implements full protocol | MockSbxService | SbxServiceProtocol | — |
 | 7.3 | Realistic lifecycle delays | MockSbxService | — | Lifecycle |
 | 7.4 | Pre-seeded Balanced defaults | MockSbxService | — | — |
 | 7.5 | Simulated terminal output | MockPtyEmitter | PtyHandle | Session |
 | 7.6 | Simulated agent response sequence | MockPtyEmitter | PtyHandle | Session |
-| 7.7 | Same validation rules as real | MockSbxService | SbxService | — |
-| 8.1 | Shell with sidebar, topbar, content | Shell, Sidebar, TopBar | — | — |
-| 8.2 | Sidebar nav for dashboard and policies | Sidebar | — | — |
-| 8.3 | Dark surface hierarchy design system | All UI components | Tailwind config | — |
-| 8.4 | Font stack Inter, JetBrains Mono, Space Grotesk | All UI components | Tailwind config | — |
-| 8.5 | Max border-radius 0.5rem | All UI components | Tailwind config | — |
-| 9.1 | contextBridge exposure only | PreloadBridge | SbxPreloadApi | — |
-| 9.2 | Typed window.sbx API | PreloadBridge | SbxPreloadApi | — |
-| 9.3 | CLI and PTY in main process only | IpcHandlers, PtyManager | — | — |
-| 9.4 | Error state for missing sbx or Docker | RealSbxService, Shell | SbxServiceError | — |
-| 9.5 | Error toast for CLI failures | Shell, SandboxStore | SbxServiceError | — |
-| 10.1 | E2E coverage for all Phase 1 features | E2E test specs | — | All |
-| 10.2 | Run against MockSbxService | E2E setup | ServiceFactory | — |
-| 10.3 | Lifecycle status transition test | sandbox-lifecycle.spec | — | Lifecycle |
-| 10.4 | Policy CRUD test | policy-management.spec | — | — |
-| 10.5 | Port forwarding CRUD test | port-forwarding.spec | — | — |
-| 10.6 | Session messaging test | session-messaging.spec | — | Session |
-| 11.1 | Open bash shell in external terminal | ExternalTerminalLauncher | ExternalTerminalApi | — |
+| 7.7 | Same validation rules as real | MockSbxService | SbxServiceProtocol | — |
+| 8.1 | Shell with sidebar, topbar, content | ShellView, SidebarView | — | — |
+| 8.2 | Sidebar nav for dashboard and policies | SidebarView | — | — |
+| 8.3 | Dark surface hierarchy design system | All UI views | DesignSystem | — |
+| 8.4 | Font stack Inter, JetBrains Mono, Space Grotesk | All UI views | DesignSystem | — |
+| 8.5 | Max border-radius 0.5rem | All UI views | DesignSystem | — |
+| 9.1 | Secure service access | SbxServiceProtocol (protocol boundary) | — | — |
+| 9.2 | Typed API for all operations | SbxServiceProtocol | — | — |
+| 9.3 | CLI spawning in service layer only | RealSbxService, CliExecutor | — | — |
+| 9.4 | Error state for missing sbx or Docker | RealSbxService, ShellView | SbxServiceError | — |
+| 9.5 | Error toast for CLI failures | ShellView, SandboxStore | SbxServiceError | — |
+| 10.1 | E2E coverage for all Phase 1 features | XCUITest specs | — | All |
+| 10.2 | Run against MockSbxService | XCUITest setup | ServiceFactory | — |
+| 10.3 | Lifecycle status transition test | SandboxLifecycleUITests | — | Lifecycle |
+| 10.4 | Policy CRUD test | PolicyManagementUITests | — | — |
+| 10.5 | Port forwarding CRUD test | PortForwardingUITests | — | — |
+| 10.6 | Session messaging test | SessionMessagingUITests | — | Session |
+| 11.1 | Open bash shell in external terminal | ExternalTerminalLauncher | ExternalTerminalProtocol | — |
 | 11.2 | Support Terminal.app and iTerm | ExternalTerminalLauncher | TerminalApp type | — |
-| 11.3 | Detect installed terminals | ExternalTerminalLauncher | detectAvailable | — |
+| 11.3 | Detect installed terminals | ExternalTerminalLauncher | NSWorkspace | — |
 | 11.4 | Default to Terminal.app | ExternalTerminalLauncher | TerminalApp type | — |
-| 11.5 | Setting for preferred terminal | SettingsStore | UserPreferences | — |
+| 11.5 | Setting for preferred terminal | SettingsStore | UserDefaults | — |
 | 11.6 | Error on terminal launch failure | ExternalTerminalLauncher | SbxServiceError | — |
-| 11.7 | Disable shell when stopped | SandboxCard | SandboxStatus | — |
+| 11.7 | Disable shell when stopped | SandboxCardView | SandboxStatus | — |
 
 ## Components and Interfaces
 
 | Component | Domain | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|--------|--------|--------------|------------------|-----------|
-| SbxService | Main / Services | Central contract for all sbx operations | All | — | Service |
-| RealSbxService | Main / Services | Wraps sbx CLI via process spawning | All runtime | CliExecutor P0, SbxOutputParser P0 | Service |
-| MockSbxService | Main / Services | In-memory simulation for dev and E2E | 7.1–7.7 | — | Service, State |
-| ServiceFactory | Main / Services | Selects real or mock by env var | 7.1 | SbxService P0 | Service |
-| PtyManager | Main / PTY | Manages PTY sessions per sandbox | 6.1–6.6 | node-pty P0, MockPtyEmitter P1 | Service |
-| MockPtyEmitter | Main / PTY | Simulates Claude Code terminal output | 7.5, 7.6 | — | Event |
-| CliExecutor | Main / Utils | Spawns sbx CLI and captures output | All runtime | child_process P0 | Service |
-| SbxOutputParser | Main / Utils | Parses column-delimited CLI stdout | All runtime | — | Service |
-| IpcHandlers | Main | Registers IPC handlers bridging to services | 9.1–9.3 | SbxService P0, PtyManager P0 | Service |
-| ExternalTerminalLauncher | Main | Opens bash shells in external terminals | 11.1–11.6 | osascript P0 | Service |
-| PreloadBridge | Preload | Exposes typed window.sbx via contextBridge | 9.1, 9.2 | Electron IPC P0 | API |
-| SandboxStore | Renderer / Stores | Sandbox list state with polling | 2.1–2.7, 3.1–3.6 | PreloadBridge P0 | State |
-| PolicyStore | Renderer / Stores | Policy rules and log state | 4.1–4.7 | PreloadBridge P0 | State |
-| SessionStore | Renderer / Stores | Active session state and PTY relay | 6.1–6.6 | PreloadBridge P0 | State |
-| SettingsStore | Renderer / Stores | User preferences persistence | 11.5 | localStorage P0 | State |
-| Shell | Renderer / Layout | App shell with sidebar, topbar, content | 8.1–8.5 | — | — |
-| SandboxGrid | Renderer / Dashboard | Card grid rendering all sandboxes | 2.1 | SandboxStore P0 | — |
-| SandboxCard | Renderer / Dashboard | Sandbox card with status and actions | 2.2–2.5, 3.1–3.6, 5.4, 11.7 | SandboxStore P0 | — |
-| StatusChip | Renderer / Dashboard | LIVE pulse or STOPPED indicator | 2.3, 2.4, 2.5 | — | — |
-| CreateProjectDialog | Renderer / Dashboard | Directory picker and name input | 1.1–1.5 | PreloadBridge P0 | — |
-| GlobalStats | Renderer / Dashboard | Running and total sandbox counts | 2.6 | SandboxStore P0 | — |
-| PolicyPanel | Renderer / Policies | Policy rule list with add and remove | 4.1–4.5 | PolicyStore P0 | — |
-| AddPolicyDialog | Renderer / Policies | Domain input with allow and deny toggle | 4.3, 4.4 | PolicyStore P0 | — |
-| PolicyLogViewer | Renderer / Policies | Activity log with filtering | 4.6, 4.7 | PolicyStore P0 | — |
-| PortPanel | Renderer / Ports | Per-sandbox port mapping list | 5.1–5.3, 5.6 | SandboxStore P0 | — |
-| AddPortDialog | Renderer / Ports | Port input with validation | 5.2, 5.5 | — | — |
-| SessionPanel | Renderer / Session | Split layout with terminal and chat | 6.1 | SessionStore P0 | — |
-| ChatInput | Renderer / Session | Message composer with send action | 6.3 | SessionStore P0 | — |
-| MiniTerminal | Renderer / Session | xterm.js terminal embed | 6.2 | xterm.js P0 | — |
-| AgentStatusBar | Renderer / Session | Model, sandbox, uptime, connection | 6.4 | SessionStore P0 | — |
+| SbxServiceProtocol | Services | Central contract for all sbx operations | All | — | Service |
+| RealSbxService | Services | Wraps sbx CLI via Process spawning | All runtime | CliExecutor P0, SbxOutputParser P0 | Service |
+| MockSbxService | Services | In-memory simulation for dev and E2E | 7.1–7.7 | — | Service, State |
+| ServiceFactory | Services | Selects real or mock by env var | 7.1 | SbxServiceProtocol P0 | Service |
+| PtySessionManager | Services / PTY | Manages PTY sessions per sandbox | 6.1–6.6 | SwiftTerm P0, MockPtyEmitter P1 | Service |
+| MockPtyEmitter | Services / PTY | Simulates Claude Code terminal output | 7.5, 7.6 | — | Event |
+| CliExecutor | Services / Utils | Spawns sbx CLI and captures output | All runtime | Foundation.Process P0 | Service |
+| SbxOutputParser | Services / Utils | Parses column-delimited CLI stdout | All runtime | — | Service |
+| ExternalTerminalLauncher | Services | Opens bash shells in external terminals | 11.1–11.6 | NSAppleScript P0, NSWorkspace P0 | Service |
+| SandboxStore | Models | Sandbox list state with polling | 2.1–2.7, 3.1–3.6 | SbxServiceProtocol P0 | State |
+| PolicyStore | Models | Policy rules and log state | 4.1–4.7 | SbxServiceProtocol P0 | State |
+| SessionStore | Models | Active session state and PTY relay | 6.1–6.6 | PtySessionManager P0 | State |
+| SettingsStore | Models | User preferences persistence | 11.5 | UserDefaults P0 | State |
+| ShellView | Views / Layout | App shell with sidebar and content | 8.1–8.5 | — | — |
+| SandboxGridView | Views / Dashboard | Card grid rendering all sandboxes | 2.1 | SandboxStore P0 | — |
+| SandboxCardView | Views / Dashboard | Sandbox card with status and actions | 2.2–2.5, 3.1–3.6, 5.4, 11.7 | SandboxStore P0 | — |
+| StatusChipView | Views / Dashboard | LIVE pulse or STOPPED indicator | 2.3, 2.4, 2.5 | — | — |
+| CreateProjectSheet | Views / Dashboard | Directory picker and name input | 1.1–1.5 | NSOpenPanel P0 | — |
+| GlobalStatsView | Views / Dashboard | Running and total sandbox counts | 2.6 | SandboxStore P0 | — |
+| PolicyPanelView | Views / Policies | Policy rule list with add and remove | 4.1–4.5 | PolicyStore P0 | — |
+| AddPolicySheet | Views / Policies | Domain input with allow and deny toggle | 4.3, 4.4 | PolicyStore P0 | — |
+| PolicyLogView | Views / Policies | Activity log with filtering | 4.6, 4.7 | PolicyStore P0 | — |
+| PortPanelView | Views / Ports | Per-sandbox port mapping list | 5.1–5.3, 5.6 | SandboxStore P0 | — |
+| AddPortSheet | Views / Ports | Port input with validation | 5.2, 5.5 | — | — |
+| SessionPanelView | Views / Session | Split layout with terminal and chat | 6.1 | SessionStore P0 | — |
+| ChatInputView | Views / Session | Message composer with send action | 6.3 | SessionStore P0 | — |
+| TerminalViewWrapper | Views / Session | SwiftTerm NSView wrapped for SwiftUI | 6.2 | SwiftTerm P0 | — |
+| AgentStatusBar | Views / Session | Model, sandbox, uptime, connection | 6.4 | SessionStore P0 | — |
 
-### Main Process Layer
+### Service Layer
 
-#### SbxService Interface
+#### SbxServiceProtocol
 
 | Field | Detail |
 |-------|--------|
@@ -303,95 +303,104 @@ sequenceDiagram
 
 **Responsibilities & Constraints**
 - Defines the compile-time contract between real CLI integration and in-memory mock
-- All methods are async (return Promises) except PTY-related operations which manage event streams
+- All methods are async and throwing
+- PTY-related operations return `PtyHandle` for event-stream management
 - Implementations throw `SbxServiceError` for operation failures
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-```typescript
-type SandboxStatus = "running" | "stopped" | "creating" | "removing";
-
-interface Sandbox {
-  id: string;
-  name: string;
-  agent: "claude";
-  status: SandboxStatus;
-  workspace: string;
-  ports: PortMapping[];
-  createdAt: string;
+```swift
+enum SandboxStatus: String, Sendable, Codable {
+    case running, stopped, creating, removing
 }
 
-interface PolicyRule {
-  id: string;
-  type: "network";
-  decision: "allow" | "deny";
-  resources: string;
+struct Sandbox: Identifiable, Sendable {
+    let id: String
+    let name: String
+    let agent: String  // "claude"
+    var status: SandboxStatus
+    let workspace: String
+    var ports: [PortMapping]
+    let createdAt: Date
 }
 
-interface PolicyLogEntry {
-  sandbox: string;
-  type: "network";
-  host: string;
-  proxy: "forward" | "transparent" | "network";
-  rule: string;
-  lastSeen: string;
-  count: number;
-  blocked: boolean;
+struct PolicyRule: Identifiable, Sendable {
+    let id: String
+    let type: String  // "network"
+    let decision: PolicyDecision
+    let resources: String
 }
 
-interface PortMapping {
-  hostPort: number;
-  sandboxPort: number;
-  protocol: "tcp";
+enum PolicyDecision: String, Sendable, Codable {
+    case allow, deny
 }
 
-interface RunOptions {
-  name?: string;
-  prompt?: string;
+struct PolicyLogEntry: Sendable {
+    let sandbox: String
+    let type: String  // "network"
+    let host: String
+    let proxy: String  // "forward", "transparent", "network"
+    let rule: String
+    let lastSeen: Date
+    let count: Int
+    let blocked: Bool
 }
 
-interface PtyHandle {
-  onData(callback: (data: string) => void): void;
-  write(data: string): void;
-  dispose(): void;
+struct PortMapping: Sendable {
+    let hostPort: Int
+    let sandboxPort: Int
+    let protocolType: String  // "tcp"
 }
 
-interface SbxServiceError {
-  code: "NOT_FOUND" | "ALREADY_EXISTS" | "PORT_CONFLICT"
-      | "NOT_RUNNING" | "CLI_ERROR" | "DOCKER_NOT_RUNNING"
-      | "INVALID_NAME";
-  message: string;
-  details?: string;
+struct RunOptions: Sendable {
+    var name: String?
+    var prompt: String?
 }
 
-interface SbxService {
-  // Lifecycle
-  list(): Promise<Sandbox[]>;
-  run(agent: "claude", workspace: string, opts?: RunOptions): Promise<Sandbox>;
-  stop(name: string): Promise<void>;
-  rm(name: string): Promise<void>;
+protocol PtyHandle: Sendable {
+    func onData(_ callback: @escaping @Sendable (String) -> Void)
+    func write(_ data: String)
+    func dispose()
+}
 
-  // Network policies
-  policyList(): Promise<PolicyRule[]>;
-  policyAllow(resources: string): Promise<PolicyRule>;
-  policyDeny(resources: string): Promise<PolicyRule>;
-  policyRemove(resource: string): Promise<void>;
-  policyLog(sandboxName?: string): Promise<PolicyLogEntry[]>;
+enum SbxServiceError: Error, Sendable {
+    case notFound(String)
+    case alreadyExists(String)
+    case portConflict(Int)
+    case notRunning(String)
+    case cliError(String)
+    case dockerNotRunning
+    case invalidName(String)
+}
 
-  // Port forwarding
-  portsList(name: string): Promise<PortMapping[]>;
-  portsPublish(name: string, hostPort: number, sbxPort: number): Promise<PortMapping>;
-  portsUnpublish(name: string, hostPort: number, sbxPort: number): Promise<void>;
+protocol SbxServiceProtocol: Sendable {
+    // Lifecycle
+    func list() async throws -> [Sandbox]
+    func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox
+    func stop(name: String) async throws
+    func rm(name: String) async throws
 
-  // Session
-  attach(name: string): PtyHandle;
-  sendMessage(name: string, message: string): Promise<void>;
-  detachSession(name: string): void;
+    // Network policies
+    func policyList() async throws -> [PolicyRule]
+    func policyAllow(resources: String) async throws -> PolicyRule
+    func policyDeny(resources: String) async throws -> PolicyRule
+    func policyRemove(resource: String) async throws
+    func policyLog(sandboxName: String?) async throws -> [PolicyLogEntry]
+
+    // Port forwarding
+    func portsList(name: String) async throws -> [PortMapping]
+    func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping
+    func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws
+
+    // Session
+    func attach(name: String) async throws -> PtyHandle
+    func sendMessage(name: String, message: String) async throws
+    func detachSession(name: String) async throws
 }
 ```
 
-- Preconditions: Sandbox must exist for stop, rm, ports, attach, sendMessage. Sandbox must be running for attach, sendMessage, portsPublish. Sandbox names must match `/^[a-z0-9][a-z0-9-]*$/` (lowercase alphanumeric and hyphens, no leading hyphen); `run` throws `INVALID_NAME` otherwise.
+- Preconditions: Sandbox must exist for stop, rm, ports, attach, sendMessage. Sandbox must be running for attach, sendMessage, portsPublish. Sandbox names must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric and hyphens, no leading hyphen); `run` throws `invalidName` otherwise.
 - Postconditions: `run` returns sandbox transitioning from "creating" to "running". `stop` clears port mappings. `rm` removes all associated data.
 - Invariants: No two sandboxes share the same name. No two port mappings share the same host port across all sandboxes.
 
@@ -399,13 +408,14 @@ interface SbxService {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Implements SbxService by spawning sbx CLI commands and parsing stdout |
+| Intent | Implements SbxServiceProtocol by spawning sbx CLI commands and parsing stdout |
 | Requirements | All runtime operations |
 
 **Responsibilities & Constraints**
+- Implemented as a Swift `actor` for thread-safe mutable state
 - Spawns `sbx` CLI via CliExecutor for each operation
 - Delegates stdout parsing to SbxOutputParser
-- Detects missing `sbx` CLI or Docker Desktop and throws `SbxServiceError` with code `CLI_ERROR` or `DOCKER_NOT_RUNNING`
+- Detects missing `sbx` CLI or Docker Desktop and throws `SbxServiceError.cliError` or `.dockerNotRunning`
 
 **Dependencies**
 - Outbound: CliExecutor — spawns processes (P0)
@@ -416,35 +426,36 @@ interface SbxService {
 
 **Implementation Notes**
 - Integration: CLI commands mapped per method — `list` → `sbx ls`, `run` → `sbx run claude <workspace> --name <name>`, `stop` → `sbx stop <name>`, `rm` → `sbx rm <name>`, policy and ports methods map to respective `sbx policy` and `sbx ports` subcommands
-- Validation: Validates `sbx` availability on construction; surfaces meaningful error for missing CLI
+- Validation: Validates `sbx` availability on initialization; surfaces meaningful error for missing CLI
 - Risks: CLI output format changes could break parsing; mitigated by parser unit tests and `--json` where available
 
 #### MockSbxService
 
 | Field | Detail |
 |-------|--------|
-| Intent | In-memory SbxService implementation for development and E2E testing |
+| Intent | In-memory SbxServiceProtocol implementation for development and E2E testing |
 | Requirements | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7 |
 
 **Responsibilities & Constraints**
-- Maintains in-memory Maps for sandboxes, policies, port mappings
+- Implemented as a Swift `actor` for thread-safe mutable state
+- Maintains in-memory dictionaries for sandboxes, policies, port mappings
 - Pre-seeds Balanced network policy defaults on construction (api.anthropic.com, *.npmjs.org, github.com, *.github.com, registry.hub.docker.com, *.docker.io, *.googleapis.com, api.openai.com, *.pypi.org, files.pythonhosted.org)
-- Simulates lifecycle transitions with realistic delays (creating: ~800ms, stop: ~300ms, remove: ~200ms)
+- Simulates lifecycle transitions with realistic delays (creating: ~800ms, stop: ~300ms, remove: ~200ms) via `Task.sleep`
 - Enforces same validation rules as real: rejects duplicate host ports, clears ports on stop, returns existing sandbox for duplicate workspace
 
 **Contracts**: Service [x] / State [x]
 
 ##### State Management
-- State model: `Map<string, Sandbox>` for sandboxes, `Map<string, PolicyRule>` for policies, `Map<string, PortMapping[]>` for port mappings, `PolicyLogEntry[]` for logs
+- State model: `[String: Sandbox]` for sandboxes, `[String: PolicyRule]` for policies, `[String: [PortMapping]]` for port mappings, `[PolicyLogEntry]` for logs
 - Persistence: In-memory only, no disk persistence
-- Concurrency: Single-threaded (Electron main process); no concurrent mutation concerns
+- Concurrency: Actor isolation provides thread safety
 
 **Implementation Notes**
 - Integration: Constructor seeds Balanced policy defaults. Auto-generates name as `claude-<dirname>` if not specified.
-- Validation: Duplicate workspace returns existing sandbox. Duplicate host port throws `PORT_CONFLICT`. Stopped sandbox rejects port publish with `NOT_RUNNING`.
-- Risks: Mock drift from real behavior; mitigated by shared interface contract and matching E2E assertions
+- Validation: Duplicate workspace returns existing sandbox. Duplicate host port throws `.portConflict`. Stopped sandbox rejects port publish with `.notRunning`.
+- Risks: Mock drift from real behavior; mitigated by shared protocol contract and matching E2E assertions
 
-#### PtyManager
+#### PtySessionManager
 
 | Field | Detail |
 |-------|--------|
@@ -452,31 +463,32 @@ interface SbxService {
 | Requirements | 6.1, 6.2, 6.3, 6.5, 6.6 |
 
 **Responsibilities & Constraints**
+- Implemented as a Swift `actor`
 - Maintains at most one active PTY per sandbox name
-- Real mode: spawns `node-pty` with `sbx run <name>` command
-- Mock mode: creates MockPtyEmitter instance
+- Real mode: creates SwiftTerm `LocalProcess` running `sbx run <name>`
+- Mock mode: creates `MockPtyEmitter` instance feeding simulated data
 - Disposes PTY on detach or sandbox stop/removal
 
 **Dependencies**
-- External: node-pty — PTY spawning (P0)
-- Inbound: IpcHandlers — attach, send, detach calls (P0)
+- External: SwiftTerm — PTY spawning and terminal rendering (P0)
+- Inbound: SessionStore — attach, send, detach calls (P0)
 - Outbound: MockPtyEmitter — mock terminal simulation (P1)
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-```typescript
-interface PtyManager {
-  attach(name: string): PtyHandle;
-  write(name: string, data: string): void;
-  dispose(name: string): void;
-  disposeAll(): void;
-  isAttached(name: string): boolean;
+```swift
+actor PtySessionManager {
+    func attach(name: String, isMock: Bool) -> PtyHandle
+    func write(name: String, data: String)
+    func dispose(name: String)
+    func disposeAll()
+    func isAttached(name: String) -> Bool
 }
 ```
 
 - Preconditions: Sandbox must be running for attach. Name must be attached for write and dispose.
-- Postconditions: `attach` creates PTY and begins emitting data. `dispose` kills PTY process and removes from tracking.
+- Postconditions: `attach` creates PTY and begins emitting data. `dispose` terminates process and removes from tracking.
 
 #### MockPtyEmitter
 
@@ -486,17 +498,17 @@ interface PtyManager {
 | Requirements | 7.5, 7.6 |
 
 **Responsibilities & Constraints**
-- Extends EventEmitter; emits `data` events with ANSI-formatted strings
+- Conforms to `PtyHandle` protocol
 - Simulates startup sequence: Claude Code banner, model info, workspace path, prompt character
 - Simulates agent response on write: thinking → reading → writing → done → prompt
-- Uses realistic delays between emissions
+- Uses realistic delays between emissions via `Task.sleep`
 
 **Contracts**: Event [x]
 
 ##### Event Contract
-- Published events: `data` (string — ANSI-encoded terminal output)
+- Published events: data callbacks (String — ANSI-encoded terminal output) via `onData` closure
 - Subscribed events: none (input via `write` method)
-- Delivery guarantees: In-order, delayed via setTimeout to simulate real agent behavior
+- Delivery guarantees: In-order, delayed via `Task.sleep` to simulate real agent behavior
 
 #### CliExecutor
 
@@ -508,22 +520,27 @@ interface PtyManager {
 **Contracts**: Service [x]
 
 ##### Service Interface
-```typescript
-interface CliResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
+```swift
+struct CliResult: Sendable {
+    let stdout: String
+    let stderr: String
+    let exitCode: Int32
 }
 
-interface CliExecutor {
-  exec(command: string, args: string[]): Promise<CliResult>;
-  execJson<T>(command: string, args: string[]): Promise<T>;
+protocol CliExecutorProtocol: Sendable {
+    func exec(command: String, args: [String]) async throws -> CliResult
+    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T
 }
 ```
 
 - Preconditions: `sbx` binary must be on system PATH
 - Postconditions: Returns complete stdout/stderr after process exits
-- Invariants: Never modifies command arguments; passes through as-is. Always uses array-form `child_process.spawn` (never shell string interpolation) to prevent command injection.
+- Invariants: Never modifies command arguments; passes through as-is. Always uses `Process` with array-form arguments (never shell string interpolation) to prevent command injection.
+
+**Implementation Notes**
+- Uses `/usr/bin/env` as executable with `["sbx", ...args]` to locate `sbx` on PATH
+- Wraps `Process.waitUntilExit()` in `withCheckedContinuation` for async/await integration
+- `AsyncStream` wraps `Pipe.readabilityHandler` for streaming output when needed
 
 #### SbxOutputParser
 
@@ -535,61 +552,38 @@ interface CliExecutor {
 **Contracts**: Service [x]
 
 ##### Service Interface
-```typescript
-interface SbxOutputParser {
-  parseSandboxList(stdout: string): Sandbox[];
-  parsePolicyList(stdout: string): PolicyRule[];
-  parsePolicyLog(stdout: string): PolicyLogEntry[];
-  parsePortsList(stdout: string): PortMapping[];
+```swift
+struct SbxOutputParser {
+    static func parseSandboxList(_ stdout: String) -> [Sandbox]
+    static func parsePolicyList(_ stdout: String) -> [PolicyRule]
+    static func parsePolicyLog(_ stdout: String) -> [PolicyLogEntry]
+    static func parsePortsList(_ stdout: String) -> [PortMapping]
 }
 ```
 
 **Implementation Notes**
-- Integration: Column-based parsing using header position detection (not simple whitespace split — fields like workspace paths may contain spaces)
-- Validation: Returns empty arrays for empty or header-only output; logs warnings for unparseable lines
+- Integration: Column-based parsing using header position detection via `String.Index` offsets (not simple whitespace split — fields like workspace paths may contain spaces)
+- Validation: Returns empty arrays for empty or header-only output; logs warnings for unparseable lines via `os.Logger`
 - Risks: CLI output format changes; prefer `--json` flag where available (e.g., `sbx policy log --json`)
 
 #### ServiceFactory
 
 | Field | Detail |
 |-------|--------|
-| Intent | Creates appropriate SbxService implementation based on environment |
+| Intent | Creates appropriate SbxServiceProtocol implementation based on environment |
 | Requirements | 7.1 |
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-```typescript
-interface ServiceFactory {
-  create(): SbxService;
+```swift
+struct ServiceFactory {
+    static func create() -> any SbxServiceProtocol
 }
 ```
 
-- When `SBX_MOCK=1` environment variable is set, returns `MockSbxService`
+- When `SBX_MOCK` environment variable is `"1"` (via `ProcessInfo.processInfo.environment["SBX_MOCK"]`), returns `MockSbxService`
 - Otherwise returns `RealSbxService`
-
-#### IpcHandlers
-
-| Field | Detail |
-|-------|--------|
-| Intent | Registers all Electron IPC handlers bridging renderer to main process services |
-| Requirements | 9.1, 9.2, 9.3 |
-
-**Responsibilities & Constraints**
-- Maps each `sbx:*` IPC channel to the corresponding SbxService or PtyManager method
-- Handles errors from service calls and returns structured SbxServiceError objects to renderer
-- Forwards PtyHandle data events to `sbx:session:data` IPC channel for renderer consumption
-- Handles `dialog:selectDirectory` for native filesystem picker via Electron dialog API
-- Handles `sbx:terminal:open` and `sbx:terminal:list` for external terminal operations
-
-**Dependencies**
-- Inbound: PreloadBridge via IPC invoke — all renderer calls (P0)
-- Outbound: SbxService — all sbx operations (P0)
-- Outbound: PtyManager — session operations (P0)
-- Outbound: ExternalTerminalLauncher — terminal operations (P0)
-- Outbound: Electron dialog — filesystem picker (P0)
-
-**Contracts**: Service [x]
 
 #### ExternalTerminalLauncher
 
@@ -599,107 +593,35 @@ interface ServiceFactory {
 | Requirements | 11.1, 11.2, 11.3, 11.4, 11.5, 11.6 |
 
 **Responsibilities & Constraints**
-- Detects available terminal applications by checking known macOS bundle paths
-- Launches terminal windows via `osascript` with per-application AppleScript templates
+- Detects available terminal applications via `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)`
+- Launches terminal windows via `NSAppleScript` with per-application AppleScript templates
 - Executes `sbx exec -it <name> bash` inside the launched terminal
 - Defaults to Terminal.app when no preference is set
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-```typescript
-type TerminalApp = "terminal" | "iterm";
+```swift
+enum TerminalApp: String, Sendable, Codable, CaseIterable {
+    case terminal  // com.apple.Terminal
+    case iterm     // com.googlecode.iterm2
+}
 
-interface ExternalTerminalLauncher {
-  detectAvailable(): Promise<TerminalApp[]>;
-  openShell(sandboxName: string, app: TerminalApp): Promise<void>;
+protocol ExternalTerminalProtocol: Sendable {
+    func detectAvailable() async -> [TerminalApp]
+    func openShell(sandboxName: String, app: TerminalApp) async throws
 }
 ```
 
-- Preconditions: Target terminal application must be installed. Sandbox must be running. Sandbox name must pass the same `/^[a-z0-9][a-z0-9-]*$/` validation before interpolation into AppleScript.
+- Preconditions: Target terminal application must be installed. Sandbox must be running. Sandbox name must pass the same `^[a-z0-9][a-z0-9-]*$` validation before interpolation into AppleScript.
 - Postconditions: A new terminal window opens with an interactive bash shell inside the specified sandbox.
 
 **Implementation Notes**
-- Integration: Terminal.app via `osascript -e 'tell app "Terminal" to do script "sbx exec -it <name> bash"'`; iTerm via iTerm2 AppleScript API. Sandbox name must be escaped for AppleScript string context (backslash-escape `\` and `"`) before interpolation.
-- Validation: Filesystem check for `/Applications/Terminal.app` and `/Applications/iTerm.app`; Terminal.app is always present on macOS
-- Risks: Non-standard installation paths; user preference setting as fallback (11.5)
+- Integration: Terminal.app via `NSAppleScript` with `tell app "Terminal" to do script "sbx exec -it <name> bash"`; iTerm via iTerm2 AppleScript API. Sandbox name escaped for AppleScript string context (backslash-escape `\` and `"`) before interpolation.
+- Validation: `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` for detection — `com.apple.Terminal` (always present) and `com.googlecode.iterm2`
+- Risks: Non-standard installation paths handled by bundle ID lookup; user preference setting as fallback (11.5)
 
-### Preload Layer
-
-#### PreloadBridge
-
-| Field | Detail |
-|-------|--------|
-| Intent | Exposes typed window.sbx API to renderer via Electron contextBridge |
-| Requirements | 9.1, 9.2 |
-
-**Responsibilities & Constraints**
-- Maps each `window.sbx` method to the corresponding `ipcRenderer.invoke` call
-- Provides `onSessionData` subscription returning an unsubscribe function
-- Contains no business logic — pure IPC channel mapping
-
-**Contracts**: API [x]
-
-##### API Contract
-
-```typescript
-interface SbxPreloadApi {
-  // Lifecycle
-  list(): Promise<Sandbox[]>;
-  run(agent: "claude", workspace: string, opts?: RunOptions): Promise<Sandbox>;
-  stop(name: string): Promise<void>;
-  rm(name: string): Promise<void>;
-
-  // Policies
-  policyList(): Promise<PolicyRule[]>;
-  policyAllow(resources: string): Promise<PolicyRule>;
-  policyDeny(resources: string): Promise<PolicyRule>;
-  policyRemove(resource: string): Promise<void>;
-  policyLog(sandboxName?: string): Promise<PolicyLogEntry[]>;
-
-  // Ports
-  portsList(name: string): Promise<PortMapping[]>;
-  portsPublish(name: string, hostPort: number, sbxPort: number): Promise<PortMapping>;
-  portsUnpublish(name: string, hostPort: number, sbxPort: number): Promise<void>;
-
-  // Session
-  attachSession(name: string): Promise<void>;
-  sendMessage(name: string, message: string): Promise<void>;
-  detachSession(name: string): Promise<void>;
-  onSessionData(callback: (data: string) => void): () => void;
-
-  // Filesystem
-  selectDirectory(): Promise<string | null>;
-
-  // External Terminal
-  openExternalTerminal(sandboxName: string, app?: TerminalApp): Promise<void>;
-  getAvailableTerminals(): Promise<TerminalApp[]>;
-}
-```
-
-| Channel | Direction | Request | Response | Errors |
-|---------|-----------|---------|----------|--------|
-| sbx:list | invoke | — | Sandbox[] | CLI_ERROR |
-| sbx:run | invoke | agent, workspace, opts | Sandbox | CLI_ERROR, ALREADY_EXISTS |
-| sbx:stop | invoke | name | void | NOT_FOUND |
-| sbx:rm | invoke | name | void | NOT_FOUND |
-| sbx:policy:list | invoke | — | PolicyRule[] | CLI_ERROR |
-| sbx:policy:allow | invoke | resources | PolicyRule | CLI_ERROR |
-| sbx:policy:deny | invoke | resources | PolicyRule | CLI_ERROR |
-| sbx:policy:remove | invoke | resource | void | CLI_ERROR |
-| sbx:policy:log | invoke | sandboxName? | PolicyLogEntry[] | CLI_ERROR |
-| sbx:ports:list | invoke | name | PortMapping[] | NOT_FOUND |
-| sbx:ports:publish | invoke | name, hostPort, sbxPort | PortMapping | PORT_CONFLICT, NOT_RUNNING |
-| sbx:ports:unpublish | invoke | name, hostPort, sbxPort | void | NOT_FOUND |
-| sbx:session:attach | invoke | name | void | NOT_RUNNING |
-| sbx:session:send | invoke | name, message | void | NOT_FOUND |
-| sbx:session:detach | invoke | name | void | — |
-| sbx:session:data | event | — | string | — |
-| dialog:selectDirectory | invoke | — | string or null | — |
-| sbx:terminal:open | invoke | name, app? | void | NOT_RUNNING, CLI_ERROR |
-| sbx:terminal:list | invoke | — | TerminalApp[] | — |
-
-### Renderer Store Layer
+### Model Layer
 
 #### SandboxStore
 
@@ -711,24 +633,27 @@ interface SbxPreloadApi {
 **Contracts**: State [x]
 
 ##### State Management
-```typescript
-interface SandboxStoreState {
-  sandboxes: Sandbox[];
-  loading: boolean;
-  error: string | null;
+```swift
+@Observable final class SandboxStore {
+    var sandboxes: [Sandbox] = []
+    var loading: Bool = false
+    var error: String?
 
-  fetchSandboxes(): Promise<void>;
-  createSandbox(workspace: string, name?: string): Promise<Sandbox>;
-  stopSandbox(name: string): Promise<void>;
-  removeSandbox(name: string): Promise<void>;
-  startPolling(): void;
-  stopPolling(): void;
+    private let service: any SbxServiceProtocol
+    private var pollingTask: Task<Void, Never>?
+
+    func fetchSandboxes() async
+    func createSandbox(workspace: String, name: String?) async throws -> Sandbox
+    func stopSandbox(name: String) async throws
+    func removeSandbox(name: String) async throws
+    func startPolling()
+    func stopPolling()
 }
 ```
 
 - State model: Array of Sandbox objects, loading flag, error string
-- Persistence: In-memory (Zustand); refreshed via polling every 3 seconds
-- Concurrency: Polling timer managed via `setInterval`; mutations trigger immediate re-fetch
+- Persistence: In-memory; refreshed via polling every 3 seconds
+- Concurrency: Polling via `Task` with `Task.sleep(for: .seconds(3))` loop; mutations trigger immediate re-fetch
 
 #### PolicyStore
 
@@ -740,23 +665,27 @@ interface SandboxStoreState {
 **Contracts**: State [x]
 
 ##### State Management
-```typescript
-interface PolicyStoreState {
-  rules: PolicyRule[];
-  logEntries: PolicyLogEntry[];
-  logFilter: {
-    sandboxName: string | null;
-    blockedOnly: boolean;
-  };
-  loading: boolean;
-  error: string | null;
+```swift
+@Observable final class PolicyStore {
+    var rules: [PolicyRule] = []
+    var logEntries: [PolicyLogEntry] = []
+    var logFilter: LogFilter = LogFilter()
+    var loading: Bool = false
+    var error: String?
 
-  fetchPolicies(): Promise<void>;
-  addAllow(resources: string): Promise<void>;
-  addDeny(resources: string): Promise<void>;
-  removeRule(resource: string): Promise<void>;
-  fetchLog(sandboxName?: string): Promise<void>;
-  setLogFilter(filter: Partial<PolicyStoreState["logFilter"]>): void;
+    struct LogFilter {
+        var sandboxName: String?
+        var blockedOnly: Bool = false
+    }
+
+    private let service: any SbxServiceProtocol
+
+    func fetchPolicies() async
+    func addAllow(resources: String) async throws
+    func addDeny(resources: String) async throws
+    func removeRule(resource: String) async throws
+    func fetchLog(sandboxName: String?) async
+    func setLogFilter(_ filter: LogFilter)
 }
 ```
 
@@ -768,26 +697,28 @@ interface PolicyStoreState {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Manages active PTY session state and data subscription |
+| Intent | Manages active PTY session state |
 | Requirements | 6.1–6.6 |
 
 **Contracts**: State [x]
 
 ##### State Management
-```typescript
-interface SessionStoreState {
-  activeSandbox: string | null;
-  connected: boolean;
-  error: string | null;
-  unsubscribe: (() => void) | null;
+```swift
+@Observable final class SessionStore {
+    var activeSandbox: String?
+    var connected: Bool = false
+    var error: String?
 
-  attach(name: string): Promise<void>;
-  sendMessage(message: string): Promise<void>;
-  detach(): void;
+    private let service: any SbxServiceProtocol
+    private var currentHandle: PtyHandle?
+
+    func attach(name: String) async throws
+    func sendMessage(_ message: String) async throws
+    func detach()
 }
 ```
 
-- State model: Active sandbox name, connection flag, cleanup function reference
+- State model: Active sandbox name, connection flag, PTY handle reference
 - Persistence: In-memory; session is transient per user interaction
 - Concurrency: Only one active session at a time; attaching a new session detaches the previous
 
@@ -801,50 +732,66 @@ interface SessionStoreState {
 **Contracts**: State [x]
 
 ##### State Management
-```typescript
-interface SettingsStoreState {
-  preferredTerminal: TerminalApp | null;
-  setPreferredTerminal(app: TerminalApp): void;
+```swift
+@Observable final class SettingsStore {
+    var preferredTerminal: TerminalApp? {
+        didSet {
+            UserDefaults.standard.set(preferredTerminal?.rawValue, forKey: "preferredTerminal")
+        }
+    }
+
+    init() {
+        if let raw = UserDefaults.standard.string(forKey: "preferredTerminal") {
+            self.preferredTerminal = TerminalApp(rawValue: raw)
+        }
+    }
 }
 ```
 
 - State model: Terminal preference
-- Persistence: Zustand persist middleware with localStorage backend
-- Concurrency: Single writer; reads are synchronous
+- Persistence: `UserDefaults` for simple key-value storage
+- Concurrency: Single writer; reads are synchronous via `@Observable`
 
-### Renderer UI Components (Summary)
+### View Layer (Summary)
 
-UI components follow "The Technical Monolith" design system. These are presentational components with no new architectural boundaries.
+UI views follow "The Technical Monolith" design system. These are presentational views with no new architectural boundaries.
+
+**Design System**
+
+The design system is implemented via SwiftUI extensions:
+- **Colors**: Dark surface hierarchy via `Color` extensions — `surfaceLowest` (#0E0E0E), `surface` (#131313), `surfaceContainer` (#1C1B1B), `surfaceContainerHigh` (#2A2A2A), `surfaceContainerHighest` (#353534). Accent: `#ADC6FF`. Secondary/LIVE: `#4EDEA3`. Error: `#F2B8B5`. No 1px borders — tonal depth for boundaries.
+- **Fonts**: Inter via `Font.custom("Inter", ...)` for UI elements, JetBrains Mono for code/metrics, Space Grotesk for labels. Registered via Info.plist `ATSApplicationFontsPath`.
+- **Corners**: Maximum `cornerRadius` of 8 (0.5rem equivalent) for all components.
+- **Dark mode**: `.preferredColorScheme(.dark)` applied at the `WindowGroup` level.
 
 **Layout**
-- **Shell**: Root layout with fixed sidebar, top bar, and scrollable content area. Provides routing between dashboard and policy views. Requirements: 8.1–8.5.
-- **Sidebar**: Navigation rail with glassmorphism effect (`surface-variant` at 60% opacity, 20px backdrop-blur). Links: Dashboard, Policies, Settings. "Deploy Agent" CTA at bottom. Space Grotesk labels, uppercase, tracking-widest.
-- **TopBar**: Fixed header with app title ("Monolith Console"), search input, and user area. Inter font, `#ADC6FF` accent.
+- **ShellView**: Root layout using `NavigationSplitView` with fixed sidebar and scrollable detail area. Provides routing between dashboard and policy views via sidebar selection binding. Requirements: 8.1–8.5.
+- **SidebarView**: Navigation list with sections. Links: Dashboard, Policies, Settings. "Deploy Agent" button at bottom. Space Grotesk labels, uppercase styling.
 
 **Dashboard**
-- **SandboxGrid**: CSS grid rendering SandboxCard per sandbox plus a "+" placeholder card. Asymmetric bento layout on wide screens (first card spans 2 columns).
-- **SandboxCard**: Displays sandbox name, agent type, status chip, workspace path, port chips (`8080→3000`), and action buttons (pause, open shell, open terminal, terminate). Hover transitions to `surface-container-high`. "Terminate Agent" in `error` color.
-- **StatusChip**: Green `secondary` (#4EDEA3) 4px dot with glow animation for "running" (LIVE). `surface-container-highest` for "stopped" (STOPPED). Spinner for "creating"/"removing". Space Grotesk `label-sm` typeface.
-- **CreateProjectDialog**: Modal over `surface-container-highest` with backdrop blur. Contains native directory picker trigger, optional name input, and create/cancel buttons. JetBrains Mono for path display.
-- **GlobalStats**: Stat bar showing running count and total count. JetBrains Mono for numbers, Space Grotesk labels.
+- **SandboxGridView**: `LazyVGrid` rendering `SandboxCardView` per sandbox plus a "+" placeholder card. Adaptive columns for responsive layout.
+- **SandboxCardView**: Displays sandbox name, agent type, status chip, workspace path, port chips (`8080→3000`), and action buttons (pause, open shell, open terminal, terminate). Hover effect via `.onHover` modifier. "Terminate Agent" in error color. Uses `.confirmationDialog` for termination confirmation (3.4).
+- **StatusChipView**: Green `secondary` (#4EDEA3) 4px circle with pulse animation (`.animation(.easeInOut.repeatForever())`) for "running" (LIVE). `surfaceContainerHighest` for "stopped" (STOPPED). `ProgressView()` spinner for "creating"/"removing". Space Grotesk label-sm typeface.
+- **CreateProjectSheet**: `.sheet` modifier with `.fileImporter` for native directory picker (NSOpenPanel). Optional name `TextField`. Create/Cancel buttons. JetBrains Mono for path display.
+- **GlobalStatsView**: Stat bar showing running count and total count. JetBrains Mono for numbers, Space Grotesk labels.
 
 **Policies**
-- **PolicyPanel**: Full-view panel listing PolicyRuleRow components with AddPolicyDialog trigger button. Fetches rules on mount.
-- **AddPolicyDialog**: Modal with domain text input (comma-separated), allow/deny radio toggle, submit/cancel. JetBrains Mono for domain input.
-- **PolicyLogViewer**: Data table with columns: sandbox, host, proxy type, rule, last seen, count, status. Filter controls for sandbox name dropdown and blocked-only toggle. Ghost borders (`outline-variant` at 15% opacity) for table rows.
+- **PolicyPanelView**: Full-view panel listing `PolicyRuleRow` components with "Add Policy" button triggering `AddPolicySheet`. Fetches rules via `.task { }` on appear.
+- **AddPolicySheet**: `.sheet` with domain `TextField` (comma-separated), `Picker` for allow/deny, submit/cancel. JetBrains Mono for domain input.
+- **PolicyLogView**: `Table` view with columns: sandbox, host, proxy type, rule, last seen, count, status. Filter controls for sandbox name `Picker` and blocked-only `Toggle`. Subtle dividers using `surfaceContainerHigh` at 15% opacity.
 
 **Ports**
 
-Port state lives in `Sandbox.ports[]` within SandboxStore. The `usePorts` hook calls port IPC methods (`portsPublish`, `portsUnpublish`, `portsList`) directly via `window.sbx` and triggers `SandboxStore.fetchSandboxes()` after each mutation to refresh the embedded `Sandbox.ports[]` array. No separate PortStore is needed.
+Port state lives in `Sandbox.ports[]` within `SandboxStore`. Views call port service methods directly through `SandboxStore` and trigger `fetchSandboxes()` after each mutation. No separate PortStore needed.
 
-- **PortPanel**: Per-sandbox drawer showing PortMappingRow components. Reads port data from `SandboxStore` via the parent sandbox's `ports[]` field. Displays "ports cleared on stop" notice when sandbox is stopped. AddPortDialog trigger disabled when stopped (5.6).
-- **AddPortDialog**: Modal with host port and sandbox port number inputs. Validates numeric input and shows inline error for port conflicts.
+- **PortPanelView**: Per-sandbox inspector showing `PortMappingRow` components. Reads port data from `SandboxStore` via the parent sandbox's `ports[]` field. Displays "ports cleared on stop" notice when sandbox is stopped. Add button disabled when stopped (5.6).
+- **AddPortSheet**: `.sheet` with host port and sandbox port `TextField` with `.keyboardType(.numberPad)` style. Validates numeric input; shows inline error for port conflicts.
 
 **Session**
-- **SessionPanel**: Split layout — MiniTerminal occupying upper area, ChatInput fixed at bottom. AgentStatusBar between. Takes full content area width when active.
-- **ChatInput**: Text input with send button. Sends on Enter key or button click. Disabled when not connected. JetBrains Mono font.
-- **MiniTerminal**: xterm.js terminal instance with `surface-container-lowest` (#0E0E0E) background. Auto-fits to container via fit addon. Receives data via `onSessionData` subscription.
-- **AgentStatusBar**: Horizontal bar showing model name ("claude"), sandbox name, uptime counter, and connection status indicator (green dot when connected).
+- **SessionPanelView**: `VSplitView` or `VStack` layout — `TerminalViewWrapper` occupying upper area, `ChatInputView` fixed at bottom. `AgentStatusBar` between. Takes full detail area when active.
+- **ChatInputView**: `TextField` with send `Button`. Sends on Enter via `.onSubmit`. Disabled when not connected. JetBrains Mono font.
+- **TerminalViewWrapper**: `NSViewRepresentable` wrapping SwiftTerm's `MacLocalTerminalView` (real mode) or `TerminalView` fed by `MockPtyEmitter` (mock mode). `surface` (#0E0E0E) background. Auto-resizes via SwiftTerm's built-in resize handling.
+- **AgentStatusBar**: Horizontal `HStack` showing model name ("claude"), sandbox name, uptime counter (via `TimelineView`), and connection status indicator (green circle when connected).
 
 ## Data Models
 
@@ -859,12 +806,12 @@ erDiagram
         string agent
         SandboxStatus status
         string workspace
-        string createdAt
+        Date createdAt
     }
     PortMapping {
-        number hostPort
-        number sandboxPort
-        string protocol
+        int hostPort
+        int sandboxPort
+        string protocolType
     }
     PolicyRule {
         string id
@@ -878,9 +825,9 @@ erDiagram
         string host
         string proxy
         string rule
-        string lastSeen
-        number count
-        boolean blocked
+        Date lastSeen
+        int count
+        bool blocked
     }
 ```
 
@@ -900,10 +847,10 @@ erDiagram
 All data is either in-memory (mock mode) or derived from CLI output (real mode). No database or file-based persistence is required for application data.
 
 **Mock state containers**:
-- `sandboxes: Map<string, Sandbox>` — keyed by sandbox name
-- `policies: Map<string, PolicyRule>` — keyed by policy ID
-- `portMappings: Map<string, PortMapping[]>` — keyed by sandbox name
-- `policyLogs: PolicyLogEntry[]` — append-only array
+- `sandboxes: [String: Sandbox]` — keyed by sandbox name
+- `policies: [String: PolicyRule]` — keyed by policy ID
+- `portMappings: [String: [PortMapping]]` — keyed by sandbox name
+- `policyLogs: [PolicyLogEntry]` — append-only array
 
 **Referential integrity**:
 - Removing a sandbox cascades to its port mappings and policy log entries
@@ -912,57 +859,69 @@ All data is either in-memory (mock mode) or derived from CLI output (real mode).
 ## Error Handling
 
 ### Error Strategy
-All sbx operations can fail. Errors are categorized by `SbxServiceError.code` and surfaced as toast notifications in the renderer.
+All sbx operations can fail. Errors are categorized by `SbxServiceError` cases and surfaced as alert banners or toast-style overlays in the view layer.
 
 ### Error Categories and Responses
 
 **User Errors**:
-- Invalid port number → field-level validation in AddPortDialog before submission
-- Empty domain in policy add → field-level validation in AddPolicyDialog
+- Invalid port number → field-level validation in AddPortSheet before submission
+- Empty domain in policy add → field-level validation in AddPolicySheet
 
 **System Errors**:
-- `sbx` CLI not installed → `CLI_ERROR` → full-screen error state with install guidance (9.4)
-- Docker Desktop not running → `DOCKER_NOT_RUNNING` → full-screen error state with start guidance (9.4)
-- CLI command timeout → `CLI_ERROR` → toast notification with retry suggestion (9.5)
+- `sbx` CLI not installed → `.cliError` → full-screen error state with install guidance (9.4)
+- Docker Desktop not running → `.dockerNotRunning` → full-screen error state with start guidance (9.4)
+- CLI command timeout → `.cliError` → toast notification with retry suggestion (9.5)
 
 **Business Logic Errors**:
-- Duplicate host port → `PORT_CONFLICT` → toast notification naming the conflicting port (5.5)
-- Operation on non-existent sandbox → `NOT_FOUND` → toast notification, refresh grid
-- Port publish on stopped sandbox → `NOT_RUNNING` → toast notification (5.6)
-- Shell on stopped sandbox → `NOT_RUNNING` → UI disables action (11.7)
-- Terminal app not installed → `CLI_ERROR` → toast notification with app name and alternatives (11.6)
+- Duplicate host port → `.portConflict` → toast notification naming the conflicting port (5.5)
+- Operation on non-existent sandbox → `.notFound` → toast notification, refresh grid
+- Port publish on stopped sandbox → `.notRunning` → toast notification (5.6)
+- Shell on stopped sandbox → `.notRunning` → UI disables action (11.7)
+- Terminal app not installed → `.cliError` → toast notification with app name and alternatives (11.6)
 
 ### Monitoring
-- Main process logs all CLI invocations and results to console (electron-log in production)
-- Renderer logs all IPC errors to console
-- E2E tests assert on error toast visibility for negative test cases
+- Service layer logs all CLI invocations and results via `os.Logger` (unified logging)
+- View layer logs errors to console via `os.Logger`
+- XCUITest E2E tests assert on error alert visibility for negative test cases
 
 ## Testing Strategy
 
-### Unit Tests (Vitest)
+### Unit Tests (Swift Testing)
 - MockSbxService: lifecycle transitions, delay simulation, policy seeding, port validation, duplicate workspace handling
 - SbxOutputParser: parsing `sbx ls`, `sbx policy ls`, `sbx policy log`, `sbx ports` outputs; edge cases (empty output, malformed lines)
-- Zustand stores: sandbox store polling behavior, policy store CRUD, session store attach/detach lifecycle
+- @Observable stores: sandbox store polling behavior, policy store CRUD, session store attach/detach lifecycle
 - ExternalTerminalLauncher: detection logic, AppleScript command generation per terminal app
 
-### Integration Tests (Vitest)
-- IpcHandlers: verify IPC channel registration and correct routing to SbxService methods
+### Integration Tests (Swift Testing)
 - ServiceFactory: verify mock selection with `SBX_MOCK=1` and real selection without
-- PtyManager: verify attach/write/dispose lifecycle with MockPtyEmitter
+- PtySessionManager: verify attach/write/dispose lifecycle with MockPtyEmitter
+- CliExecutor: verify process spawning and output capture with a known command
 
-### E2E Tests (Playwright with Electron)
-- project-creation.spec: pick directory → sandbox appears in grid as LIVE → verify name and workspace
-- sandbox-lifecycle.spec: create → verify LIVE → stop → verify STOPPED → remove → verify gone (10.3)
-- policy-management.spec: add allow rule → verify in list → remove → verify gone (10.4)
-- port-forwarding.spec: publish 8080:3000 → verify on card and panel → unpublish → verify gone (10.5)
-- session-messaging.spec: click sandbox → attach → send message → verify terminal output → detach (10.6)
+### E2E Tests (XCUITest)
+- ProjectCreationUITests: pick directory → sandbox appears in grid as LIVE → verify name and workspace
+- SandboxLifecycleUITests: create → verify LIVE → stop → verify STOPPED → remove → verify gone (10.3)
+- PolicyManagementUITests: add allow rule → verify in list → remove → verify gone (10.4)
+- PortForwardingUITests: publish 8080:3000 → verify on card and panel → unpublish → verify gone (10.5)
+- SessionMessagingUITests: click sandbox → attach → send message → verify terminal output → detach (10.6)
 
-All E2E tests run against MockSbxService (forced via `SBX_MOCK=1`) without requiring Docker Desktop (10.2).
+All E2E tests run against MockSbxService (forced via `SBX_MOCK=1` launch environment on `XCUIApplication`) without requiring Docker Desktop (10.2).
+
+Mock injection pattern:
+```swift
+// In XCUITest setUp:
+let app = XCUIApplication()
+app.launchEnvironment["SBX_MOCK"] = "1"
+app.launch()
+
+// In app entry point:
+let service = ServiceFactory.create()
+// ServiceFactory checks ProcessInfo.processInfo.environment["SBX_MOCK"]
+```
 
 ## Security Considerations
 
-- **contextBridge only**: The renderer has no access to `ipcRenderer`, `require`, or Node.js APIs. All communication goes through the typed `window.sbx` API (9.1, 9.3).
-- **No remote content**: The renderer loads local files only. No `loadURL` with external origins.
-- **CSP headers**: Content Security Policy restricts script sources to `'self'` only.
-- **Input sanitization**: Sandbox names are validated against `/^[a-z0-9][a-z0-9-]*$/` before any CLI or osascript invocation. Domain inputs for policies are validated before passing to CLI. Port numbers are validated as positive integers within valid range. All CLI invocations use array-form `child_process.spawn` (never shell string interpolation). AppleScript string arguments are escaped before interpolation.
-- **PTY isolation**: PTY sessions run `sbx` commands, not arbitrary shell commands. The renderer cannot specify which command to run — only which sandbox to attach to.
+- **Protocol boundary**: Views access services only through `SbxServiceProtocol` — no direct CLI access from view layer (9.1, 9.3).
+- **No App Sandbox**: Required for CLI tool access. Mitigated by Hardened Runtime and notarization.
+- **Input sanitization**: Sandbox names are validated against `^[a-z0-9][a-z0-9-]*$` before any CLI or AppleScript invocation. Domain inputs for policies are validated before passing to CLI. Port numbers are validated as positive integers within valid range. All CLI invocations use `Process` with array-form arguments (never shell string interpolation). AppleScript string arguments are escaped before interpolation (9.2).
+- **Process isolation**: `Process` with array-form arguments prevents command injection — same safety guarantee as `child_process.spawn` with array args.
+- **PTY isolation**: PTY sessions run `sbx` commands, not arbitrary shell commands. Views cannot specify which command to run — only which sandbox to attach to.

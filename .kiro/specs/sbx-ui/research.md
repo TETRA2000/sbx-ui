@@ -2,11 +2,11 @@
 
 ## Summary
 - **Feature**: sbx-ui
-- **Discovery Scope**: New Feature (greenfield Electron desktop application)
+- **Discovery Scope**: New Feature (greenfield macOS native desktop application)
 - **Key Findings**:
   - The `sbx` CLI is the sole programmatic interface — no REST API, SDK, or event system exists; all operations require CLI invocation and stdout parsing
-  - `sbx policy log --json` provides machine-readable output for policy monitoring; other commands require column-based text parsing
-  - Port mappings are ephemeral (cleared on sandbox stop) and can only be managed post-creation via `sbx ports`
+  - SwiftTerm (v1.13.0, MIT, actively maintained) provides production-ready terminal emulation with PTY management for macOS, eliminating the need for xterm.js
+  - App Sandbox must be disabled to spawn external CLI tools like `sbx`; Hardened Runtime is compatible and required for notarization
 
 ## Research Log
 
@@ -39,102 +39,159 @@
   - Each sandbox has its own isolated Docker daemon, image cache, and package installations
   - `sbx reset` stops all VMs and deletes all sandbox data including secrets
 - **Implications**:
-  - RealSbxService must spawn CLI processes and parse column-delimited stdout
+  - SbxService must spawn CLI processes via Foundation `Process` and parse column-delimited stdout
   - Policy log should prefer `--json` flag for reliable parsing
   - No event/WebSocket API exists — polling is required for state updates
   - `sbx exec -it <name> bash` is the exact command for opening a shell inside a sandbox
   - Port management is always a separate operation after sandbox creation
 
-### Electron PTY and Terminal Integration
-- **Context**: Session interaction requires PTY management for Claude Code's terminal-based interface
-- **Sources Consulted**: node-pty documentation, xterm.js API, Electron IPC patterns
+### SwiftTerm Terminal Emulation Library
+- **Context**: Need terminal rendering with full ANSI support for Claude Code session interaction, replacing xterm.js
+- **Sources Consulted**:
+  - https://github.com/migueldeicaza/SwiftTerm (v1.13.0, released 2026-03-27)
+  - SwiftTerm source: `Sources/SwiftTerm/Mac/MacTerminalView.swift`, `MacLocalTerminalView.swift`, `LocalProcess.swift`, `Pty.swift`
 - **Findings**:
-  - `node-pty` spawns pseudo-terminals in the main process; data flows as Buffer/string events
-  - `xterm.js` renders ANSI-encoded terminal output in the renderer; requires addon packages (fit, weblinks)
-  - PTY data cannot cross Electron IPC directly as streams — requires IPC event channels
-  - `ipcRenderer.on("channel", callback)` for streaming data from main to renderer is the established pattern
-  - For real mode: `node-pty` spawns `sbx run <name>` and streams I/O
-  - For mock mode: `MockPtyEmitter` (EventEmitter) generates simulated ANSI output sequences
-  - Claude Code runs with `--dangerously-skip-permissions` flag inside sandbox (YOLO mode)
-  - Claude Code uses base image `docker/sandbox-templates:claude-code`
+  - **Production-proven**: Used in Secure Shellfish, La Terminal, and CodeEdit. 1,451+ stars, MIT license.
+  - **Platform support**: macOS, iOS, visionOS, Linux, Windows. The macOS front-end uses AppKit (NSView).
+  - **Terminal capabilities**: VT100/Xterm emulation, ANSI/256/TrueColor, bold/italic/underline/strikethrough, mouse events, Sixel/iTerm2/Kitty graphics, hyperlinks, Metal rendering, search, selection.
+  - **Architecture**: UI-agnostic engine (`Terminal.swift`, `Buffer.swift`, parser) with platform-specific front-ends. Engine is thread-safe and can be used headlessly.
+  - **PTY management**: `LocalProcess` class handles PTY creation via two paths:
+    - Modern: `openpty` + `posix_spawn` with `POSIX_SPAWN_SETSID` (preferred, avoids `fork()`)
+    - Legacy: `forkpty` wrapper via `PseudoTerminalHelpers`
+  - **`MacLocalTerminalView`**: Convenience NSView subclass that wires `TerminalView` to `LocalProcess` — handles PTY creation, data piping, and window resize automatically.
+  - **SwiftUI integration**: Wrap `MacLocalTerminalView` or `TerminalView` using `NSViewRepresentable`.
+  - **Data flow**: `LocalProcess` reads from PTY master fd via `readabilityHandler`, feeds data to `Terminal` engine, which triggers NSView redraws.
 - **Implications**:
-  - PtyManager owns one PTY instance per active session (not per sandbox — only attached sandboxes have PTY)
-  - Session data streams via IPC event channel `sbx:session:data`
-  - `sendMessage` writes to PTY stdin, simulating terminal input
-  - Main process must manage PTY lifecycle (create on attach, destroy on detach/sandbox stop)
+  - SwiftTerm replaces both `node-pty` and `xterm.js` from the Electron design
+  - `NSViewRepresentable` wrapper needed for SwiftUI integration
+  - For mock mode: use the headless `Terminal` engine fed by a `MockPtyEmitter` actor that generates simulated ANSI output
+  - No WKWebView/xterm.js needed — native rendering is superior for macOS
 
-### External Terminal Launching on macOS
-- **Context**: Requirement 11 specifies opening bash shells in external terminal applications (Terminal.app, iTerm)
-- **Sources Consulted**: macOS `open` command, osascript/AppleScript documentation, iTerm2 AppleScript API
+### Foundation Process for CLI Spawning
+- **Context**: Need to spawn `sbx` CLI commands from a macOS app, replacing Electron's `child_process.spawn`
+- **Sources Consulted**: Apple Developer Documentation (Foundation.Process), Swift Concurrency documentation
 - **Findings**:
-  - Terminal.app: `osascript -e 'tell app "Terminal" to do script "sbx exec -it <name> bash"'`
-  - iTerm: `osascript -e 'tell app "iTerm2" to create window with default profile command "sbx exec -it <name> bash"'`
-  - Detection: Check if app bundle exists at `/Applications/iTerm.app` (Terminal.app is always present on macOS)
-  - Default terminal: macOS uses Terminal.app as default; no reliable API to detect user's preferred terminal
+  - `Process` (formerly NSTask) spawns external commands with full stdout/stderr/exit code capture
+  - Use `Pipe` for stdout/stderr capture, `terminationStatus` for exit code
+  - `AsyncStream` wraps `readabilityHandler` for non-blocking output streaming with Swift Concurrency
+  - `terminationHandler` callback provides async notification of process completion
+  - Array-form arguments (not shell string interpolation) prevents command injection — same safety as `child_process.spawn` with array args
+  - Use `/usr/bin/env` as executable with `["sbx", ...]` as arguments to locate `sbx` on PATH
+- **Implications**:
+  - `CliExecutor` maps directly from the Electron design — `Process` replaces `child_process.spawn`
+  - `SbxOutputParser` stays conceptually the same, implemented in Swift with `String` APIs
+  - Background execution via `Task.detached` or wrapping `waitUntilExit()` in `withCheckedContinuation`
+
+### macOS App Sandbox and Security
+- **Context**: Understanding security constraints for a macOS app that spawns external CLI tools
+- **Sources Consulted**: Apple Developer Documentation (App Sandbox, Hardened Runtime, Notarization)
+- **Findings**:
+  - **App Sandbox blocks `Process` from spawning arbitrary executables** — a sandboxed app can only launch executables within its own bundle or at a few system paths
+  - No entitlement exists to selectively allow `Process` spawning from within a sandbox
+  - **Hardened Runtime** (required for notarization) is fully compatible with `Process` — does not block spawning external tools
+  - Developer tools (iTerm2, VS Code, Docker Desktop) distribute outside Mac App Store without App Sandbox
+  - XPC Service could allow a non-sandboxed helper to spawn processes for a sandboxed host, but adds significant complexity
+  - `com.apple.security.cs.allow-unsigned-executable-memory` entitlement only needed for unsigned plugins, not for `Process`
+- **Implications**:
+  - App Sandbox must be disabled for sbx-ui
+  - Distribute outside Mac App Store via direct download (DMG)
+  - Enable Hardened Runtime for notarization
+  - This is the standard approach for developer tools wrapping CLI utilities
+
+### SwiftUI macOS Architecture Patterns
+- **Context**: Determine the best architecture for a macOS SwiftUI app replacing the Electron Main/Preload/Renderer layered architecture
+- **Sources Consulted**: Apple WWDC 2024-2025 sessions, Swift documentation, SwiftUI API reference
+- **Findings**:
+  - **State management**: `@Observable` macro (Observation framework, macOS 14+) is the standard. Replaces `@ObservableObject`/`@Published` with simpler, granular property tracking. Views only re-render when accessed properties change.
+  - **Navigation**: `NavigationSplitView` for sidebar + detail layout. Bind selection to `@State` or `@Observable` property. Three-column layout available via `content` closure.
+  - **Design system**: Custom `Color` extensions for semantic tokens. `.preferredColorScheme(.dark)` at window level. Custom fonts via Info.plist `ATSApplicationFontsPath` + `Font.custom()`.
+  - **Service layer**: Protocol-oriented with `Sendable` conformance. `protocol SbxServiceProtocol: Sendable { ... }`. Inject via `.environment()`. This directly replaces TypeScript interfaces.
+  - **Concurrency**: `async/await` for all operations. `actor` for thread-safe service state. `AsyncStream`/`AsyncSequence` for polling. `.task { }` view modifier for lifecycle-bound async work.
+  - **Data**: In-memory `@Observable` state for ephemeral data (sandbox list, session state). SwiftData only for persistent preferences.
+- **Implications**:
+  - Electron's Main/Preload/Renderer boundary collapses into a single-process Swift app with `@Observable` models
+  - No IPC layer needed — views directly call service protocols
+  - Zustand stores map to `@Observable` model classes
+  - contextBridge/preload layer is eliminated entirely
+
+### macOS Testing Strategy
+- **Context**: Determine testing approach for a macOS SwiftUI app, replacing Electron's Vitest + Playwright
+- **Sources Consulted**: Apple Developer Documentation (Swift Testing, XCUITest), swift-snapshot-testing library
+- **Findings**:
+  - **Swift Testing** (`import Testing`, `@Test`, `#expect`): Preferred for unit and integration tests in Xcode 16+. Better diagnostics, parameterized tests, tags. The Xcode project already uses this.
+  - **XCUITest**: Still required for UI automation — Swift Testing does not support XCUIApplication. Use `XCTestCase` in the UI test target.
+  - **Mock injection**: Launch arguments (`CommandLine.arguments.contains("--mock-mode")`) or environment variables (`ProcessInfo.processInfo.environment["SBX_MOCK"]`) for test-time service swapping.
+  - **XCUITest for macOS**: `XCUIApplication().launch()`, query via `app.buttons["Label"]`, `app.staticTexts["Text"]`. Use `.accessibilityIdentifier()` for reliable element queries.
+  - **NavigationSplitView testing**: Click sidebar items via `app.outlines` or `app.staticTexts`, assert detail content.
+  - **Sheets/alerts**: `app.sheets.firstMatch`, `app.dialogs.firstMatch.buttons["OK"].click()`.
+  - **Snapshot testing**: swift-snapshot-testing (Point-Free) works with `NSHostingView` wrapping SwiftUI views.
+  - **NSWorkspace for app detection**: `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` is preferred over filesystem checks — location-independent.
+- **Implications**:
+  - Vitest → Swift Testing for unit tests
+  - Playwright → XCUITest for E2E tests
+  - `SBX_MOCK=1` environment variable works identically via `ProcessInfo.processInfo.environment`
+  - Accessibility identifiers are critical for reliable UI test element queries
+
+### External Terminal Launching on macOS (Updated)
+- **Context**: Requirement 11 specifies opening bash shells in external terminal applications
+- **Sources Consulted**: macOS NSWorkspace API, osascript/AppleScript documentation, iTerm2 AppleScript API
+- **Findings**:
+  - **App detection**: `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` is preferred over filesystem checks:
+    - Terminal.app: `com.apple.Terminal`
+    - iTerm2: `com.googlecode.iterm2`
+  - **Terminal launching**: osascript remains the best approach for passing commands:
+    - Terminal.app: `osascript -e 'tell app "Terminal" to do script "sbx exec -it <name> bash"'`
+    - iTerm: `osascript -e 'tell app "iTerm2" to create window with default profile command "sbx exec -it <name> bash"'`
+  - **Swift API**: Can also use `Process` to run `osascript` with arguments, or use `NSAppleScript` class directly
   - Both apps support AppleScript for programmatic window creation
 - **Implications**:
-  - ExternalTerminalLauncher component needs AppleScript templates per terminal application
-  - App detection uses filesystem checks for known bundle paths
-  - User preference stored in renderer localStorage (simple key-value, no full settings system needed for Phase 1)
+  - `NSWorkspace` for detection replaces filesystem checks — more robust for non-standard installations
+  - `NSAppleScript` or `Process` with `osascript` for launching — both work without App Sandbox
+  - User preference stored via SwiftData or `UserDefaults` (simpler than localStorage)
   - Command to execute inside terminal: `sbx exec -it <name> bash`
-
-### CLI Output Parsing Strategy
-- **Context**: Need to reliably parse `sbx` CLI stdout for all operations
-- **Sources Consulted**: Phase 1 implementation plan, Docker Sandbox documentation
-- **Findings**:
-  - `sbx ls`: column-delimited with headers (SANDBOX, AGENT, STATUS, PORTS, WORKSPACE); split by 2+ whitespace
-  - `sbx policy ls`: column-delimited (ID, TYPE, DECISION, RESOURCES)
-  - `sbx policy log`: sections prefixed by "Blocked requests:" / "Allowed requests:"; column-delimited within
-  - `sbx policy log --json`: machine-readable JSON — preferred for policy log
-  - `sbx ports <name>`: shows HOST and SANDBOX columns; regex `(\d+)->(\d+)` extracts mappings
-  - Lifecycle commands (`run`, `stop`, `rm`) return success/failure; `run` may output sandbox details
-- **Implications**:
-  - SbxOutputParser needs dedicated parsers per command type
-  - Column-based parsing uses header positions for field extraction (not simple split — fields like workspace paths may contain spaces)
-  - Policy log should use `--json` when available for robustness
-  - Error detection: non-zero exit codes and stderr content
-
-### Docker Sandbox Security Model
-- **Context**: Understanding the security model is critical for correct GUI behavior and user guidance
-- **Sources Consulted**:
-  - https://docs.docker.com/ai/sandboxes/security/
-  - https://docs.docker.com/ai/sandboxes/security/isolation/
-  - https://docs.docker.com/ai/sandboxes/security/defaults/
-  - https://docs.docker.com/ai/sandboxes/security/workspace/
-- **Findings**:
-  - Trust boundary is the microVM — agents have full sudo inside but cannot escape
-  - Four isolation layers: Hypervisor, Network, Docker Engine, Credentials
-  - Workspace changes affect host directly — Git hooks, CI config, Makefiles can be modified by agents
-  - No sandbox-to-sandbox communication
-  - All HTTP/HTTPS through host proxy; raw TCP/UDP/ICMP blocked entirely
-  - Permanently blocked (not configurable): host filesystem outside workspace, host Docker daemon, host network/localhost, sandbox-to-sandbox
-  - Organization-level policies (Docker Admin Console) override local `sbx policy` rules
-  - Telemetry can be disabled via `SBX_NO_TELEMETRY=1`
-  - Data directory: macOS `~/Library/Application Support/com.docker.sandboxes/`
-- **Implications**:
-  - GUI should surface workspace safety warnings (agents can modify Git hooks, CI configs)
-  - Network policy UI should indicate that organization rules may override local rules
-  - Error handling should detect and surface Docker/sbx installation issues clearly
 
 ## Architecture Pattern Evaluation
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
-| Layered Main/Preload/Renderer | Follows Electron native process boundaries with service interface at boundary | Natural fit for Electron, clear security boundary, enforced by process model | Tightly coupled to Electron framework | Aligns with steering tech.md and implementation plan |
-| Hexagonal Ports and Adapters | Abstract all external I/O behind port interfaces | Highly testable, easy to swap implementations | Over-engineering for Phase 1 MVP; adapter layer adds indirection | SbxService interface already provides the key port |
-| Event-driven pub/sub | All state changes flow through events | Good for reactive UIs, decoupled components | sbx CLI has no event API; polling required anyway; adds complexity | Could be layered in later for inter-store communication |
+| Single-process @Observable MVVM | SwiftUI views bind to @Observable model classes; services injected via environment | Natural fit for SwiftUI; no IPC overhead; granular reactivity | All code in one process — no forced isolation | Preferred for macOS native apps |
+| Multi-process with XPC | Main app delegates CLI operations to an XPC helper service | Could enable sandboxed main app | Over-engineering; XPC adds significant complexity; not needed without sandbox | Would only be needed for Mac App Store |
+| Hexagonal Ports and Adapters | Abstract all external I/O behind protocol interfaces | Highly testable, easy mock/real swap | Adapter layer adds indirection | SbxServiceProtocol already provides this |
 
-**Selected**: Layered architecture following Electron's Main/Preload/Renderer boundary split, with SbxService interface acting as the primary port/adapter boundary. This provides testability (mock/real swap) without over-engineering.
+**Selected**: Single-process SwiftUI app with `@Observable` models and protocol-based service injection. SbxServiceProtocol acts as the primary port/adapter boundary for testability (mock/real swap). No IPC layer needed — SwiftUI views call services directly through `@Observable` models.
 
 ## Design Decisions
 
-### Decision: CLI Wrapping via child_process.spawn
+### Decision: macOS Native with SwiftUI (Replacing Electron)
+- **Context**: User changed technology direction from Electron to macOS native
+- **Alternatives Considered**:
+  1. Electron + React + TypeScript (original design)
+  2. macOS native with SwiftUI + Swift
+  3. macOS native with AppKit only
+- **Selected Approach**: SwiftUI with AppKit interop where needed (terminal view)
+- **Rationale**: SwiftUI provides modern declarative UI with native macOS look and feel. AppKit interop via `NSViewRepresentable` covers cases like terminal rendering. Eliminates Electron's web overhead and Node.js dependency.
+- **Trade-offs**: SwiftUI macOS has some rough edges compared to AppKit; terminal rendering requires NSViewRepresentable bridge. Single-platform (macOS only).
+- **Follow-up**: Consider Catalyst or cross-platform frameworks if iOS/iPad support is needed in Phase 2
+
+### Decision: SwiftTerm for Terminal Emulation (Replacing xterm.js + node-pty)
+- **Context**: Need terminal rendering with full ANSI support and PTY management
+- **Alternatives Considered**:
+  1. SwiftTerm (native macOS terminal library)
+  2. WKWebView + xterm.js (web-based terminal in native shell)
+  3. Custom AppKit NSView with CoreText rendering
+- **Selected Approach**: SwiftTerm via `MacLocalTerminalView` wrapped in `NSViewRepresentable`
+- **Rationale**: Production-proven (1,451+ stars, used in Secure Shellfish, La Terminal, CodeEdit). Handles both PTY management and terminal rendering in one library. Native rendering avoids WKWebView bridge overhead. MIT license.
+- **Trade-offs**: Dependency on third-party library; requires `NSViewRepresentable` bridge for SwiftUI
+- **Follow-up**: Monitor SwiftTerm releases; consider contributing upstream if gaps found
+
+### Decision: CLI Wrapping via Foundation Process
 - **Context**: The `sbx` CLI is the only programmatic interface to Docker Sandbox
 - **Alternatives Considered**:
-  1. Wrap CLI commands via `child_process.spawn` with stdout parsing
-  2. Wait for a Docker Sandbox SDK/API (none announced)
-- **Selected Approach**: Wrap CLI via spawn with dedicated output parsers
-- **Rationale**: No SDK exists or is planned. The CLI is stable and documented. This matches the steering decision.
+  1. Foundation `Process` with `Pipe` for stdout/stderr capture
+  2. Wait for a Docker Sandbox SDK (none announced)
+  3. POSIX-level `posix_spawn` directly
+- **Selected Approach**: Foundation `Process` with `AsyncStream` for async output
+- **Rationale**: `Process` is the idiomatic Swift API for CLI spawning. Array-form arguments prevent command injection. `AsyncStream` integrates cleanly with Swift Concurrency.
 - **Trade-offs**: Parsing stdout is fragile if CLI output format changes; `--json` mitigates this where available
 - **Follow-up**: Monitor Docker Sandbox releases for SDK or JSON output modes on all commands
 
@@ -142,53 +199,65 @@
 - **Context**: Need near-real-time sandbox status, but `sbx` has no event/WebSocket API
 - **Alternatives Considered**:
   1. Poll `sbx ls` at fixed interval (3s)
-  2. Watch `.sbx/` filesystem directory for state changes
+  2. Watch filesystem directory for state changes
   3. Parse Docker events from the sandbox's Docker daemon
-- **Selected Approach**: Poll `sbx ls` every 3 seconds
-- **Rationale**: Matches `sbx` TUI behavior. Filesystem watching is unreliable across platforms and requires knowledge of internal state directory structure. Docker events are inside the sandbox VM, not accessible from host.
-- **Trade-offs**: 3s polling latency for status changes; CPU overhead from repeated CLI spawning
-- **Follow-up**: Monitor for event API in future `sbx` releases; consider filesystem watchers as optimization
+- **Selected Approach**: Poll `sbx ls` every 3 seconds via `AsyncStream` timer
+- **Rationale**: Matches `sbx` TUI behavior. Filesystem watching is unreliable and requires internal state knowledge. Docker events are inside the sandbox VM.
+- **Trade-offs**: 3s polling latency; CPU overhead from repeated CLI spawning
+- **Follow-up**: Monitor for event API in future `sbx` releases
 
-### Decision: PTY Data Streaming via IPC Events
-- **Context**: Terminal output from Claude Code sessions must reach the renderer for xterm.js rendering
+### Decision: Disable App Sandbox
+- **Context**: App needs to spawn external CLI tools (`sbx`, `osascript`)
 - **Alternatives Considered**:
-  1. IPC event channel (`ipcMain` send → `ipcRenderer.on`)
-  2. Electron MessagePort for direct streaming
-  3. SharedArrayBuffer for zero-copy transfer
-- **Selected Approach**: IPC event channel with `sbx:session:data` event
-- **Rationale**: Simplest approach; proven pattern in Electron terminal apps. MessagePort adds complexity; SharedArrayBuffer requires cross-origin isolation.
-- **Trade-offs**: IPC serialization overhead for high-frequency terminal data; acceptable for text-based PTY output
-- **Follow-up**: Profile IPC overhead under sustained output; consider MessagePort if latency becomes an issue
+  1. Disable App Sandbox, enable Hardened Runtime, notarize for direct distribution
+  2. XPC Service helper for process spawning (sandboxed main app)
+  3. Embed `sbx` binary within app bundle
+- **Selected Approach**: Disable App Sandbox; distribute outside Mac App Store
+- **Rationale**: Standard approach for developer tools (iTerm2, VS Code, Docker Desktop). No entitlement exists for selective Process spawning. XPC adds unnecessary complexity.
+- **Trade-offs**: Cannot distribute on Mac App Store; reduced sandboxing
+- **Follow-up**: Consider XPC architecture if Mac App Store distribution becomes a requirement
 
-### Decision: External Terminal via osascript
+### Decision: @Observable for State Management (Replacing Zustand)
+- **Context**: Need reactive state management for UI updates
+- **Alternatives Considered**:
+  1. `@Observable` macro (Observation framework, macOS 14+)
+  2. `@ObservableObject` / `@Published` (Combine-based)
+  3. Third-party state management (TCA, etc.)
+- **Selected Approach**: `@Observable` classes with `.environment()` injection
+- **Rationale**: Modern SwiftUI standard. Granular property tracking — views only re-render when accessed properties change. No boilerplate publishers. Simpler than Combine-based alternatives.
+- **Trade-offs**: Requires macOS 14+ (Sonoma). Less ecosystem tooling than TCA.
+- **Follow-up**: None — this is the Apple-recommended approach
+
+### Decision: External Terminal via NSAppleScript
 - **Context**: Requirement 11 requires opening bash shells in external terminal applications
 - **Alternatives Considered**:
-  1. osascript/AppleScript to create terminal windows
-  2. `open -a Terminal.app` with a temporary shell script
-  3. Embedded terminal within the app (already provided by session panel)
-- **Selected Approach**: osascript with per-application AppleScript templates
-- **Rationale**: Provides the most control over terminal window creation and command execution. `open -a` cannot reliably pass commands to run.
+  1. `NSAppleScript` for direct AppleScript execution
+  2. `Process` with `osascript` command
+  3. `NSWorkspace.open` (cannot pass commands)
+- **Selected Approach**: `NSAppleScript` with per-application AppleScript templates, `NSWorkspace` for app detection
+- **Rationale**: Direct API avoids spawning another process. `NSWorkspace.urlForApplication(withBundleIdentifier:)` is more robust than filesystem checks for app detection.
 - **Trade-offs**: macOS-only; Windows support would need different approach (Phase 2)
-- **Follow-up**: Add Windows support (PowerShell, Windows Terminal) in Phase 2
+- **Follow-up**: Add Windows support in Phase 2
 
-### Decision: User Terminal Preference Storage
-- **Context**: Requirement 11.5 requires a setting for preferred external terminal
+### Decision: UserDefaults for User Preferences (Replacing localStorage)
+- **Context**: Need to persist user's preferred terminal application
 - **Alternatives Considered**:
-  1. Electron-store (dedicated persistence library)
-  2. Renderer localStorage
-  3. JSON file in app data directory
-- **Selected Approach**: Renderer localStorage via a simple Zustand persist middleware
-- **Rationale**: Simplest approach for a single key-value preference. No additional dependency needed. Zustand's persist middleware integrates naturally.
-- **Trade-offs**: Lost if user clears browser data; acceptable for a non-critical preference
-- **Follow-up**: Consolidate into a proper settings system if more preferences are added in Phase 2
+  1. `UserDefaults` (Foundation standard)
+  2. SwiftData (full persistence framework)
+  3. JSON file in app support directory
+- **Selected Approach**: `UserDefaults` for simple key-value preferences
+- **Rationale**: Simplest approach for a single key-value preference. Built into Foundation, no additional dependency. Survives app restarts automatically.
+- **Trade-offs**: Not suitable for complex data; acceptable for simple preferences
+- **Follow-up**: Migrate to SwiftData if more complex settings are added in Phase 2
 
 ## Risks & Mitigations
 - **CLI output format changes** — Pin tested `sbx` version in docs; prefer `--json` where available; parser unit tests catch breakage early
-- **PTY IPC overhead** — Profile during implementation; switch to MessagePort if needed
+- **SwiftTerm compatibility** — Library is actively maintained and production-proven; pin version in Package.swift
+- **App Sandbox disabled** — Required for CLI access; mitigate with Hardened Runtime and notarization; input validation prevents command injection
 - **Polling CPU overhead** — 3s interval is conservative; can increase interval or add smart backoff when app is not focused
-- **External terminal app detection** — Filesystem checks may miss non-standard installations; manual configuration serves as fallback
-- **Electron security** — contextBridge is the only safe IPC pattern; never expose `ipcRenderer` directly; enforce CSP headers
-- **Mock drift from real behavior** — Shared SbxService interface enforced at compile time; E2E tests catch behavioral drift; acceptance criteria specify validation rules mock must enforce
+- **External terminal app detection** — `NSWorkspace` bundle ID lookup handles non-standard installations; manual configuration as fallback
+- **Mock drift from real behavior** — Shared SbxServiceProtocol enforced at compile time; E2E tests catch behavioral drift
+- **SwiftUI macOS rough edges** — AppKit interop via `NSViewRepresentable` covers gaps; terminal rendering uses proven AppKit NSView
 
 ## References
 - [Docker Sandbox Get Started](https://docs.docker.com/ai/sandboxes/get-started/) — Installation, login, credential setup
@@ -197,10 +266,14 @@
 - [Docker Sandbox Security](https://docs.docker.com/ai/sandboxes/security/) — Trust boundary, data flow, isolation layers
 - [Docker Sandbox Security Policy](https://docs.docker.com/ai/sandboxes/security/policy/) — Network policy CLI, precedence rules, wildcards
 - [Docker Sandbox Claude Code](https://docs.docker.com/ai/sandboxes/agents/claude-code/) — Agent launch, prompt passthrough, authentication
-- [Docker Sandbox Credentials](https://docs.docker.com/ai/sandboxes/security/credentials/) — Secret management, proxy injection, supported services
+- [Docker Sandbox Credentials](https://docs.docker.com/ai/sandboxes/security/credentials/) — Secret management, proxy injection
 - [Docker Sandbox Workspace](https://docs.docker.com/ai/sandboxes/security/workspace/) — Workspace trust model, critical risk files
-- [Docker Sandbox Troubleshooting](https://docs.docker.com/ai/sandboxes/troubleshooting/) — Common issues, diagnostic commands, reset procedures
-- [Docker Sandbox FAQ](https://docs.docker.com/ai/sandboxes/faq/) — Sign-in, telemetry, custom env vars, sandbox detection
-- [node-pty](https://github.com/microsoft/node-pty) — PTY spawning in Node.js
-- [xterm.js](https://xtermjs.org/) — Terminal rendering for web/Electron
-- [Electron contextBridge](https://www.electronjs.org/docs/latest/api/context-bridge) — Secure IPC pattern
+- [Docker Sandbox Troubleshooting](https://docs.docker.com/ai/sandboxes/troubleshooting/) — Common issues, diagnostic commands
+- [Docker Sandbox FAQ](https://docs.docker.com/ai/sandboxes/faq/) — Sign-in, telemetry, custom env vars
+- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) — Native terminal emulator for Swift (macOS/iOS/Linux)
+- [Apple Observation Framework](https://developer.apple.com/documentation/observation) — @Observable macro documentation
+- [Apple NavigationSplitView](https://developer.apple.com/documentation/swiftui/navigationsplitview) — Sidebar+detail layout
+- [Apple Foundation Process](https://developer.apple.com/documentation/foundation/process) — External process spawning
+- [Apple Hardened Runtime](https://developer.apple.com/documentation/security/hardened-runtime) — Runtime protections for notarized apps
+- [Swift Testing](https://developer.apple.com/documentation/testing) — Modern test framework for Swift
+- [swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) — Snapshot testing for SwiftUI
