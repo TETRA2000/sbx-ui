@@ -5,6 +5,7 @@ struct SandboxCardView: View {
     var onSelect: (Sandbox) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(SettingsStore.self) private var settingsStore
+    @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
     @State private var isHovered = false
     @State private var showTerminateConfirm = false
@@ -26,6 +27,20 @@ struct SandboxCardView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if sessionStore.isActive(name: sandbox.name) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 9))
+                        Text("SESSION")
+                            .font(.label(9))
+                    }
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .accessibilityIdentifier("sessionBadge-\(sandbox.name)")
+                }
                 StatusChipView(status: sandbox.status)
             }
 

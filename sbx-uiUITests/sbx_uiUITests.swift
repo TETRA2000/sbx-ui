@@ -411,4 +411,101 @@ final class sbx_uiUITests: XCTestCase {
         let connected = app.staticTexts["Connected"]
         XCTAssertTrue(connected.exists)
     }
+
+    // MARK: - Background Session E2E
+
+    @MainActor
+    func testBackgroundSessionShowsBadgeOnDashboard() throws {
+        createSandbox(name: "test-bg-badge")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        // Open terminal session
+        openSession(name: "test-bg-badge")
+        sleep(2)
+
+        // Go back to dashboard — session stays alive in background
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Session badge should appear on the sandbox card
+        let sessionBadge = app.staticTexts["SESSION"]
+        XCTAssertTrue(sessionBadge.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testBackgroundSessionShowsInSidebar() throws {
+        createSandbox(name: "test-bg-sidebar")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        // Open terminal session
+        openSession(name: "test-bg-sidebar")
+        sleep(2)
+
+        // Go back to dashboard
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Sidebar should show SESSIONS section with the sandbox name
+        let sessionsHeader = app.staticTexts["SESSIONS"]
+        XCTAssertTrue(sessionsHeader.waitForExistence(timeout: 5))
+
+        // Clicking the sidebar session navigates back to terminal
+        let sidebarSession = app.buttons["sidebarSession-test-bg-sidebar"]
+        XCTAssertTrue(sidebarSession.waitForExistence(timeout: 5))
+        sidebarSession.click()
+
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testDisconnectButtonEndsSession() throws {
+        createSandbox(name: "test-disconnect")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        // Open terminal session
+        openSession(name: "test-disconnect")
+        sleep(2)
+
+        // Click disconnect — should end session and return to dashboard
+        let disconnectButton = app.buttons["disconnectButton"]
+        XCTAssertTrue(disconnectButton.exists)
+        disconnectButton.click()
+
+        // Should be back on dashboard
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Session badge should NOT appear (session was disconnected, not backgrounded)
+        let sessionBadge = app.staticTexts["SESSION"]
+        XCTAssertFalse(sessionBadge.waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testSessionsCountInGlobalStats() throws {
+        createSandbox(name: "test-stats")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        // Open terminal session then go back
+        openSession(name: "test-stats")
+        sleep(2)
+        app.buttons["backToDashboard"].click()
+
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Global stats should show "SESSIONS" label
+        let sessionsLabel = app.staticTexts["SESSIONS"]
+        XCTAssertTrue(sessionsLabel.waitForExistence(timeout: 5))
+    }
 }

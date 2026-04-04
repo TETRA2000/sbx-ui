@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GlobalStatsView: View {
     @Environment(SandboxStore.self) private var sandboxStore
+    @Environment(TerminalSessionStore.self) private var sessionStore
 
     private var runningCount: Int {
         sandboxStore.sandboxes.filter { $0.status == .running }.count
@@ -14,6 +15,7 @@ struct GlobalStatsView: View {
     var body: some View {
         HStack(spacing: 24) {
             StatItem(label: "RUNNING", value: "\(runningCount)", color: .secondary)
+            StatItem(label: "SESSIONS", value: "\(sessionStore.activeSessionCount)", color: .secondary)
             StatItem(label: "TOTAL", value: "\(totalCount)", color: .accent)
             Spacer()
         }

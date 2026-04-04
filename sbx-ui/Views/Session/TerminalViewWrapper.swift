@@ -15,28 +15,29 @@ class FocusableTerminalView: LocalProcessTerminalView {
 
 struct TerminalViewWrapper: NSViewRepresentable {
     let sandboxName: String
-    let ptyManager: PtySessionManager
+    @Environment(TerminalSessionStore.self) private var sessionStore
 
-    func makeNSView(context: Context) -> FocusableTerminalView {
-        let terminalView = FocusableTerminalView(frame: .zero)
-        terminalView.nativeBackgroundColor = NSColor(
-            red: 0x0E / 255.0,
-            green: 0x0E / 255.0,
-            blue: 0x0E / 255.0,
-            alpha: 1.0
-        )
-        terminalView.nativeForegroundColor = .white
-        terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-
-        let name = sandboxName
-        let manager = ptyManager
-        DispatchQueue.main.async {
-            manager.attach(name: name, terminalView: terminalView)
-        }
-
-        return terminalView
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView(frame: .zero)
+        let terminalView = sessionStore.startSession(name: sandboxName)
+        terminalView.removeFromSuperview()
+        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(terminalView)
+        NSLayoutConstraint.activate([
+            terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminalView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            terminalView.topAnchor.constraint(equalTo: container.topAnchor),
+            terminalView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
     }
 
-    func updateNSView(_ nsView: FocusableTerminalView, context: Context) {
+    func updateNSView(_ nsView: NSView, context: Context) {
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
+        // Remove terminal from container but do NOT destroy it —
+        // TerminalSessionStore retains the reference for background sessions.
+        nsView.subviews.forEach { $0.removeFromSuperview() }
     }
 }

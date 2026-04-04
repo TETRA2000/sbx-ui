@@ -664,56 +664,114 @@ struct PolicyStoreTests {
     }
 }
 
-// MARK: - SessionStore Tests
+// MARK: - TerminalSessionStore Tests
 
-struct SessionStoreTests {
-    @Test func attachSetsState() async throws {
+struct TerminalSessionStoreTests {
+    @Test func initialStateIsEmpty() async {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "test")
-        let active = await store.activeSandbox
-        let connected = await store.connected
-        let startTime = await store.connectionStartTime
-        #expect(active == "test")
-        #expect(connected == true)
-        #expect(startTime != nil)
+        let store = await TerminalSessionStore(service: service)
+        let count = await store.activeSessionCount
+        let names = await store.activeSessionNames
+        #expect(count == 0)
+        #expect(names.isEmpty)
     }
 
-    @Test func detachClearsState() async throws {
+    @Test func isActiveReturnsFalseForUnknown() async {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "test")
-        await store.detach()
-        let active = await store.activeSandbox
-        let connected = await store.connected
-        let startTime = await store.connectionStartTime
-        #expect(active == nil)
-        #expect(connected == false)
-        #expect(startTime == nil)
+        let store = await TerminalSessionStore(service: service)
+        let active = await store.isActive(name: "nonexistent")
+        #expect(active == false)
     }
 
-    @Test func attachAutoDetachesPrevious() async throws {
+    @Test func sessionLookupReturnsNilForUnknown() async {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "sandbox-a")
-        try await store.attach(name: "sandbox-b")
-        let active = await store.activeSandbox
-        #expect(active == "sandbox-b")
+        let store = await TerminalSessionStore(service: service)
+        let session = await store.session(for: "nonexistent")
+        #expect(session == nil)
     }
 
-    @Test func sendMessageWhenNotConnectedNoOp() async throws {
+    @Test func disconnectNoOpForUnknown() async {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
+        let store = await TerminalSessionStore(service: service)
+        // Should not crash
+        await store.disconnect(name: "nonexistent")
+        let count = await store.activeSessionCount
+        #expect(count == 0)
+    }
+
+    @Test func disconnectAllClearsEverything() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+        await store.disconnectAll()
+        let count = await store.activeSessionCount
+        #expect(count == 0)
+    }
+
+    @Test func cleanupStaleSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        // Start a session (creates terminal view but process won't actually run in test)
+        _ = await store.startSession(name: "sandbox-a")
+        let countBefore = await store.activeSessionCount
+        #expect(countBefore == 1)
+
+        // Cleanup with empty sandbox list — should remove the session
+        await store.cleanupStaleSessions(sandboxes: [])
+        let countAfter = await store.activeSessionCount
+        #expect(countAfter == 0)
+    }
+
+    @Test func cleanupKeepsRunningSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "sandbox-a")
+        let runningSandbox = Sandbox(
+            id: "sandbox-a", name: "sandbox-a", agent: "claude",
+            status: .running, workspace: "/tmp", ports: [], createdAt: Date()
+        )
+        await store.cleanupStaleSessions(sandboxes: [runningSandbox])
+        let count = await store.activeSessionCount
+        #expect(count == 1)
+    }
+
+    @Test func startSessionIsIdempotent() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        let view1 = await store.startSession(name: "test")
+        let view2 = await store.startSession(name: "test")
+        // Same view instance returned
+        #expect(view1 === view2)
+        let count = await store.activeSessionCount
+        #expect(count == 1)
+    }
+
+    @Test func multipleSessionsTrackedIndependently() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "alpha")
+        _ = await store.startSession(name: "beta")
+        let count = await store.activeSessionCount
+        let names = await store.activeSessionNames
+        #expect(count == 2)
+        #expect(names == ["alpha", "beta"])
+
+        await store.disconnect(name: "alpha")
+        let countAfter = await store.activeSessionCount
+        let activeAlpha = await store.isActive(name: "alpha")
+        let activeBeta = await store.isActive(name: "beta")
+        #expect(countAfter == 1)
+        #expect(activeAlpha == false)
+        #expect(activeBeta == true)
+    }
+
+    @Test func sendMessageWhenNoSessionNoOp() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
         // Should not throw — guard returns early
-        try await store.sendMessage("hello")
-    }
-
-    @Test func sendMessageDelegatesToService() async throws {
-        let service = StubSbxService()
-        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-session"))
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "test-session")
-        // Should succeed — sandbox exists and is running
-        try await store.sendMessage("hello from test")
+        try await store.sendMessage("hello", to: "nonexistent")
     }
 }

@@ -10,12 +10,22 @@ struct ShellView: View {
     @State private var selectedSandbox: Sandbox?
     @State private var showDebugLog = false
     @Environment(SandboxStore.self) private var sandboxStore
-    @Environment(SessionStore.self) private var sessionStore
+    @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
+
+    /// Names of running sandboxes, used to detect status changes for session cleanup.
+    private var runningSandboxNames: Set<String> {
+        Set(sandboxStore.sandboxes.filter { $0.status == .running }.map(\.name))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
-                SidebarView(selection: $selection)
+                SidebarView(selection: $selection, onSelectSession: { name in
+                    if let sandbox = sandboxStore.sandboxes.first(where: { $0.name == name }) {
+                        selectedSandbox = sandbox
+                    }
+                })
             } detail: {
                 Group {
                     if let selected = selectedSandbox,
@@ -68,6 +78,9 @@ struct ShellView: View {
             logStore.info("App", "sbx-ui started")
             let mode = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" ? "CLI mock" : "real"
             logStore.info("App", "Service mode: \(mode)")
+        }
+        .onChange(of: runningSandboxNames) { _, _ in
+            sessionStore.cleanupStaleSessions(sandboxes: sandboxStore.sandboxes)
         }
     }
 }

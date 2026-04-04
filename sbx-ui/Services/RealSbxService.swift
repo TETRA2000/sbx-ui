@@ -153,7 +153,7 @@ actor RealSbxService: SbxServiceProtocol {
     // MARK: - Session
 
     func sendMessage(name: String, message: String) async throws {
-        // Delegated to PtySessionManager in practice
+        // Delegated to TerminalSessionStore in practice
     }
 
     // MARK: - Private
