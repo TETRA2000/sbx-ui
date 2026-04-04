@@ -1,32 +1,32 @@
-//
-//  sbx_uiApp.swift
-//  sbx-ui
-//
-//  Created by Takahiko Inayama on 2026/4/4.
-//
-
 import SwiftUI
-import SwiftData
 
 @main
 struct sbx_uiApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    @State private var sandboxStore: SandboxStore
+    @State private var policyStore: PolicyStore
+    @State private var sessionStore: SessionStore
+    @State private var settingsStore = SettingsStore()
+    @State private var toastManager = ToastManager()
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    init() {
+        let service = ServiceFactory.create()
+        let sandbox = SandboxStore(service: service)
+        let policy = PolicyStore(service: service)
+        let session = SessionStore(service: service)
+        _sandboxStore = State(initialValue: sandbox)
+        _policyStore = State(initialValue: policy)
+        _sessionStore = State(initialValue: session)
+    }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ShellView()
+                .environment(sandboxStore)
+                .environment(policyStore)
+                .environment(sessionStore)
+                .environment(settingsStore)
+                .environment(toastManager)
+                .preferredColorScheme(.dark)
         }
-        .modelContainer(sharedModelContainer)
     }
 }

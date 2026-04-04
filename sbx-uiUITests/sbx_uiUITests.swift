@@ -1,43 +1,66 @@
-//
-//  sbx_uiUITests.swift
-//  sbx-uiUITests
-//
-//  Created by Takahiko Inayama on 2026/4/4.
-//
-
 import XCTest
 
 final class sbx_uiUITests: XCTestCase {
+    var app: XCUIApplication!
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
-    @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        app = XCUIApplication()
+        app.launchEnvironment["SBX_MOCK"] = "1"
         app.launch()
+    }
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+    // MARK: - App launches in mock mode
+
+    @MainActor
+    func testAppLaunches() throws {
+        XCTAssertTrue(app.windows.firstMatch.exists)
     }
 
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
-        }
+    func testSidebarNavigationExists() throws {
+        let dashboard = app.staticTexts["DASHBOARD"]
+        XCTAssertTrue(dashboard.waitForExistence(timeout: 5))
+
+        let policies = app.staticTexts["POLICIES"]
+        XCTAssertTrue(policies.exists)
+    }
+
+    // MARK: - Project creation
+
+    @MainActor
+    func testNewSandboxCard() throws {
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        newButton.click()
+
+        let deploySubmit = app.buttons["deployButton"]
+        XCTAssertTrue(deploySubmit.waitForExistence(timeout: 3))
+    }
+
+    // MARK: - Policies
+
+    @MainActor
+    func testNavigateToPolicies() throws {
+        let policies = app.staticTexts["POLICIES"]
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
+        policies.click()
+
+        let addButton = app.buttons["addPolicyButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testAddPolicySheet() throws {
+        let policies = app.staticTexts["POLICIES"]
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
+        policies.click()
+
+        let addButton = app.buttons["addPolicyButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        addButton.click()
+
+        let domainInput = app.textFields["domainInput"]
+        XCTAssertTrue(domainInput.waitForExistence(timeout: 3))
     }
 }
