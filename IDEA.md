@@ -27,7 +27,8 @@ Secure AI coding environment that suitable from vibe coding to enterprise class
 - Port forwarding
 - Notification management
 	- Users can view a list of notifications or any requests from sbx in one place
-
+- Initial login flow
+  - Sbx can't pass credentials when I use subscriptons
 
 
 ## UI mockup
