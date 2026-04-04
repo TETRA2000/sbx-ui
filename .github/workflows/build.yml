@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Installable App
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui
+
+      - name: Build release archive
+        run: |
+          xcodebuild archive \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'generic/platform=macOS' \
+            -archivePath ${{ runner.temp }}/sbx-ui.xcarchive \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Export app from archive
+        run: |
+          mkdir -p ${{ runner.temp }}/export
+          cp -R "${{ runner.temp }}/sbx-ui.xcarchive/Products/Applications/sbx-ui.app" \
+            "${{ runner.temp }}/export/"
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "sbx-ui" \
+            -srcfolder "${{ runner.temp }}/export" \
+            -ov -format UDZO \
+            "${{ runner.temp }}/sbx-ui.dmg"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbx-ui.dmg
+          path: ${{ runner.temp }}/sbx-ui.dmg
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbx-ui.app
+          path: ${{ runner.temp }}/export/sbx-ui.app
