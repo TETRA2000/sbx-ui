@@ -40,12 +40,16 @@ TypeScript strict mode. The `SbxService` interface is the compile-time contract 
 
 ## Development Environment
 
+### Package Manager
+- **pnpm** — fast, strict, disk-efficient
+- `.npmrc` sets `min-release-age=14d` to reject packages published within the last 14 days (supply-chain hardening)
+
 ### Common Commands
 ```bash
-# Dev:   npm run dev         (electron-vite HMR)
-# Build: npm run build       (production bundle)
-# Test:  npm run test        (vitest unit)
-# E2E:   npm run test:e2e    (playwright, mock mode)
+# Dev:   pnpm run dev         (electron-vite HMR)
+# Build: pnpm run build       (production bundle)
+# Test:  pnpm run test        (vitest unit)
+# E2E:   pnpm run test:e2e    (playwright, mock mode)
 ```
 
 ### Mock Mode
