@@ -1,0 +1,73 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit & UI Tests
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          # List available Xcode versions and select the latest
+          ls /Applications | grep Xcode | sort -V
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui
+
+      - name: Build
+        run: |
+          xcodebuild build-for-testing \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            | xcpretty --color || true
+
+      - name: Run Unit Tests
+        run: |
+          xcodebuild test-without-building \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -only-testing:sbx-uiTests \
+            | xcpretty --color --report junit --output test-results/unit-tests.xml || true
+
+      - name: Run UI Tests
+        env:
+          SBX_MOCK: "1"
+        run: |
+          xcodebuild test-without-building \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -only-testing:sbx-uiUITests \
+            | xcpretty --color --report junit --output test-results/ui-tests.xml || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7
