@@ -1,11 +1,5 @@
 import Foundation
 
-protocol PtyHandle: Sendable {
-    func onData(_ callback: @escaping @Sendable (String) -> Void)
-    func write(_ data: String)
-    func dispose()
-}
-
 protocol SbxServiceProtocol: Sendable {
     // Lifecycle
     func list() async throws -> [Sandbox]

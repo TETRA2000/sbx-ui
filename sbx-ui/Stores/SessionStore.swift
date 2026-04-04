@@ -7,11 +7,9 @@ import Foundation
     var connectionStartTime: Date?
 
     private let service: any SbxServiceProtocol
-    let isMock: Bool
 
     init(service: any SbxServiceProtocol) {
         self.service = service
-        self.isMock = ProcessInfo.processInfo.environment["SBX_MOCK"] == "1"
     }
 
     func attach(name: String, ptyManager: PtySessionManager? = nil) async throws {
@@ -23,11 +21,8 @@ import Foundation
         connectionStartTime = Date()
     }
 
-    func sendMessage(_ message: String, ptyManager: PtySessionManager? = nil) async throws {
+    func sendMessage(_ message: String) async throws {
         guard let name = activeSandbox, connected else { return }
-        if let mgr = ptyManager {
-            mgr.write(name: name, data: message)
-        }
         try await service.sendMessage(name: name, message: message)
     }
 

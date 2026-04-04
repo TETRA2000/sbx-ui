@@ -66,9 +66,7 @@ struct ShellView: View {
         .onAppear {
             let logStore = LogStore.shared
             logStore.info("App", "sbx-ui started")
-            let mode = ProcessInfo.processInfo.environment["SBX_MOCK"] == "1" ? "in-memory mock"
-                : ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" ? "CLI mock"
-                : "real"
+            let mode = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" ? "CLI mock" : "real"
             logStore.info("App", "Service mode: \(mode)")
         }
     }

@@ -15,7 +15,6 @@ class FocusableTerminalView: LocalProcessTerminalView {
 
 struct TerminalViewWrapper: NSViewRepresentable {
     let sandboxName: String
-    let isMock: Bool
     let ptyManager: PtySessionManager
 
     func makeNSView(context: Context) -> FocusableTerminalView {
@@ -30,10 +29,9 @@ struct TerminalViewWrapper: NSViewRepresentable {
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
         let name = sandboxName
-        let mock = isMock
         let manager = ptyManager
         DispatchQueue.main.async {
-            manager.attach(name: name, terminalView: terminalView, isMock: mock)
+            manager.attach(name: name, terminalView: terminalView)
         }
 
         return terminalView
