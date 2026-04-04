@@ -1,38 +1,50 @@
 # Implementation Plan
 
-- [ ] 1. Scaffold Electron project with React, TypeScript, Tailwind, and design system tokens
-  - Initialize an Electron 36+ project using electron-vite with React 19, TypeScript strict mode, and pnpm as package manager
-  - Install and configure Tailwind CSS 4 with the Technical Monolith design token palette (surface hierarchy, accent colors, font families)
-  - Configure the three-font stack: Inter for UI text, JetBrains Mono for code and metrics, Space Grotesk for labels
-  - Set maximum border-radius to 0.5rem in the Tailwind theme
-  - Verify `pnpm run dev` opens a blank Electron window with Tailwind styles applied
+- [ ] 1. Configure Xcode project with SwiftTerm dependency, design system tokens, and custom fonts
+  - Add SwiftTerm as a Swift Package Manager dependency (version 1.13+)
+  - Bundle custom fonts (Inter, JetBrains Mono, Space Grotesk) in the app and register them via Info.plist ATSApplicationFontsPath
+  - Create SwiftUI Color extensions for the Technical Monolith surface hierarchy: surfaceLowest (#0E0E0E), surface (#131313), surfaceContainer (#1C1B1B), surfaceContainerHigh (#2A2A2A), surfaceContainerHighest (#353534), accent (#ADC6FF), secondary (#4EDEA3), error (#F2B8B5)
+  - Create SwiftUI Font extensions for the three-font stack: Inter for UI text, JetBrains Mono for code and metrics, Space Grotesk for labels
+  - Set maximum corner radius to 8 points (0.5rem equivalent) as a shared constant
+  - Apply forced dark mode via .preferredColorScheme(.dark) at the WindowGroup level
+  - Disable App Sandbox entitlement; enable Hardened Runtime for notarization compatibility
+  - Verify the app builds and launches with the design system tokens applied
   - _Requirements: 8.3, 8.4, 8.5_
 
-- [ ] 2. Service layer: domain types, interface, and mock implementation
-- [ ] 2.1 Define all domain types and the SbxService interface contract
-  - Define the Sandbox type with id, name, agent, status (running/stopped/creating/removing), workspace, ports, and createdAt
-  - Define PolicyRule with id, type, decision (allow/deny), and resources
-  - Define PolicyLogEntry with sandbox, type, host, proxy (forward/transparent/network), rule, lastSeen, count, and blocked
-  - Define PortMapping with hostPort, sandboxPort, and protocol
-  - Define RunOptions with optional name and prompt fields
-  - Define PtyHandle with onData, write, and dispose methods
-  - Define SbxServiceError with typed error codes (NOT_FOUND, ALREADY_EXISTS, PORT_CONFLICT, NOT_RUNNING, CLI_ERROR, DOCKER_NOT_RUNNING, INVALID_NAME)
-  - Define the complete SbxService interface covering lifecycle, policy, port, and session operations
+- [ ] 2. Service layer: domain types, protocol, and mock implementation
+- [ ] 2.1 Define all domain types and the SbxServiceProtocol contract
+  - Define SandboxStatus enum (running, stopped, creating, removing) conforming to Sendable and Codable
+  - Define Sandbox struct with id, name, agent, status, workspace, ports, and createdAt conforming to Identifiable and Sendable
+  - Define PolicyRule with id, type, decision (allow/deny enum), and resources conforming to Identifiable and Sendable
+  - Define PolicyLogEntry with sandbox, type, host, proxy, rule, lastSeen, count, and blocked conforming to Sendable
+  - Define PortMapping with hostPort, sandboxPort, and protocolType conforming to Sendable
+  - Define RunOptions with optional name and prompt fields conforming to Sendable
+  - Define PtyHandle protocol with onData, write, and dispose methods conforming to Sendable
+  - Define SbxServiceError enum with typed error cases (notFound, alreadyExists, portConflict, notRunning, cliError, dockerNotRunning, invalidName) conforming to Error and Sendable
+  - Define SbxServiceProtocol with all lifecycle, policy, port, and sendMessage operations; all methods async throws; protocol conforms to Sendable
   - _Requirements: 7.2, 9.2_
 
-- [ ] 2.2 Implement the mock service with full lifecycle, policy, and port operations
-  - Implement sandbox lifecycle: list returns all sandboxes, run creates with "creating" state then transitions to "running" after ~800ms delay, stop transitions to "stopped" after ~300ms and clears ports, rm removes after ~200ms
-  - Auto-generate sandbox name as "claude-&lt;dirname&gt;" when no name is provided
+- [ ] 2.2 Implement the mock service actor with full lifecycle, policy, and port operations
+  - Implement MockSbxService as a Swift actor conforming to SbxServiceProtocol
+  - Implement sandbox lifecycle: list returns all sandboxes, run creates with "creating" state then transitions to "running" after ~800ms delay via Task.sleep, stop transitions to "stopped" after ~300ms and clears ports, rm removes after ~200ms
+  - Auto-generate sandbox name as "claude-<dirname>" when no name is provided
   - Return the existing sandbox when run is called with a workspace that already has a running sandbox
-  - Validate sandbox names against the allowed pattern (lowercase alphanumeric and hyphens, no leading hyphen); reject invalid names with INVALID_NAME
+  - Validate sandbox names against the allowed pattern (lowercase alphanumeric and hyphens, no leading hyphen); reject invalid names with .invalidName
   - Pre-seed Balanced network policy defaults on construction (api.anthropic.com, *.npmjs.org, github.com, *.github.com, registry.hub.docker.com, *.docker.io, *.googleapis.com, api.openai.com, *.pypi.org, files.pythonhosted.org)
-  - Implement policy allow, deny, remove, and list operations on the in-memory policy map
+  - Implement policy allow, deny, remove, and list operations on in-memory dictionaries
   - Simulate policy log entries referencing existing sandboxes
   - Implement port publish with duplicate host port rejection, unpublish, and list operations
   - Clear all port mappings when a sandbox is stopped
   - _Requirements: 1.3, 1.5, 7.1, 7.2, 7.3, 7.4, 7.7_
 
-- [ ] 2.3 Write unit tests for the mock service
+- [ ] 2.3 (P) Implement MockPtyEmitter for simulated terminal output
+  - Build MockPtyEmitter conforming to the PtyHandle protocol
+  - Simulate a startup sequence with ANSI formatting: Claude Code banner, model info, workspace path, prompt character, with realistic inter-line delays via Task.sleep
+  - On receiving input via write, simulate an agent response sequence: thinking → reading file → writing file → done → prompt, with delays between steps
+  - Emit data to the registered onData callback in order
+  - _Requirements: 7.5, 7.6_
+
+- [ ] 2.4 Write unit tests for the mock service and mock emitter
   - Test lifecycle transitions: create → running, running → stopped, stopped → running, running/stopped → removed
   - Test realistic delay simulation for each transition
   - Test Balanced policy defaults are present after construction
@@ -40,200 +52,198 @@
   - Test port validation: reject duplicate host port, clear on stop, reject publish on stopped sandbox
   - Test duplicate workspace returns existing sandbox instead of creating a new one
   - Test invalid sandbox name rejection
-  - _Requirements: 7.2, 7.3, 7.4, 7.7_
+  - Test MockPtyEmitter emits startup sequence and responds to write input
+  - _Requirements: 7.2, 7.3, 7.4, 7.5, 7.6, 7.7_
 
-- [ ] 3. IPC bridge: service factory, handlers, and preload
-- [ ] 3.1 Implement service factory and register all IPC handlers
-  - Build the service factory that returns the mock implementation when SBX_MOCK=1 is set, otherwise the real implementation
-  - Register IPC handlers for all sandbox lifecycle operations (list, run, stop, rm)
-  - Register IPC handlers for all policy operations (policyList, policyAllow, policyDeny, policyRemove, policyLog)
-  - Register IPC handlers for all port operations (portsList, portsPublish, portsUnpublish)
-  - Register IPC handlers for session operations (attach, send, detach) and wire PTY data streaming to the sbx:session:data event channel
-  - Register handler for native filesystem directory selection dialog
-  - Register handlers for external terminal operations (list available, open shell)
-  - Catch service errors and return structured SbxServiceError objects to the renderer
-  - _Requirements: 7.1, 9.1, 9.3_
+- [ ] 3. Service factory and app-level dependency injection
+  - Build ServiceFactory that returns MockSbxService when ProcessInfo.processInfo.environment["SBX_MOCK"] == "1", otherwise RealSbxService
+  - Create the service instance at app startup and inject it into the SwiftUI environment
+  - Create all @MainActor @Observable store instances (SandboxStore, PolicyStore, SessionStore, SettingsStore) with the service injected
+  - Inject stores into the SwiftUI view hierarchy via .environment() at the WindowGroup level
+  - _Requirements: 7.1, 9.1_
 
-- [ ] 3.2 Implement preload bridge exposing typed API to the renderer
-  - Expose all lifecycle methods (list, run, stop, rm) via contextBridge
-  - Expose all policy methods (policyList, policyAllow, policyDeny, policyRemove, policyLog) via contextBridge
-  - Expose all port methods (portsList, portsPublish, portsUnpublish) via contextBridge
-  - Expose session methods (attachSession, sendMessage, detachSession) and the onSessionData subscription with unsubscribe support
-  - Expose selectDirectory for native filesystem dialog
-  - Expose openExternalTerminal and getAvailableTerminals for external shell access
-  - Ensure no ipcRenderer or Node.js APIs are leaked beyond the typed bridge
-  - _Requirements: 9.1, 9.2_
-
-- [ ] 4. Build application shell with sidebar navigation and top bar
-  - Create the root shell layout with a fixed sidebar on the left, a fixed top bar at the top, and a scrollable content area
-  - Apply the surface hierarchy: base surface (#131313), sidebar with glassmorphism (surface-variant at 60% opacity with 20px backdrop-blur)
-  - Build the sidebar with navigation links for Dashboard and Policies views, plus a "Deploy Agent" CTA button at the bottom
-  - Use Space Grotesk for sidebar labels (uppercase, wide tracking) and the gradient CTA style from the design system
-  - Build the top bar with the application title, search input, and user area
-  - Implement view switching between dashboard and policy views using simple state-based routing
+- [ ] 4. Build application shell with NavigationSplitView and sidebar
+  - Create ShellView as the root layout using NavigationSplitView with a fixed sidebar and scrollable detail area
+  - Apply the surface hierarchy: base surface (#131313) background, sidebar with surfaceContainer (#1C1B1B)
+  - Build SidebarView with navigation list items for Dashboard and Policies views, plus a "Deploy Agent" button at the bottom
+  - Use Space Grotesk for sidebar labels (uppercase styling)
+  - Implement view switching between dashboard and policy detail views via sidebar selection binding
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
 - [ ] 5. Sandbox dashboard and project creation
-- [ ] 5.1 Implement the sandbox store with polling and mutation actions
-  - Create a Zustand store holding the sandbox list, loading state, and error state
-  - Implement fetchSandboxes that calls the bridge to list all sandboxes
-  - Implement createSandbox, stopSandbox, and removeSandbox mutation actions that call the bridge and trigger an immediate re-fetch
-  - Start a 3-second polling interval that calls fetchSandboxes on dashboard view mount
-  - Stop polling when the dashboard view unmounts
+- [ ] 5.1 Implement SandboxStore with polling and mutation actions
+  - Build SandboxStore as @MainActor @Observable class holding the sandbox list, loading state, and error state
+  - Inject SbxServiceProtocol (as any SbxServiceProtocol) via initializer
+  - Implement fetchSandboxes that calls the service to list all sandboxes
+  - Implement createSandbox, stopSandbox, and removeSandbox mutation actions that call the service and trigger an immediate re-fetch
+  - Implement startPolling using a Task with Task.sleep(for: .seconds(3)) loop that calls fetchSandboxes
+  - Implement stopPolling that cancels the polling Task
+  - Start polling on dashboard view appear via .task modifier; cancel on disappear
   - _Requirements: 2.7, 3.1, 3.2, 3.5_
 
 - [ ] 5.2 Build the dashboard grid with sandbox cards, status indicators, and statistics
-  - Render all sandboxes as cards in a CSS grid with an asymmetric bento layout (first card spans two columns on wide screens)
-  - Include a "+" placeholder card for creating new projects
+  - Build SandboxGridView using LazyVGrid with adaptive columns rendering SandboxCardView per sandbox plus a "+" placeholder card
   - Display on each card: sandbox name, agent type ("claude"), current status chip, workspace path, and active port mappings as compact chips (e.g., 8080→3000)
-  - Build the status chip: green 4px dot with glow animation and "LIVE" label for running, static "STOPPED" chip for stopped, spinner for creating/removing
-  - Apply hover transition to surface-container-high background
-  - Build a global statistics bar above the grid showing running sandbox count and total sandbox count
+  - Build StatusChipView: green 4px circle with pulse animation (.animation(.easeInOut.repeatForever())) and "LIVE" label for running, static "STOPPED" chip for stopped, ProgressView spinner for creating/removing
+  - Apply hover effect via .onHover modifier transitioning to surfaceContainerHigh background
+  - Build GlobalStatsView bar above the grid showing running sandbox count and total count with JetBrains Mono for numbers
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 5.4_
 
-- [ ] 5.3 Build project creation dialog with directory picker and optional name
-  - When the user clicks "Deploy Agent" or the "+" card, open a modal dialog
-  - Trigger the native filesystem directory picker via the bridge
+- [ ] 5.3 Build project creation sheet with directory picker and optional name
+  - When the user clicks "Deploy Agent" or the "+" card, present a .sheet modal
+  - Use .fileImporter with UTType.folder for native directory picker (NSOpenPanel)
   - Display the selected path in JetBrains Mono font
-  - Provide an optional text input for a custom sandbox name
-  - On submit, call createSandbox with the selected directory and optional name; the service auto-generates "claude-&lt;dirname&gt;" if no name is given
-  - If the user cancels the picker or the dialog, close without any side effects
+  - Provide an optional TextField for a custom sandbox name
+  - On submit, call SandboxStore.createSandbox with the selected directory and optional name; the service auto-generates "claude-<dirname>" if no name is given
+  - If the user cancels the picker or the sheet, dismiss without any side effects
   - If a sandbox already exists for the selected workspace, surface the returned existing sandbox
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
 - [ ] 6. Add sandbox lifecycle controls to dashboard cards
-  - Add a pause/stop button to running sandbox cards that calls stopSandbox and transitions the card to "stopped" status
+  - Add a pause/stop button to running sandbox cards that calls SandboxStore.stopSandbox and transitions the card to "stopped" status
   - Enable clicking a stopped sandbox card to resume it by calling createSandbox with the sandbox name, transitioning back to "running"
-  - Add a "Terminate Agent" action (in error color) that opens a confirmation dialog before calling removeSandbox
+  - Add a "Terminate Agent" action (in error color) that opens a .confirmationDialog before calling removeSandbox
   - If the user cancels the confirmation dialog, take no action
   - After removal, the card disappears from the grid on the next poll/re-fetch
   - During "creating" and "removing" transient states, show a spinner and disable all action buttons on the card
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
 - [ ] 7. Network policy management
-- [ ] 7.1 (P) Implement policy store and build policy panel with rule management
-  - Create a Zustand store holding policy rules, loading state, and error state
-  - Implement fetchPolicies, addAllow, addDeny, and removeRule actions that call the bridge and trigger re-fetch
-  - Build the policy panel as a dedicated view accessible from sidebar navigation
+- [ ] 7.1 (P) Implement PolicyStore and build policy panel with rule management
+  - Build PolicyStore as @MainActor @Observable class holding policy rules, loading state, and error state
+  - Implement fetchPolicies, addAllow, addDeny, and removeRule actions that call the service and trigger re-fetch
+  - Build PolicyPanelView as a dedicated view accessible from sidebar navigation
   - Display each rule with its decision (allow/deny) and resource domains
   - When the app starts with no custom policies, display the pre-seeded Balanced defaults
-  - Build an add policy dialog with a text input for domains (supports comma-separated), an allow/deny toggle, and submit/cancel buttons; use JetBrains Mono for the domain input
+  - Build AddPolicySheet with a TextField for domains (supports comma-separated), a Picker for allow/deny toggle, and submit/cancel buttons; use JetBrains Mono for the domain input
   - Add a remove button to each policy rule row
+  - Fetch rules via .task modifier on view appear
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
 - [ ] 7.2 Build policy log viewer with filtering
-  - Build a data table showing network activity: sandbox name, host, proxy type, rule, last seen timestamp, request count, and blocked/allowed status
-  - Use ghost borders (outline-variant at 15% opacity) for table row separation
-  - Add a sandbox name filter dropdown that filters log entries by sandbox
-  - Add a blocked-only toggle that shows only blocked requests
-  - Implement fetchLog in the policy store with optional sandbox name parameter
-  - Store filter state (sandbox name, blocked-only) in the policy store
+  - Build PolicyLogView as a Table view showing network activity: sandbox name, host, proxy type, rule, last seen timestamp, request count, and blocked/allowed status
+  - Use subtle dividers with surfaceContainerHigh at 15% opacity for row separation
+  - Add a sandbox name filter Picker that filters log entries by sandbox
+  - Add a blocked-only Toggle that shows only blocked requests
+  - Implement fetchLog in PolicyStore with optional sandbox name parameter
+  - Store filter state (sandbox name, blocked-only) in PolicyStore as a LogFilter struct
   - _Requirements: 4.6, 4.7_
 
-- [ ] 8. Port forwarding management
-  - Build a port panel per sandbox showing all active host-to-sandbox port mappings as rows
-  - Build an add port dialog with host port and sandbox port number inputs; validate that values are positive integers in range 1-65535
-  - On submit, call portsPublish via the bridge; if the host port is already in use, display an inline error
-  - Add an unpublish button to each port mapping row that calls portsUnpublish via the bridge
-  - Implement the usePorts hook that calls port IPC methods directly and triggers the sandbox store refresh after each mutation to update Sandbox.ports[]
+- [ ] 8. (P) Port forwarding management
+  - Build PortPanelView per sandbox showing all active host-to-sandbox port mappings as rows
+  - Build AddPortSheet with host port and sandbox port TextField inputs; validate that values are positive integers in range 1-65535
+  - On submit, call portsPublish via the service through SandboxStore; if the host port is already in use, display an inline error
+  - Add an unpublish button to each PortMappingRow that calls portsUnpublish and triggers sandbox re-fetch
+  - Port state lives in Sandbox.ports[] within SandboxStore; trigger fetchSandboxes() after each port mutation
   - While a sandbox is stopped, disable the add port button and display a notice that ports are cleared on stop
   - When a sandbox stops, clear its port mappings from the display
   - _Requirements: 5.1, 5.2, 5.3, 5.5, 5.6, 5.7_
 
-- [ ] 9. PTY manager and mock terminal emitter
-- [ ] 9.1 (P) Implement PTY session manager and mock terminal emitter
-  - Build the PTY manager that tracks one active PTY per sandbox name
-  - In mock mode, create a mock emitter instance that simulates Claude Code output
-  - The mock emitter emits a startup sequence with ANSI formatting: Claude Code banner, model info, workspace path, prompt character, with realistic inter-line delays
-  - On receiving input via write, the mock emitter simulates an agent response sequence: thinking → reading file → writing file → done → prompt, with delays between steps
-  - In real mode, spawn a node-pty pseudo-terminal running "sbx run &lt;name&gt;"
-  - Implement attach (creates PTY), write (sends data to PTY stdin), dispose (kills PTY), disposeAll, and isAttached query
+- [ ] 9. PTY session manager and terminal view wrapper
+- [ ] 9.1 (P) Implement PtySessionManager actor
+  - Build PtySessionManager as a Swift actor that tracks one active PTY per sandbox name
+  - Implement attach that accepts a sandbox name, terminal view reference, and isMock flag
+  - In real mode, configure the terminal view as a MacLocalTerminalView with LocalProcess running "sbx run <name>"; SwiftTerm handles the PTY-to-rendering pipeline internally via delegates
+  - In mock mode, create a MockPtyEmitter instance and wire it to a headless Terminal engine feeding the terminal view
+  - Implement write that sends data to the active PTY stdin for a given sandbox
+  - Implement dispose that terminates the process and removes from tracking, and disposeAll for cleanup
+  - Implement isAttached query
   - _Requirements: 6.1, 7.5, 7.6_
 
-- [ ] 9.2 Wire PTY data events through IPC to the renderer
-  - Forward PTY data events from the PTY manager to the renderer via the sbx:session:data IPC event channel
-  - Ensure the preload bridge delivers data events to the onSessionData subscription callback
-  - Handle session disposal by stopping data forwarding and cleaning up listeners
-  - _Requirements: 6.2, 9.3_
+- [ ] 9.2 Build TerminalViewWrapper as NSViewRepresentable
+  - Create TerminalViewWrapper wrapping SwiftTerm's TerminalView via NSViewRepresentable
+  - Set the terminal background to surfaceLowest (#0E0E0E)
+  - Expose the underlying TerminalView reference to PtySessionManager via the NSViewRepresentable Coordinator
+  - Handle view lifecycle: auto-resize via SwiftTerm's built-in resize handling
+  - Support both real mode (MacLocalTerminalView with internal LocalProcess) and mock mode (TerminalView fed by MockPtyEmitter)
+  - _Requirements: 6.2_
 
 - [ ] 10. Session interaction UI
 - [ ] 10.1 Build session panel with terminal view and chat input
-  - When the user clicks a running sandbox card, open a session panel that takes the full content area
-  - Split the session panel: xterm.js terminal in the upper area, chat input fixed at the bottom, agent status bar between
-  - Initialize an xterm.js terminal instance with the surface-container-lowest background (#0E0E0E), the fit addon for auto-sizing, and full ANSI code support
-  - Connect the terminal to the PTY data stream via the onSessionData subscription; write received data to xterm.js
-  - Build the chat input with a text field (JetBrains Mono), a send button, and Enter key submission
-  - When the user sends a message, call sendMessage via the bridge which writes to PTY stdin
+  - When the user clicks a running sandbox card, navigate to SessionPanelView in the detail area
+  - Layout SessionPanelView with TerminalViewWrapper occupying the upper area, AgentStatusBar in the middle, and ChatInputView fixed at the bottom
+  - Build ChatInputView with a TextField (JetBrains Mono), a send Button, and Enter key submission via .onSubmit
+  - When the user sends a message, call SessionStore.sendMessage which delegates to the service and PtySessionManager
   - Disable the chat input when not connected to a session
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 10.2 Implement session store with lifecycle management and status display
-  - Create a Zustand store tracking the active sandbox name, connection status, error state, and the data subscription cleanup function
-  - On attach, call the bridge attachSession, subscribe to data events, and set connected state
-  - On detach (triggered by navigating away or closing the panel), call detachSession and clean up the subscription
+- [ ] 10.2 Implement SessionStore with lifecycle management and status display
+  - Build SessionStore as @MainActor @Observable class tracking active sandbox name, connection status, and error state
+  - Inject PtySessionManager and SbxServiceProtocol via initializer
+  - On attach, call PtySessionManager.attach with the terminal view reference and set connected state
+  - On detach (triggered by navigating away), call PtySessionManager.dispose and reset state
   - When a sandbox transitions from stopped to running while the session panel is open, automatically re-attach the session
-  - Only allow one active session at a time; attaching a new session detaches the previous one
-  - Build the agent status bar showing model name ("claude"), sandbox name, uptime counter, and a connection indicator (green dot when connected)
+  - Only allow one active session at a time; attaching a new session disposes the previous one
+  - Build AgentStatusBar showing model name ("claude"), sandbox name, uptime counter (via TimelineView), and a connection indicator (green circle when connected)
   - _Requirements: 6.4, 6.5, 6.6_
 
 - [ ] 11. External terminal integration
 - [ ] 11.1 (P) Implement terminal application detection and shell launching
-  - Detect which terminal applications are installed by checking known macOS bundle paths (/Applications/Terminal.app, /Applications/iTerm.app)
+  - Build ExternalTerminalLauncher conforming to ExternalTerminalProtocol
+  - Detect which terminal applications are installed using NSWorkspace.shared.urlForApplication(withBundleIdentifier:) for com.apple.Terminal and com.googlecode.iterm2
   - Terminal.app is always available on macOS; only include iTerm in the available list if the bundle is found
-  - Launch a terminal window via osascript with AppleScript templates specific to each application
-  - Execute "sbx exec -it &lt;name&gt; bash" inside the launched terminal to open an interactive bash shell
+  - Launch a terminal window via NSAppleScript with AppleScript templates specific to each application
+  - Execute "sbx exec -it <name> bash" inside the launched terminal to open an interactive bash shell
   - Validate the sandbox name against the allowed pattern before interpolation; escape the name for AppleScript string context (backslash-escape \ and ")
   - If the terminal application fails to launch, throw an error with the application name and suggest alternatives
   - _Requirements: 11.1, 11.2, 11.3, 11.6_
 
 - [ ] 11.2 Add terminal preference setting and wire the Open Shell action
-  - Create a settings store with Zustand persist middleware (localStorage) to store the user's preferred terminal application
-  - Add a terminal preference selector in the settings area showing only detected terminal applications
-  - Default to Terminal.app when no preference is set
-  - Add an "Open Shell" button to running sandbox cards that launches a bash shell in the preferred terminal
+  - Build SettingsStore as @MainActor @Observable class persisting preferred terminal to UserDefaults
+  - Load the saved preference on init; default to Terminal.app when no preference is set
+  - Add a terminal preference Picker in the settings area showing only detected terminal applications
+  - Add an "Open Shell" button to running sandbox cards that launches a bash shell in the preferred terminal via ExternalTerminalLauncher
   - Disable the "Open Shell" button when a sandbox is in stopped status
   - _Requirements: 11.4, 11.5, 11.7_
 
 - [ ] 12. Real sbx CLI integration
-- [ ] 12.1 (P) Implement CLI output parsers and command executor
-  - Build the command executor that spawns sbx CLI processes using array-form child_process.spawn (never shell string interpolation) and captures stdout, stderr, and exit code
-  - Build a JSON execution mode that passes --json flags and parses the output directly
-  - Build a parser for "sbx ls" output: detect column headers and extract sandbox name, agent, status, ports, and workspace from each row using header position detection
-  - Build a parser for "sbx policy ls" output: extract policy ID, type, decision, and resources
-  - Build a parser for "sbx policy log" output: detect Blocked/Allowed sections and extract all fields; prefer --json flag when available
-  - Build a parser for "sbx ports" output: extract host port and sandbox port using the digit-arrow-digit pattern
+- [ ] 12.1 (P) Implement CLI executor and output parsers
+  - Build CliExecutor conforming to CliExecutorProtocol using Foundation Process with /usr/bin/env as executable and array-form arguments to prevent command injection
+  - Wrap Process.waitUntilExit() in withCheckedContinuation for async/await integration
+  - Capture stdout and stderr via Pipe; return CliResult with stdout, stderr, and exitCode
+  - Build execJson generic method using JSONDecoder for structured output
+  - Build SbxOutputParser with static methods:
+    - parseSandboxList: detect column headers and extract sandbox name, agent, status, ports, workspace using header position detection via String.Index offsets
+    - parsePolicyList: extract policy ID, type, decision, and resources
+    - parsePolicyLog: detect Blocked/Allowed sections and extract all fields; prefer --json flag when available
+    - parsePortsList: extract host port and sandbox port using the digit-arrow-digit pattern
   - Handle empty output and header-only output by returning empty arrays
+  - Log warnings for unparseable lines via os.Logger
   - Write unit tests for each parser with realistic CLI output samples and edge cases
   - _Requirements: 9.3_
 
-- [ ] 12.2 Implement the real service wrapping all CLI commands
-  - Implement each SbxService method by calling the corresponding sbx CLI command through the executor and parsing the output
-  - Map: list → "sbx ls", run → "sbx run claude &lt;workspace&gt; --name &lt;name&gt;", stop → "sbx stop &lt;name&gt;", rm → "sbx rm &lt;name&gt;"
+- [ ] 12.2 Implement RealSbxService wrapping all CLI commands
+  - Build RealSbxService as a Swift actor conforming to SbxServiceProtocol
+  - Inject CliExecutor and SbxOutputParser; implement each method by calling the corresponding sbx CLI command and parsing output
+  - Map: list → "sbx ls", run → "sbx run claude <workspace> --name <name>", stop → "sbx stop <name>", rm → "sbx rm <name>"
   - Map policy methods to "sbx policy" subcommands and port methods to "sbx ports" subcommands
-  - Detect missing sbx CLI (binary not found on PATH) and throw CLI_ERROR on construction
-  - Detect Docker not running and throw DOCKER_NOT_RUNNING with descriptive message
+  - Implement sendMessage by delegating to PtySessionManager.write
+  - Detect missing sbx CLI (binary not found on PATH) and throw .cliError on initialization
+  - Detect Docker not running from stderr patterns and throw .dockerNotRunning with descriptive message
   - Validate sandbox names before passing to CLI commands
   - _Requirements: 9.3, 9.4_
 
-- [ ] 13. Error handling, toast notifications, and input validation
-  - Implement a toast notification component that displays user-friendly error messages, auto-dismisses after a few seconds, and supports stacking multiple toasts
-  - Surface all service errors from IPC calls as toast notifications with clear messages (e.g., "Port 8080 is already in use", "Sandbox not found")
+- [ ] 13. Error handling, alert notifications, and input validation
+  - Implement a toast-style overlay view that displays user-friendly error messages, auto-dismisses after a few seconds, and supports stacking
+  - Surface all service errors from store actions as toast notifications with clear messages (e.g., "Port 8080 is already in use", "Sandbox not found")
   - Build a full-screen error state shown when sbx CLI is not installed or Docker Desktop is not running, with guidance on how to install or start the required dependency
-  - Add sandbox name validation in the project creation dialog: only allow lowercase alphanumeric characters and hyphens, no leading hyphen; show inline error for invalid names
-  - Validate domain inputs in the add policy dialog before submission (non-empty, no catch-all patterns)
-  - Validate port numbers as positive integers within range 1-65535 in the add port dialog
+  - Add sandbox name validation in CreateProjectSheet: only allow lowercase alphanumeric characters and hyphens, no leading hyphen; show inline error for invalid names
+  - Validate domain inputs in AddPolicySheet before submission (non-empty, no catch-all patterns)
+  - Validate port numbers as positive integers within range 1-65535 in AddPortSheet
   - _Requirements: 5.5, 9.4, 9.5, 11.6_
 
 - [ ] 14. E2E test suite
-- [ ] 14.1 Set up end-to-end testing with Playwright and mock mode
-  - Configure Playwright with Electron support in the project
-  - Set up test fixtures that force SBX_MOCK=1 so all tests run against the mock service without Docker Desktop
-  - Verify the test runner can launch the Electron app, interact with the renderer, and capture UI state
+- [ ] 14.1 Set up XCUITest with mock mode injection
+  - Configure the XCUITest target (sbx-uiUITests) for end-to-end testing
+  - Set up test fixtures that inject SBX_MOCK=1 via app.launchEnvironment so all tests run against MockSbxService without Docker Desktop
+  - Add accessibility identifiers to all interactive views (buttons, text fields, cards, status chips, navigation items)
+  - Verify the test runner can launch the app, interact with views, and assert on element existence
   - _Requirements: 10.2_
 
 - [ ] 14.2 (P) Write E2E tests for project creation and sandbox lifecycle
   - Test project creation: trigger the deploy action, select a directory, verify a new sandbox appears in the grid as LIVE with the correct name and workspace path
   - Test full lifecycle: create a sandbox → verify LIVE status → stop it → verify STOPPED status → remove it with confirmation → verify it is gone from the grid
+  - Use waitForExistence for async state transitions
   - _Requirements: 10.1, 10.3_
 
 - [ ] 14.3 (P) Write E2E tests for policies, ports, and session messaging
