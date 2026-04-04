@@ -1,13 +1,25 @@
 import SwiftUI
 @preconcurrency import SwiftTerm
 
+/// LocalProcessTerminalView subclass that auto-focuses when added to a window.
+class FocusableTerminalView: LocalProcessTerminalView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+}
+
 struct TerminalViewWrapper: NSViewRepresentable {
     let sandboxName: String
     let isMock: Bool
     let ptyManager: PtySessionManager
 
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let terminalView = LocalProcessTerminalView(frame: .zero)
+    func makeNSView(context: Context) -> FocusableTerminalView {
+        let terminalView = FocusableTerminalView(frame: .zero)
         terminalView.nativeBackgroundColor = NSColor(
             red: 0x0E / 255.0,
             green: 0x0E / 255.0,
@@ -17,32 +29,16 @@ struct TerminalViewWrapper: NSViewRepresentable {
         terminalView.nativeForegroundColor = .white
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
-        context.coordinator.terminalView = terminalView
-
         let name = sandboxName
         let mock = isMock
         let manager = ptyManager
         DispatchQueue.main.async {
             manager.attach(name: name, terminalView: terminalView, isMock: mock)
-            terminalView.window?.makeFirstResponder(terminalView)
         }
 
         return terminalView
     }
 
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        if !context.coordinator.didFocus, let window = nsView.window {
-            window.makeFirstResponder(nsView)
-            context.coordinator.didFocus = true
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    class Coordinator {
-        var terminalView: LocalProcessTerminalView?
-        var didFocus = false
+    func updateNSView(_ nsView: FocusableTerminalView, context: Context) {
     }
 }
