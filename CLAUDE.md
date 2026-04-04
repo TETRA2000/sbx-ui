@@ -48,6 +48,8 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 
 ### Reference
 - **`docs/sbx-cli-reference.md`** — Verified sbx CLI v0.23.0 command syntax, output formats, JSON schemas, and error patterns
+- **`docs/mock-sbx.md`** — Documentation for the bash CLI emulator used in integration testing
+- **`tools/mock-sbx`** — Bash CLI emulator (32 tests in `tools/mock-sbx-tests.sh`)
 
 ### Overview
 sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker Sandbox (`sbx`) CLI. It enables developers to manage sandbox lifecycles, network policies, port forwarding, and Claude Code agent sessions without terminal interaction.

@@ -94,7 +94,8 @@ struct CreateProjectSheet: View {
         .frame(width: 480, height: 320)
         .background(Color.surfaceContainer)
         .onAppear {
-            if ProcessInfo.processInfo.environment["SBX_MOCK"] == "1" {
+            if ProcessInfo.processInfo.environment["SBX_MOCK"] == "1" ||
+               ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" {
                 selectedPath = URL(fileURLWithPath: "/tmp/mock-project")
             }
         }

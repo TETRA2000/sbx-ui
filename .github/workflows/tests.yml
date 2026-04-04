@@ -27,6 +27,14 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Setup mock-sbx
+        run: |
+          chmod +x tools/mock-sbx
+          ls -la tools/sbx  # Verify symlink exists
+
+      - name: Test mock-sbx script
+        run: bash tools/mock-sbx-tests.sh
+
       - name: Resolve Swift packages
         run: |
           xcodebuild -resolvePackageDependencies \
@@ -53,15 +61,26 @@ jobs:
             -only-testing:sbx-uiTests \
             2>&1 | xcpretty --color --report junit --output test-results/unit-tests.xml
 
-      - name: Run UI Tests
+      - name: Run UI Tests (in-memory mock)
         run: |
           set -o pipefail
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
-            -only-testing:sbx-uiUITests \
+            -only-testing:sbx-uiUITests/sbx_uiUITests \
+            -only-testing:sbx-uiUITests/sbx_uiUITestsLaunchTests \
             2>&1 | xcpretty --color --report junit --output test-results/ui-tests.xml
+
+      - name: Run UI Tests (CLI mock)
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -only-testing:sbx-uiUITests/sbx_uiCliMockUITests \
+            2>&1 | xcpretty --color --report junit --output test-results/cli-mock-ui-tests.xml
 
       - name: Upload test results
         if: always()
