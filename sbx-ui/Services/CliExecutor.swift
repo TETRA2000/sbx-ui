@@ -6,11 +6,54 @@ struct CliExecutor: CliExecutorProtocol, Sendable {
 
     nonisolated init() {}
 
+    /// Resolves the full path of a command by searching PATH and common install locations.
+    /// macOS GUI apps don't inherit the shell's PATH, so /opt/homebrew/bin etc. are missing.
+    private nonisolated func resolveCommand(_ command: String) -> String {
+        // Check if already a full path
+        if command.hasPrefix("/") { return command }
+
+        // Build search paths: process PATH + common install locations
+        let processPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let extraPaths = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+        ]
+        let allPaths = processPath.split(separator: ":").map(String.init) + extraPaths
+
+        for dir in allPaths {
+            let fullPath = "\(dir)/\(command)"
+            if FileManager.default.isExecutableFile(atPath: fullPath) {
+                return fullPath
+            }
+        }
+
+        // Fallback: let /usr/bin/env try to find it (will fail with clear error)
+        return command
+    }
+
     func exec(command: String, args: [String]) async throws -> CliResult {
-        try await withCheckedThrowingContinuation { continuation in
+        let resolvedCommand = resolveCommand(command)
+
+        return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [command] + args
+
+            if resolvedCommand.hasPrefix("/") {
+                process.executableURL = URL(fileURLWithPath: resolvedCommand)
+                process.arguments = args
+            } else {
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [command] + args
+            }
+
+            // Ensure child processes can also find commands in common paths
+            var env = ProcessInfo.processInfo.environment
+            let currentPath = env["PATH"] ?? "/usr/bin:/bin"
+            if !currentPath.contains("/opt/homebrew/bin") {
+                env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:\(currentPath)"
+            }
+            process.environment = env
 
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
