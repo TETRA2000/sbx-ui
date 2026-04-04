@@ -1,0 +1,78 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit & UI Tests
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          echo "Using: $LATEST_XCODE"
+          sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Setup mock-sbx
+        run: |
+          chmod +x tools/mock-sbx
+          ls -la tools/sbx
+
+      - name: Test mock-sbx script
+        run: bash tools/mock-sbx-tests.sh
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui
+
+      - name: Build for testing
+        run: |
+          xcodebuild build-for-testing \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Run Unit Tests
+        run: |
+          xcodebuild test-without-building \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -only-testing:sbx-uiTests
+
+      - name: Run UI Tests (in-memory mock)
+        run: |
+          xcodebuild test-without-building \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -only-testing:sbx-uiUITests/sbx_uiUITests \
+            -only-testing:sbx-uiUITests/sbx_uiUITestsLaunchTests
+
+      - name: Run UI Tests (CLI mock)
+        run: |
+          xcodebuild test-without-building \
+            -project sbx-ui.xcodeproj \
+            -scheme sbx-ui \
+            -destination 'platform=macOS' \
+            -only-testing:sbx-uiUITests/sbx_uiCliMockUITests

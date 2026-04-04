@@ -1,0 +1,652 @@
+#!/usr/bin/env bash
+# mock-sbx — A bash emulator for the Docker Sandbox (sbx) CLI
+# Used for integration testing of sbx-ui without Docker Desktop.
+# See docs/mock-sbx.md for documentation.
+set -euo pipefail
+
+STATE_DIR="${SBX_MOCK_STATE_DIR:-/tmp/mock-sbx-state}"
+
+# --- State Management ---
+
+ensure_state_dirs() {
+  mkdir -p "$STATE_DIR/sandboxes" "$STATE_DIR/policies" "$STATE_DIR/ports" "$STATE_DIR/policy-log"
+  # Seed defaults only once (marker file prevents re-seeding)
+  if [[ ! -f "$STATE_DIR/.initialized" ]]; then
+    seed_defaults
+    touch "$STATE_DIR/.initialized"
+  fi
+}
+
+seed_defaults() {
+  local domains=(
+    "api.anthropic.com"
+    "*.npmjs.org"
+    "github.com"
+    "*.github.com"
+    "registry.hub.docker.com"
+    "*.docker.io"
+    "*.googleapis.com"
+    "api.openai.com"
+    "*.pypi.org"
+    "files.pythonhosted.org"
+  )
+  for domain in "${domains[@]}"; do
+    local id
+    id="$(gen_uuid)"
+    printf '{"id":"local:%s","type":"network","decision":"allow","resources":"%s"}\n' "$id" "$domain" \
+      > "$STATE_DIR/policies/$id.json"
+  done
+
+  # Seed policy log entries
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%S.000000+00:00)"
+  cat > "$STATE_DIR/policy-log/entries.json" << EOFLOG
+{
+  "blocked_hosts": [
+    {"host":"evil.example.com","vm_name":"claude-myproject","proxy_type":"network","rule":"user-denied","last_seen":"$now","since":"$now","count_since":3}
+  ],
+  "allowed_hosts": [
+    {"host":"api.anthropic.com","vm_name":"claude-myproject","proxy_type":"forward","rule":"domain-allowed","last_seen":"$now","since":"$now","count_since":42},
+    {"host":"registry.npmjs.org","vm_name":"claude-myproject","proxy_type":"transparent","rule":"domain-allowed","last_seen":"$now","since":"$now","count_since":15}
+  ]
+}
+EOFLOG
+}
+
+gen_uuid() {
+  uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || \
+    printf '%04x%04x-%04x-%04x-%04x-%04x%04x%04x' \
+      $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM $RANDOM
+}
+
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+validate_name() {
+  local name="$1"
+  if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+    echo "Error: invalid sandbox name '$name'" >&2
+    exit 1
+  fi
+}
+
+sandbox_exists() {
+  [[ -f "$STATE_DIR/sandboxes/$1.json" ]]
+}
+
+require_sandbox() {
+  if ! sandbox_exists "$1"; then
+    echo "Error: sandbox '$1' not found" >&2
+    exit 1
+  fi
+}
+
+read_sandbox_field() {
+  local name="$1" field="$2"
+  grep -o "\"$field\":\"[^\"]*\"" "$STATE_DIR/sandboxes/$name.json" 2>/dev/null | \
+    sed "s/\"$field\":\"//" | sed 's/"$//' || echo ""
+}
+
+# --- Lifecycle Commands ---
+
+cmd_ls() {
+  local json_mode=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_mode=true; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  if $json_mode; then
+    printf '{"sandboxes":['
+    local first=true
+    for f in "$STATE_DIR/sandboxes/"*.json; do
+      [[ -f "$f" ]] || continue
+      $first || printf ','
+      first=false
+      cat "$f"
+    done
+    printf ']}'
+  else
+    printf '%-14s%-9s%-10s%-50s%s\n' "SANDBOX" "AGENT" "STATUS" "PORTS" "WORKSPACE"
+    for f in "$STATE_DIR/sandboxes/"*.json; do
+      [[ -f "$f" ]] || continue
+      local name agent status workspace
+      name="$(grep -o '"name":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+      agent="$(grep -o '"agent":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+      status="$(grep -o '"status":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+      workspace="$(grep -o '"workspaces":\["[^"]*"\]' "$f" | head -1 | sed 's/.*\["//' | sed 's/"\].*//')"
+      printf '%-14s%-9s%-10s%-50s%s\n' "$name" "$agent" "$status" "" "$workspace"
+    done
+  fi
+}
+
+cmd_run() {
+  local agent="" workspace="" name="" force=false
+  local args=()
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --branch) shift 2 ;; # Ignored
+      -m|--memory) shift 2 ;; # Ignored
+      -t|--template) shift 2 ;; # Ignored
+      --) shift; break ;;
+      -*) shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+
+  if [[ ${#args[@]} -eq 0 ]]; then
+    echo "Error: missing arguments for 'run'" >&2
+    exit 1
+  fi
+
+  # Single arg: attach to existing sandbox
+  if [[ ${#args[@]} -eq 1 ]] && sandbox_exists "${args[0]}"; then
+    local _name="${args[0]}"
+    # Resume if stopped
+    local _status
+    _status="$(read_sandbox_field "$_name" "status")"
+    if [[ "$_status" == "stopped" ]]; then
+      local tmp="$STATE_DIR/sandboxes/$_name.json.tmp"
+      sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$_name.json" > "$tmp"
+      mv "$tmp" "$STATE_DIR/sandboxes/$_name.json"
+    fi
+    if [[ -t 0 ]]; then
+      interactive_mode "$_name"
+    fi
+    return
+  fi
+
+  agent="${args[0]}"
+
+  if [[ ${#args[@]} -ge 2 ]]; then
+    workspace="${args[1]}"
+  else
+    workspace="$(pwd)"
+  fi
+
+  # Default name
+  if [[ -z "$name" ]]; then
+    local dirname
+    dirname="$(basename "$workspace")"
+    name="$agent-$dirname"
+  fi
+
+  validate_name "$name"
+
+  # If sandbox exists and is stopped, resume it
+  if sandbox_exists "$name"; then
+    local status
+    status="$(read_sandbox_field "$name" "status")"
+    if [[ "$status" == "running" ]]; then
+      interactive_mode "$name"
+      return
+    fi
+    # Resume: update status to running
+    local tmp="$STATE_DIR/sandboxes/$name.json.tmp"
+    sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$name.json" > "$tmp"
+    mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
+    if [[ -t 0 ]]; then
+      interactive_mode "$name"
+    fi
+    return
+  fi
+
+  # Create new sandbox
+  local ws_escaped
+  ws_escaped="$(json_escape "$workspace")"
+  printf '{"name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
+    "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
+  printf '[]' > "$STATE_DIR/ports/$name.json"
+
+  echo "✓ Created sandbox '$name'"
+  echo "  Workspace: $workspace (direct mount)"
+  echo "  Agent: $agent"
+
+  # If stdin is a TTY, enter interactive mode
+  if [[ -t 0 ]]; then
+    interactive_mode "$name"
+  fi
+}
+
+cmd_stop() {
+  local name="${1:-}"
+  [[ -z "$name" ]] && { echo "Error: missing sandbox name" >&2; exit 1; }
+  require_sandbox "$name"
+
+  local tmp="$STATE_DIR/sandboxes/$name.json.tmp"
+  sed 's/"status":"running"/"status":"stopped"/' "$STATE_DIR/sandboxes/$name.json" > "$tmp"
+  mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
+
+  # Clear ports on stop
+  printf '[]' > "$STATE_DIR/ports/$name.json"
+}
+
+cmd_rm() {
+  local force=false name=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--force) force=true; shift ;;
+      --all) shift ;; # Ignored
+      *) name="$1"; shift ;;
+    esac
+  done
+
+  [[ -z "$name" ]] && { echo "Error: missing sandbox name" >&2; exit 1; }
+  require_sandbox "$name"
+
+  rm -f "$STATE_DIR/sandboxes/$name.json"
+  rm -f "$STATE_DIR/ports/$name.json"
+  echo "Sandbox '$name' removed"
+}
+
+cmd_create() {
+  # sbx create [--name <name>] <agent> [<workspace>]
+  local agent="" workspace="" name=""
+  local args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      -*) shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+
+  agent="${args[0]:-}"
+  workspace="${args[1]:-$(pwd)}"
+
+  if [[ -z "$name" ]]; then
+    name="$agent-$(basename "$workspace")"
+  fi
+
+  validate_name "$name"
+
+  local ws_escaped
+  ws_escaped="$(json_escape "$workspace")"
+  printf '{"name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
+    "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
+  printf '[]' > "$STATE_DIR/ports/$name.json"
+
+  echo "✓ Created sandbox '$name'"
+  echo "  Workspace: $workspace (direct mount)"
+  echo "  Agent: $agent"
+  echo ""
+  echo "To connect to this sandbox, run:"
+  echo "  sbx run $name"
+}
+
+# --- Interactive Mode ---
+
+interactive_mode() {
+  local name="$1"
+  trap 'printf "\r\n"; exit 0' INT TERM
+
+  printf '\033[1;36m╭─────────────────────────────────────╮\033[0m\r\n'
+  printf '\033[1;36m│\033[0m  \033[1;37mClaude Code\033[0m \033[0;90mv1.0.0\033[0m               \033[1;36m│\033[0m\r\n'
+  printf '\033[1;36m╰─────────────────────────────────────╯\033[0m\r\n'
+  printf '\r\n'
+  printf '\033[0;90mModel: claude-sonnet-4-20250514\033[0m\r\n'
+  printf '\033[0;90mWorkspace: /Users/dev/project\033[0m\r\n'
+  printf '\r\n'
+  printf '\033[1;32m>\033[0m '
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && { printf '\033[1;32m>\033[0m '; continue; }
+    printf '\r\n'
+    sleep 0.1
+    printf '\033[0;33m⠋ Thinking...\033[0m\r\n'
+    sleep 0.1
+    printf '\033[0;36m⠿ Reading file: src/main.swift\033[0m\r\n'
+    sleep 0.1
+    printf '\033[0;36m⠿ Writing file: src/main.swift\033[0m\r\n'
+    sleep 0.05
+    printf '\033[1;32m✓ Done\033[0m\r\n'
+    printf '\r\n'
+    printf '\033[1;32m>\033[0m '
+  done
+}
+
+# --- Policy Commands ---
+
+cmd_policy() {
+  local subcmd="${1:-}"
+  shift || true
+  case "$subcmd" in
+    ls|list) policy_ls "$@" ;;
+    allow)   policy_allow "$@" ;;
+    deny)    policy_deny "$@" ;;
+    rm)      policy_rm "$@" ;;
+    log)     policy_log "$@" ;;
+    *)       echo "Error: unknown policy command '$subcmd'" >&2; exit 1 ;;
+  esac
+}
+
+policy_ls() {
+  printf '%-45s%-10s%-11s%s\n' "NAME" "TYPE" "DECISION" "RESOURCES"
+  for f in "$STATE_DIR/policies/"*.json; do
+    [[ -f "$f" ]] || continue
+    local id type decision resources
+    id="$(grep -o '"id":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+    type="$(grep -o '"type":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+    decision="$(grep -o '"decision":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+    resources="$(grep -o '"resources":"[^"]*"' "$f" | head -1 | cut -d'"' -f4)"
+    printf '%-45s%-10s%-11s%s\n' "$id" "$type" "$decision" "$resources"
+    echo "" # Blank line between rules (matches real CLI format)
+  done
+}
+
+policy_allow() {
+  # sbx policy allow network <resources>
+  [[ "${1:-}" == "network" ]] && shift
+  local resources="${1:-}"
+  [[ -z "$resources" ]] && { echo "Error: missing resources" >&2; exit 1; }
+
+  local id
+  id="$(gen_uuid)"
+  printf '{"id":"local:%s","type":"network","decision":"allow","resources":"%s"}\n' "$id" "$(json_escape "$resources")" \
+    > "$STATE_DIR/policies/$id.json"
+  echo "Policy added: $id ($resources)"
+}
+
+policy_deny() {
+  [[ "${1:-}" == "network" ]] && shift
+  local resources="${1:-}"
+  [[ -z "$resources" ]] && { echo "Error: missing resources" >&2; exit 1; }
+
+  local id
+  id="$(gen_uuid)"
+  printf '{"id":"local:%s","type":"network","decision":"deny","resources":"%s"}\n' "$id" "$(json_escape "$resources")" \
+    > "$STATE_DIR/policies/$id.json"
+  echo "Policy added: $id ($resources)"
+}
+
+policy_rm() {
+  # sbx policy rm network --resource <resource>
+  [[ "${1:-}" == "network" ]] && shift
+  local resource=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --resource) resource="$2"; shift 2 ;;
+      --id) shift 2 ;; # Ignored for simplicity
+      *) shift ;;
+    esac
+  done
+
+  [[ -z "$resource" ]] && { echo "Error: missing --resource" >&2; exit 1; }
+
+  local found=false
+  for f in "$STATE_DIR/policies/"*.json; do
+    [[ -f "$f" ]] || continue
+    if grep -q "\"resources\":\"$resource\"" "$f"; then
+      rm "$f"
+      found=true
+    fi
+  done
+
+  if ! $found; then
+    echo "Error: policy for '$resource' not found" >&2
+    exit 1
+  fi
+  echo "Policy removed: resources=$resource"
+}
+
+policy_log() {
+  local sandbox="" json_mode=false
+  local args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_mode=true; shift ;;
+      --limit) shift 2 ;;
+      --type) shift 2 ;;
+      -*) shift ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+
+  # Positional sandbox name
+  sandbox="${args[0]:-}"
+
+  local logfile="$STATE_DIR/policy-log/entries.json"
+  if [[ ! -f "$logfile" ]]; then
+    if $json_mode; then
+      echo '{"blocked_hosts":[],"allowed_hosts":[]}'
+    else
+      echo "No policy log entries found"
+    fi
+    return
+  fi
+
+  if $json_mode; then
+    if [[ -n "$sandbox" ]]; then
+      # Filter by sandbox name using basic text processing
+      # This is simplified — for full correctness use jq if available
+      cat "$logfile"
+    else
+      cat "$logfile"
+    fi
+  else
+    echo "No policy log entries found"
+  fi
+}
+
+# --- Port Commands ---
+
+cmd_ports() {
+  local name="${1:-}"
+  [[ -z "$name" ]] && { echo "Error: missing sandbox name" >&2; exit 1; }
+  shift
+  require_sandbox "$name"
+
+  local publish="" unpublish="" json_mode=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --publish) publish="$2"; shift 2 ;;
+      --unpublish) unpublish="$2"; shift 2 ;;
+      --json) json_mode=true; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  local portsfile="$STATE_DIR/ports/$name.json"
+  [[ -f "$portsfile" ]] || printf '[]' > "$portsfile"
+
+  if [[ -n "$publish" ]]; then
+    port_publish "$name" "$publish"
+  elif [[ -n "$unpublish" ]]; then
+    port_unpublish "$name" "$unpublish"
+  else
+    # List ports
+    if $json_mode; then
+      cat "$portsfile"
+    else
+      local content
+      content="$(cat "$portsfile")"
+      if [[ "$content" == "[]" ]]; then
+        echo "No published ports"
+      else
+        printf '%-12s%-12s%-15s%s\n' "HOST IP" "HOST PORT" "SANDBOX PORT" "PROTOCOL"
+        # Parse JSON array entries
+        echo "$content" | grep -o '{[^}]*}' | while read -r entry; do
+          local hp sp
+          hp="$(echo "$entry" | grep -o '"host_port":[0-9]*' | cut -d: -f2)"
+          sp="$(echo "$entry" | grep -o '"sandbox_port":[0-9]*' | cut -d: -f2)"
+          printf '%-12s%-12s%-15s%s\n' "127.0.0.1" "$hp" "$sp" "tcp"
+        done
+      fi
+    fi
+  fi
+}
+
+port_publish() {
+  local name="$1" spec="$2"
+  local host_port sandbox_port
+  host_port="${spec%%:*}"
+  sandbox_port="${spec##*:}"
+
+  # Validate ports
+  if [[ "$host_port" -lt 1 || "$host_port" -gt 65535 ]] 2>/dev/null; then
+    echo "Error: invalid port number $host_port" >&2; exit 1
+  fi
+  if [[ "$sandbox_port" -lt 1 || "$sandbox_port" -gt 65535 ]] 2>/dev/null; then
+    echo "Error: invalid port number $sandbox_port" >&2; exit 1
+  fi
+
+  # Check for duplicate host port across all sandboxes
+  for pf in "$STATE_DIR/ports/"*.json; do
+    [[ -f "$pf" ]] || continue
+    if grep -q "\"host_port\":$host_port" "$pf" 2>/dev/null; then
+      echo "ERROR: publish port: port 127.0.0.1:$host_port/tcp is already published" >&2
+      exit 1
+    fi
+  done
+
+  # Add port to the array
+  local portsfile="$STATE_DIR/ports/$name.json"
+  local current
+  current="$(cat "$portsfile")"
+  local entry="{\"host_ip\":\"127.0.0.1\",\"host_port\":$host_port,\"sandbox_port\":$sandbox_port,\"protocol\":\"tcp\"}"
+
+  if [[ "$current" == "[]" ]]; then
+    printf '[%s]' "$entry" > "$portsfile"
+  else
+    # Remove trailing ] and append
+    printf '%s,%s]' "${current%]}" "$entry" > "$portsfile"
+  fi
+
+  echo "Published 127.0.0.1:$host_port -> $sandbox_port/tcp"
+}
+
+port_unpublish() {
+  local name="$1" spec="$2"
+  local host_port sandbox_port
+  host_port="${spec%%:*}"
+  sandbox_port="${spec##*:}"
+
+  local portsfile="$STATE_DIR/ports/$name.json"
+  local current
+  current="$(cat "$portsfile")"
+
+  # Remove matching entry — rebuild array without it
+  local new_entries=()
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    if ! echo "$entry" | grep -q "\"host_port\":$host_port" || \
+       ! echo "$entry" | grep -q "\"sandbox_port\":$sandbox_port"; then
+      new_entries+=("$entry")
+    fi
+  done <<< "$(echo "$current" | grep -o '{[^}]*}')"
+
+  if [[ ${#new_entries[@]} -eq 0 ]]; then
+    printf '[]' > "$portsfile"
+  else
+    local joined
+    joined="$(IFS=,; echo "${new_entries[*]}")"
+    printf '[%s]' "$joined" > "$portsfile"
+  fi
+
+  echo "Unpublished 127.0.0.1:$host_port -> $sandbox_port/tcp"
+}
+
+# --- Exec Command ---
+
+cmd_exec() {
+  local interactive=false tty=false name="" cmd_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -i|--interactive) interactive=true; shift ;;
+      -t|--tty) tty=true; shift ;;
+      -it|-ti) interactive=true; tty=true; shift ;;
+      -d|--detach) shift ;;
+      -u|--user) shift 2 ;;
+      -e|--env) shift 2 ;;
+      -w|--workdir) shift 2 ;;
+      -*)  shift ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"
+        else
+          cmd_args+=("$1")
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  [[ -z "$name" ]] && { echo "Error: missing sandbox name" >&2; exit 1; }
+  require_sandbox "$name"
+
+  local status
+  status="$(read_sandbox_field "$name" "status")"
+  if [[ "$status" != "running" ]]; then
+    echo "Error: sandbox '$name' is not running" >&2
+    exit 1
+  fi
+
+  # If command is bash/sh, exec it
+  if [[ ${#cmd_args[@]} -gt 0 ]]; then
+    exec "${cmd_args[@]}"
+  else
+    exec /bin/bash
+  fi
+}
+
+# --- Other Commands ---
+
+cmd_version() {
+  echo "Client Version:  v0.99.0-mock (mock-sbx)"
+  echo "Server Version:  v0.99.0-mock (mock-sbx)"
+}
+
+cmd_help() {
+  cat << 'HELP'
+Docker Sandboxes (mock) — test emulator for sbx CLI
+
+Usage:
+  sbx [command]
+
+Available Commands:
+  create      Create a sandbox for an agent
+  exec        Execute a command inside a sandbox
+  ls          List sandboxes
+  policy      Manage sandbox policies
+  ports       Manage sandbox port publishing
+  rm          Remove one or more sandboxes
+  run         Run an agent in a sandbox
+  stop        Stop one or more sandboxes
+  version     Show version information
+
+Flags:
+  -h, --help    help for sbx
+HELP
+}
+
+# --- Main ---
+
+ensure_state_dirs
+
+case "${1:-}" in
+  ls|list)      shift; cmd_ls "$@" ;;
+  run)          shift; cmd_run "$@" ;;
+  stop)         shift; cmd_stop "$@" ;;
+  rm|remove)    shift; cmd_rm "$@" ;;
+  create)       shift; cmd_create "$@" ;;
+  policy)       shift; cmd_policy "$@" ;;
+  ports)        shift; cmd_ports "$@" ;;
+  exec)         shift; cmd_exec "$@" ;;
+  version)      cmd_version ;;
+  help|--help|-h) cmd_help ;;
+  "")           cmd_help ;;
+  *)            echo "Error: unknown command '$1'" >&2; exit 1 ;;
+esac
