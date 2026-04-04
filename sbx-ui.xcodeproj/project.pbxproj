@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A96F2F412F810C9A007495EA /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = B10A00022F81000000000002 /* SwiftTerm */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A96F2DAC2F80FFE5007495EA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A96F2F412F810C9A007495EA /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = "sbx-ui";
 			packageProductDependencies = (
+				B10A00022F81000000000002 /* SwiftTerm */,
 			);
 			productName = "sbx-ui";
 			productReference = A96F2D9C2F80FFE4007495EA /* sbx-ui.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = A96F2D932F80FFE4007495EA;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B10A00012F81000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A96F2D9D2F80FFE4007495EA /* Products */;
 			projectDirPath = "";
@@ -398,7 +407,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 788YH48Y3Q;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -430,7 +439,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 788YH48Y3Q;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -573,6 +582,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B10A00012F81000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B10A00022F81000000000002 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B10A00012F81000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A96F2D942F80FFE4007495EA /* Project object */;
 }

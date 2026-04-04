@@ -5,6 +5,10 @@ struct SessionPanelView: View {
     var onBack: () -> Void
     @Environment(SessionStore.self) private var sessionStore
 
+    private var isMock: Bool {
+        ProcessInfo.processInfo.environment["SBX_MOCK"] == "1"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Navigation bar
@@ -29,8 +33,9 @@ struct SessionPanelView: View {
             .background(Color.surfaceContainer)
 
             // Terminal area
-            TerminalPlaceholderView()
+            TerminalViewWrapper(sandboxName: sandbox.name, isMock: isMock)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("terminalView")
 
             // Agent status bar
             AgentStatusBar(sandbox: sandbox)
@@ -49,31 +54,5 @@ struct SessionPanelView: View {
         .onDisappear {
             sessionStore.detach()
         }
-    }
-}
-
-/// Placeholder terminal view (real SwiftTerm integration in Task 9)
-struct TerminalPlaceholderView: View {
-    @Environment(SessionStore.self) private var sessionStore
-
-    var body: some View {
-        ZStack {
-            Color.surfaceLowest
-            if sessionStore.connected {
-                VStack(spacing: 4) {
-                    Text("Terminal Session")
-                        .font(.code(14))
-                        .foregroundStyle(.secondary)
-                    Text("Connected to \(sessionStore.activeSandbox ?? "")")
-                        .font(.code(11))
-                        .foregroundStyle(.tertiary)
-                }
-            } else {
-                Text("Not connected")
-                    .font(.code(12))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .accessibilityIdentifier("terminalView")
     }
 }
