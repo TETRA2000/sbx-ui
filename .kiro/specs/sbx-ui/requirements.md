@@ -1,7 +1,7 @@
 # Requirements Document
 
 ## Introduction
-sbx-ui is a desktop GUI application for Docker Sandbox (`sbx`) — a secure, container-based environment for AI coding agents. Phase 1 delivers a working Electron desktop app where developers can create projects from local Git repositories, launch Claude Code inside Docker Sandboxes, interact with the agent through a chat-style UI, manage network policies and port forwarding, open sandbox sessions or shells in external terminal applications (Terminal/iTerm), and stop or destroy sandboxes — all without using the terminal. A full in-memory mock of the `sbx` CLI enables E2E testing without Docker Desktop.
+sbx-ui is a desktop GUI application for Docker Sandbox (`sbx`) — a secure, container-based environment for AI coding agents. Phase 1 delivers a working Electron desktop app where developers can create projects from local Git repositories, launch Claude Code inside Docker Sandboxes, interact with the agent through a chat-style UI, manage network policies and port forwarding, open bash shells inside sandboxes via external terminal applications (Terminal/iTerm), and stop or destroy sandboxes — all without using the terminal. A full in-memory mock of the `sbx` CLI enables E2E testing without Docker Desktop.
 
 ## Requirements
 
@@ -117,14 +117,13 @@ sbx-ui is a desktop GUI application for Docker Sandbox (`sbx`) — a secure, con
 6. When a session messaging E2E test runs, it shall verify sending a message and observing simulated Claude Code response output in the terminal.
 
 ### Requirement 11: External Terminal Integration
-**Objective:** As a developer, I want to open a sandbox's Claude Code session or a shell in an external terminal application (Terminal or iTerm), so that I can use a full-featured terminal environment alongside the in-app UI.
+**Objective:** As a developer, I want to open a bash shell inside a sandbox in an external terminal application (Terminal or iTerm), so that I can inspect or work inside the sandbox environment using a full-featured terminal.
 
 #### Acceptance Criteria
-1. When the user triggers "Open in Terminal" on a running sandbox, the App shall offer a choice between attaching to the current Claude Code session or opening a new shell (bash).
-2. When the user selects "Attach Claude Code session", the App shall launch the user's preferred terminal application and execute `sbx exec -it <sandbox-name> bash` or the equivalent attach command to connect to the running Claude Code PTY.
-3. When the user selects "Open Shell", the App shall launch the user's preferred terminal application and execute `sbx exec -it <sandbox-name> bash` to open an interactive shell inside the sandbox.
-4. The App shall support Terminal.app and iTerm as external terminal targets on macOS.
-5. The App shall detect which supported terminal applications are installed and present only available options.
-6. Where the user has not set a preferred terminal, the App shall default to the system's default terminal application (Terminal.app on macOS).
-7. The App shall provide a setting for the user to select their preferred external terminal application.
-8. If the target terminal application is not installed or fails to launch, the App shall display an error message with the application name and suggest alternatives.
+1. When the user triggers "Open Shell" on a running sandbox, the App shall launch the user's preferred terminal application and open an interactive bash shell inside the sandbox.
+2. The App shall support Terminal.app and iTerm as external terminal targets on macOS.
+3. The App shall detect which supported terminal applications are installed and present only available options.
+4. Where the user has not set a preferred terminal, the App shall default to the system's default terminal application (Terminal.app on macOS).
+5. The App shall provide a setting for the user to select their preferred external terminal application.
+6. If the target terminal application is not installed or fails to launch, the App shall display an error message with the application name and suggest alternatives.
+7. While a sandbox is in "stopped" status, the App shall disable the "Open Shell" action.
