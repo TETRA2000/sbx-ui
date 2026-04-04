@@ -106,6 +106,7 @@ struct SandboxCardView: View {
         .padding(16)
         .background(isHovered ? Color.surfaceContainerHigh : Color.surfaceContainer)
         .clipShape(RoundedRectangle(cornerRadius: DesignSystem.cornerRadius))
+        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
