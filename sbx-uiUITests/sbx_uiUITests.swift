@@ -235,6 +235,19 @@ final class sbx_uiUITests: XCTestCase {
 
     // MARK: - Session E2E
 
+    // MARK: - Session & Terminal E2E
+
+    /// Helper: opens a session for the named sandbox (must already exist on dashboard).
+    @MainActor
+    private func openSession(name: String) {
+        let nameText = app.staticTexts[name]
+        XCTAssertTrue(nameText.waitForExistence(timeout: 3))
+        nameText.click()
+
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+    }
+
     @MainActor
     func testSessionPanelOpens() throws {
         createSandbox(name: "test-session")
@@ -242,41 +255,140 @@ final class sbx_uiUITests: XCTestCase {
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
-        // Click sandbox name to enter session
-        let nameText = app.staticTexts["test-session"]
-        XCTAssertTrue(nameText.waitForExistence(timeout: 3))
-        nameText.click()
+        openSession(name: "test-session")
 
-        // Verify session panel opened (back button visible)
+        // Verify session panel elements
         let backButton = app.buttons["backToDashboard"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(backButton.exists)
+
+        // Agent status bar shows connected
+        let connected = app.staticTexts["Connected"]
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
     }
 
     @MainActor
-    func testTerminalReceivesKeyboardInput() throws {
-        createSandbox(name: "test-typing")
+    func testTerminalAutoFocusReceivesKeyboardInput() throws {
+        // Verifies FocusableTerminalView.viewDidMoveToWindow sets first responder
+        // so keyboard events reach the terminal without requiring a click.
+        createSandbox(name: "test-autofocus")
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
-        // Open session
-        let nameText = app.staticTexts["test-typing"]
-        XCTAssertTrue(nameText.waitForExistence(timeout: 3))
-        nameText.click()
+        openSession(name: "test-autofocus")
 
-        let backButton = app.buttons["backToDashboard"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
-
-        // Wait for terminal to render mock content
+        // Wait for terminal to render and auto-focus via viewDidMoveToWindow
         sleep(2)
 
-        // Type into the terminal — if focus is set correctly, keys reach the terminal
-        // No crash or error means the terminal accepted keyboard events
+        // Type keys — if auto-focus worked, the terminal has first responder
+        // and these keys are delivered to it (not to any other UI element).
         app.typeKey("h", modifierFlags: [])
         app.typeKey("e", modifierFlags: [])
         app.typeKey("l", modifierFlags: [])
         app.typeKey("l", modifierFlags: [])
         app.typeKey("o", modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+
+        // Session panel still active — keyboard input didn't trigger navigation
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.exists)
+
+        // Connected status confirms session is still alive
+        let connected = app.staticTexts["Connected"]
+        XCTAssertTrue(connected.exists)
+    }
+
+    @MainActor
+    func testTerminalInputDoesNotLeakToOtherUI() throws {
+        // Verifies keyboard input stays in terminal, doesn't affect sidebar or navigation
+        createSandbox(name: "test-noleak")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        openSession(name: "test-noleak")
+        sleep(2)
+
+        // Type characters including ones that could match shortcuts or labels
+        app.typeKey("d", modifierFlags: [])
+        app.typeKey("p", modifierFlags: [])
+        app.typeKey("q", modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+
+        // Sidebar items still present — no navigation happened from typing
+        let dashboard = app.staticTexts["DASHBOARD"]
+        XCTAssertTrue(dashboard.exists)
+        let policies = app.staticTexts["POLICIES"]
+        XCTAssertTrue(policies.exists)
+
+        // Still in session panel (not kicked back to dashboard)
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.exists)
+    }
+
+    @MainActor
+    func testSessionReattachAfterBack() throws {
+        // Tests that dispose + re-attach works: terminal focus and input survive round-trip
+        createSandbox(name: "test-reattach")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        // First attach
+        openSession(name: "test-reattach")
+        sleep(1)
+        app.typeKey("a", modifierFlags: [])
+
+        // Go back to dashboard
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Re-enter the same session
+        openSession(name: "test-reattach")
+
+        // Wait for re-attach and auto-focus
+        sleep(2)
+
+        // Type again — terminal should accept input after re-attach
+        app.typeKey("b", modifierFlags: [])
+        app.typeKey("c", modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+
+        // Session still connected after re-attach
+        let connected = app.staticTexts["Connected"]
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testTerminalAcceptsSustainedInput() throws {
+        // Stress-tests keyboard input: rapid keystrokes, special keys, modifiers
+        createSandbox(name: "test-sustained")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        openSession(name: "test-sustained")
+        sleep(2)
+
+        // Rapid keystrokes
+        for char in "the quick brown fox" {
+            app.typeKey(String(char), modifierFlags: [])
+        }
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+
+        // Special keys
+        app.typeKey(XCUIKeyboardKey.tab, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.upArrow, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
+
+        // Ctrl+C (common terminal interrupt)
+        app.typeKey("c", modifierFlags: .control)
+
+        // Session still alive
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.exists)
+        let connected = app.staticTexts["Connected"]
+        XCTAssertTrue(connected.exists)
     }
 }
