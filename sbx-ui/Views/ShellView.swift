@@ -18,7 +18,9 @@ struct ShellView: View {
                 SidebarView(selection: $selection)
             } detail: {
                 Group {
-                    if let sandbox = selectedSandbox, sandbox.status == .running {
+                    if let selected = selectedSandbox,
+                       let sandbox = sandboxStore.sandboxes.first(where: { $0.name == selected.name }),
+                       sandbox.status == .running {
                         SessionPanelView(sandbox: sandbox, onBack: { selectedSandbox = nil })
                     } else {
                         switch selection {
@@ -58,6 +60,9 @@ struct ShellView: View {
                 .help("Toggle Debug Log")
             }
         }
+        .task {
+            sandboxStore.startPolling()
+        }
         .onAppear {
             let logStore = LogStore.shared
             logStore.info("App", "sbx-ui started")
@@ -86,12 +91,6 @@ struct DashboardView: View {
             }
         }
         .background(Color.surface)
-        .task {
-            sandboxStore.startPolling()
-        }
-        .onDisappear {
-            sandboxStore.stopPolling()
-        }
         .sheet(isPresented: $showCreateSheet) {
             CreateProjectSheet()
         }
