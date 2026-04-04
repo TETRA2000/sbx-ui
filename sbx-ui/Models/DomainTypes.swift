@@ -71,6 +71,12 @@ enum SbxServiceError: Error, Sendable, LocalizedError {
     }
 }
 
+enum SbxValidation {
+    nonisolated static func isValidName(_ name: String) -> Bool {
+        name.range(of: #"^[a-z0-9][a-z0-9-]*$"#, options: .regularExpression) != nil
+    }
+}
+
 enum TerminalApp: String, Sendable, Codable, CaseIterable {
     case terminal  // com.apple.Terminal
     case iterm     // com.googlecode.iterm2

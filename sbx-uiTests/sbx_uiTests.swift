@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import sbx_ui
 
-// MARK: - Test Helper: FailingSbxService
+// MARK: - Test Helpers
 
 actor FailingSbxService: SbxServiceProtocol {
     nonisolated func list() async throws -> [Sandbox] { throw SbxServiceError.cliError("test error") }
@@ -20,11 +20,115 @@ actor FailingSbxService: SbxServiceProtocol {
     nonisolated func sendMessage(name: String, message: String) async throws { throw SbxServiceError.cliError("test error") }
 }
 
-// MARK: - Async Test Expectation Helper
+/// Minimal in-memory stub for unit testing stores. No delays, no complex logic.
+actor StubSbxService: SbxServiceProtocol {
+    private var sandboxes: [String: Sandbox] = [:]
+    private var policies: [String: PolicyRule] = [:]
+    private var portMappings: [String: [PortMapping]] = [:]
+    private var policyLogs: [PolicyLogEntry] = []
 
-private final class Expectation: @unchecked Sendable {
-    private(set) var isFulfilled = false
-    func fulfill() { isFulfilled = true }
+    init() {
+        let defaults = [
+            "api.anthropic.com", "*.npmjs.org", "github.com", "*.github.com",
+            "registry.hub.docker.com", "*.docker.io", "*.googleapis.com",
+            "api.openai.com", "*.pypi.org", "files.pythonhosted.org",
+        ]
+        for domain in defaults {
+            let rule = PolicyRule(id: UUID().uuidString, type: "network", decision: .allow, resources: domain)
+            policies[rule.id] = rule
+        }
+        policyLogs = [
+            PolicyLogEntry(sandbox: "claude-myproject", type: "network", host: "api.anthropic.com", proxy: "forward", rule: "allow", lastSeen: Date(), count: 42, blocked: false),
+            PolicyLogEntry(sandbox: "claude-myproject", type: "network", host: "registry.npmjs.org", proxy: "transparent", rule: "allow", lastSeen: Date(), count: 15, blocked: false),
+            PolicyLogEntry(sandbox: "claude-myproject", type: "network", host: "evil.example.com", proxy: "network", rule: "deny", lastSeen: Date(), count: 3, blocked: true),
+        ]
+    }
+
+    func list() async throws -> [Sandbox] {
+        var result: [Sandbox] = []
+        for (name, sandbox) in sandboxes {
+            var s = sandbox
+            s.ports = portMappings[name] ?? []
+            result.append(s)
+        }
+        return result.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox {
+        let name: String
+        if let customName = opts?.name, !customName.isEmpty {
+            name = customName
+        } else {
+            let dirname = URL(fileURLWithPath: workspace).lastPathComponent
+            name = "claude-\(dirname)"
+        }
+        let sandbox = Sandbox(id: UUID().uuidString, name: name, agent: agent, status: .running, workspace: workspace, ports: [], createdAt: Date())
+        sandboxes[name] = sandbox
+        return sandbox
+    }
+
+    func stop(name: String) async throws {
+        guard var sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
+        sandbox.status = .stopped
+        sandboxes[name] = sandbox
+        portMappings[name] = []
+    }
+
+    func rm(name: String) async throws {
+        guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
+        sandboxes.removeValue(forKey: name)
+        portMappings.removeValue(forKey: name)
+    }
+
+    func policyList() async throws -> [PolicyRule] {
+        Array(policies.values).sorted { $0.id < $1.id }
+    }
+
+    func policyAllow(resources: String) async throws -> PolicyRule {
+        let rule = PolicyRule(id: UUID().uuidString, type: "network", decision: .allow, resources: resources)
+        policies[rule.id] = rule
+        return rule
+    }
+
+    func policyDeny(resources: String) async throws -> PolicyRule {
+        let rule = PolicyRule(id: UUID().uuidString, type: "network", decision: .deny, resources: resources)
+        policies[rule.id] = rule
+        return rule
+    }
+
+    func policyRemove(resource: String) async throws {
+        guard let rule = policies.values.first(where: { $0.resources == resource }) else {
+            throw SbxServiceError.notFound(resource)
+        }
+        policies.removeValue(forKey: rule.id)
+    }
+
+    func policyLog(sandboxName: String?) async throws -> [PolicyLogEntry] {
+        if let name = sandboxName { return policyLogs.filter { $0.sandbox == name } }
+        return policyLogs
+    }
+
+    func portsList(name: String) async throws -> [PortMapping] {
+        guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
+        return portMappings[name] ?? []
+    }
+
+    func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping {
+        guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
+        let mapping = PortMapping(hostPort: hostPort, sandboxPort: sbxPort, protocolType: "tcp")
+        portMappings[name, default: []].append(mapping)
+        return mapping
+    }
+
+    func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws {
+        guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
+        portMappings[name]?.removeAll { $0.hostPort == hostPort && $0.sandboxPort == sbxPort }
+    }
+
+    func sendMessage(name: String, message: String) async throws {
+        guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
+        guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
+    }
 }
 
 // MARK: - SbxValidation Tests
@@ -55,305 +159,6 @@ struct SbxValidationTests {
 
     @Test func invalidEmpty() {
         #expect(!SbxValidation.isValidName(""))
-    }
-}
-
-// MARK: - MockSbxService Tests
-
-struct MockSbxServiceTests {
-
-    // MARK: - Lifecycle Tests
-
-    @Test func createTransitionsToRunning() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        #expect(sandbox.status == .running)
-        #expect(sandbox.name == "claude-project")
-        #expect(sandbox.agent == "claude")
-    }
-
-    @Test func stopTransitionsToStopped() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        try await service.stop(name: sandbox.name)
-        let list = try await service.list()
-        #expect(list.first?.status == .stopped)
-    }
-
-    @Test func stoppedCanResume() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        try await service.stop(name: sandbox.name)
-        let resumed = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: sandbox.name))
-        #expect(resumed.status == .running)
-    }
-
-    @Test func removeDeletesSandbox() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        try await service.rm(name: sandbox.name)
-        let list = try await service.list()
-        #expect(list.isEmpty)
-    }
-
-    @Test func duplicateWorkspaceReturnsExisting() async throws {
-        let service = MockSbxService()
-        let first = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        let second = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        #expect(first.id == second.id)
-        let list = try await service.list()
-        #expect(list.count == 1)
-    }
-
-    @Test func invalidNameThrows() async throws {
-        let service = MockSbxService()
-        do {
-            _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "-invalid"))
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .invalidName = error {
-                // Expected
-            } else {
-                #expect(Bool(false), "Wrong error type: \(error)")
-            }
-        }
-    }
-
-    @Test func customNameIsUsed() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "my-sandbox"))
-        #expect(sandbox.name == "my-sandbox")
-    }
-
-    // MARK: - Edge Cases
-
-    @Test func stopNonExistentThrowsNotFound() async throws {
-        let service = MockSbxService()
-        do {
-            try await service.stop(name: "ghost")
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .notFound("ghost") = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-
-    @Test func rmNonExistentThrowsNotFound() async throws {
-        let service = MockSbxService()
-        do {
-            try await service.rm(name: "ghost")
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .notFound = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-
-    @Test func sendMessageNonExistentThrows() async throws {
-        let service = MockSbxService()
-        do {
-            try await service.sendMessage(name: "ghost", message: "hi")
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .notFound = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-
-    @Test func sendMessageStoppedThrows() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        try await service.stop(name: sandbox.name)
-        do {
-            try await service.sendMessage(name: sandbox.name, message: "hi")
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .notRunning = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-
-    @Test func multipleSandboxesCoexist() async throws {
-        let service = MockSbxService()
-        _ = try await service.run(agent: "claude", workspace: "/tmp/project-a", opts: nil)
-        _ = try await service.run(agent: "claude", workspace: "/tmp/project-b", opts: nil)
-        let list = try await service.list()
-        #expect(list.count == 2)
-    }
-
-    @Test func portUniquenessAcrossSandboxes() async throws {
-        let service = MockSbxService()
-        let a = try await service.run(agent: "claude", workspace: "/tmp/a", opts: RunOptions(name: "sandbox-a"))
-        let b = try await service.run(agent: "claude", workspace: "/tmp/b", opts: RunOptions(name: "sandbox-b"))
-        _ = try await service.portsPublish(name: a.name, hostPort: 8080, sbxPort: 3000)
-        do {
-            _ = try await service.portsPublish(name: b.name, hostPort: 8080, sbxPort: 4000)
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .portConflict(8080) = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-
-    @Test func policyLogFilterBySandbox() async throws {
-        let service = MockSbxService()
-        let all = try await service.policyLog(sandboxName: nil)
-        #expect(all.count == 3)
-        let filtered = try await service.policyLog(sandboxName: "claude-myproject")
-        #expect(filtered.count == 3) // All seeded entries are for claude-myproject
-        let empty = try await service.policyLog(sandboxName: "nonexistent")
-        #expect(empty.isEmpty)
-    }
-
-    @Test func unpublishPortRemovesMapping() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
-        try await service.portsUnpublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
-        let ports = try await service.portsList(name: sandbox.name)
-        #expect(ports.isEmpty)
-    }
-
-    // MARK: - Policy Tests
-
-    @Test func balancedDefaultsPresent() async throws {
-        let service = MockSbxService()
-        let policies = try await service.policyList()
-        #expect(policies.count == 10)
-        let resources = Set(policies.map(\.resources))
-        #expect(resources.contains("api.anthropic.com"))
-        #expect(resources.contains("github.com"))
-        #expect(resources.contains("*.npmjs.org"))
-    }
-
-    @Test func addAllowRule() async throws {
-        let service = MockSbxService()
-        let rule = try await service.policyAllow(resources: "example.com")
-        #expect(rule.decision == .allow)
-        #expect(rule.resources == "example.com")
-    }
-
-    @Test func addDenyRule() async throws {
-        let service = MockSbxService()
-        let rule = try await service.policyDeny(resources: "evil.com")
-        #expect(rule.decision == .deny)
-        #expect(rule.resources == "evil.com")
-    }
-
-    @Test func removeRule() async throws {
-        let service = MockSbxService()
-        let before = try await service.policyList()
-        let count = before.count
-        try await service.policyRemove(resource: "api.anthropic.com")
-        let after = try await service.policyList()
-        #expect(after.count == count - 1)
-    }
-
-    // MARK: - Port Tests
-
-    @Test func publishPort() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        let mapping = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
-        #expect(mapping.hostPort == 8080)
-        #expect(mapping.sandboxPort == 3000)
-    }
-
-    @Test func duplicateHostPortThrows() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
-        do {
-            _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 4000)
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .portConflict(8080) = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-
-    @Test func portsClearedOnStop() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
-        try await service.stop(name: sandbox.name)
-        let ports = try await service.portsList(name: sandbox.name)
-        #expect(ports.isEmpty)
-    }
-
-    @Test func publishOnStoppedThrows() async throws {
-        let service = MockSbxService()
-        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
-        try await service.stop(name: sandbox.name)
-        do {
-            _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
-            #expect(Bool(false), "Should have thrown")
-        } catch let error as SbxServiceError {
-            if case .notRunning = error {} else {
-                #expect(Bool(false), "Wrong error: \(error)")
-            }
-        }
-    }
-}
-
-// MARK: - MockPtyEmitter Tests
-
-struct MockPtyEmitterTests {
-    @Test func emitterEmitsStartupSequence() async throws {
-        let emitter = MockPtyEmitter()
-        var receivedData: [String] = []
-        let exp = Expectation()
-
-        emitter.onData { data in
-            receivedData.append(data)
-            if data.contains(">") {
-                exp.fulfill()
-            }
-        }
-
-        await waitFor(exp, timeout: 3.0)
-        #expect(!receivedData.isEmpty)
-        let combined = receivedData.joined()
-        #expect(combined.contains("Claude Code"))
-    }
-
-    @Test func emitterRespondsToWrite() async throws {
-        let emitter = MockPtyEmitter()
-        var receivedData: [String] = []
-        var startupDone = false
-        let responseExp = Expectation()
-
-        emitter.onData { data in
-            if data.contains(">") && !startupDone {
-                startupDone = true
-                return
-            }
-            if startupDone {
-                receivedData.append(data)
-                if data.contains("Done") || data.contains("✓") {
-                    responseExp.fulfill()
-                }
-            }
-        }
-
-        try await Task.sleep(for: .seconds(1.5))
-        emitter.write("Hello Claude")
-
-        await waitFor(responseExp, timeout: 5.0)
-        #expect(!receivedData.isEmpty)
-    }
-
-    private func waitFor(_ expectation: Expectation, timeout: TimeInterval) async {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !expectation.isFulfilled && Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(50))
-        }
     }
 }
 
@@ -457,7 +262,7 @@ struct SbxOutputParserTests {
 
 struct SandboxStoreTests {
     @Test func fetchPopulatesStore() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
         let store = await SandboxStore(service: service)
         await store.fetchSandboxes()
@@ -466,7 +271,7 @@ struct SandboxStoreTests {
     }
 
     @Test func createReturnsAndRefreshes() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SandboxStore(service: service)
         let sandbox = try await store.createSandbox(workspace: "/tmp/project", name: "test-create")
         #expect(sandbox.status == .running)
@@ -475,7 +280,7 @@ struct SandboxStoreTests {
     }
 
     @Test func stopUpdatesState() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SandboxStore(service: service)
         _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-stop")
         try await store.stopSandbox(name: "test-stop")
@@ -484,7 +289,7 @@ struct SandboxStoreTests {
     }
 
     @Test func removeRemovesFromList() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SandboxStore(service: service)
         _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-rm")
         try await store.removeSandbox(name: "test-rm")
@@ -493,7 +298,7 @@ struct SandboxStoreTests {
     }
 
     @Test func publishPortUpdatesStore() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SandboxStore(service: service)
         _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-port")
         try await store.publishPort(name: "test-port", hostPort: 8080, sbxPort: 3000)
@@ -503,7 +308,7 @@ struct SandboxStoreTests {
     }
 
     @Test func unpublishPortUpdatesStore() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SandboxStore(service: service)
         _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-unport")
         try await store.publishPort(name: "test-unport", hostPort: 8080, sbxPort: 3000)
@@ -525,7 +330,7 @@ struct SandboxStoreTests {
 
 struct PolicyStoreTests {
     @Test func fetchPopulatesRules() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         await store.fetchPolicies()
         let count = await store.rules.count
@@ -533,7 +338,7 @@ struct PolicyStoreTests {
     }
 
     @Test func addAllowCreatesAndRefreshes() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         try await store.addAllow(resources: "test.com")
         let rules = await store.rules
@@ -541,7 +346,7 @@ struct PolicyStoreTests {
     }
 
     @Test func addDenyCreatesAndRefreshes() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         try await store.addDeny(resources: "evil.com")
         let rules = await store.rules
@@ -549,7 +354,7 @@ struct PolicyStoreTests {
     }
 
     @Test func removeRuleDecrementsCount() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         await store.fetchPolicies()
         let before = await store.rules.count
@@ -559,7 +364,7 @@ struct PolicyStoreTests {
     }
 
     @Test func fetchLogPopulatesEntries() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         await store.fetchLog()
         let count = await store.logEntries.count
@@ -567,7 +372,7 @@ struct PolicyStoreTests {
     }
 
     @Test func filteredLogBySandbox() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         await store.fetchLog()
         await MainActor.run { store.logFilter.sandboxName = "claude-myproject" }
@@ -579,7 +384,7 @@ struct PolicyStoreTests {
     }
 
     @Test func filteredLogBlockedOnly() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await PolicyStore(service: service)
         await store.fetchLog()
         await MainActor.run { store.logFilter.blockedOnly = true }
@@ -593,7 +398,7 @@ struct PolicyStoreTests {
 
 struct SessionStoreTests {
     @Test func attachSetsState() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SessionStore(service: service)
         try await store.attach(name: "test")
         let active = await store.activeSandbox
@@ -605,7 +410,7 @@ struct SessionStoreTests {
     }
 
     @Test func detachClearsState() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SessionStore(service: service)
         try await store.attach(name: "test")
         await store.detach()
@@ -618,7 +423,7 @@ struct SessionStoreTests {
     }
 
     @Test func attachAutoDetachesPrevious() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SessionStore(service: service)
         try await store.attach(name: "sandbox-a")
         try await store.attach(name: "sandbox-b")
@@ -627,14 +432,14 @@ struct SessionStoreTests {
     }
 
     @Test func sendMessageWhenNotConnectedNoOp() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SessionStore(service: service)
         // Should not throw — guard returns early
         try await store.sendMessage("hello")
     }
 
     @Test func sendMessageDelegatesToService() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-session"))
         let store = await SessionStore(service: service)
         try await store.attach(name: "test-session")

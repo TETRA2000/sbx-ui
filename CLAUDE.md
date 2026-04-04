@@ -56,7 +56,7 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker Sandbox (`sbx`) CLI. It enables developers to manage sandbox lifecycles, network policies, port forwarding, and Claude Code agent sessions without terminal interaction.
 
 ### Architecture
-- **Service Layer** (`sbx-ui/Services/`): `SbxServiceProtocol` with `MockSbxService` (actor) and `RealSbxService` implementations. `ServiceFactory` selects mock when `SBX_MOCK=1`.
+- **Service Layer** (`sbx-ui/Services/`): `SbxServiceProtocol` with `RealSbxService` implementation. `ServiceFactory` creates the service. For testing, the CLI mock (`tools/mock-sbx`) is used via PATH injection.
 - **Store Layer** (`sbx-ui/Stores/`): `@MainActor @Observable` classes — `SandboxStore`, `PolicyStore`, `SessionStore`, `SettingsStore`. Bridges between services and views.
 - **View Layer** (`sbx-ui/Views/`): SwiftUI views organized by feature — Dashboard, Policies, Ports, Session, Error.
 - **Design System** (`sbx-ui/DesignSystem/`): Color/Font/Constants extensions for "The Technical Monolith" dark theme.
@@ -72,7 +72,7 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
   - `mcp__xcode__BuildProject` → build
   - `mcp__xcode__RunAllTests` / `mcp__xcode__RunSomeTests` → run tests
 - Open `sbx-ui.xcodeproj` in Xcode
-- Set `SBX_MOCK=1` in scheme environment variables for development without Docker
+- Set `SBX_CLI_MOCK=1` and add `tools/` to PATH in scheme environment variables for development without Docker
 - Build and run (Cmd+R)
 
 ## Testing Guide
@@ -80,24 +80,25 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
 ### Test Structure
 - **Unit tests**: `sbx-uiTests/sbx_uiTests.swift` — Swift Testing framework (`@Test`, `#expect`)
 - **UI/E2E tests**: `sbx-uiUITests/sbx_uiUITests.swift` — XCTest (`XCTestCase`, `XCTAssertTrue`)
-- All tests run against `MockSbxService` (no Docker required)
+- **CLI mock tests**: `tools/mock-sbx-tests.sh` — Bash test suite (32 tests)
+- All tests use the CLI mock (`tools/mock-sbx`) — no Docker required
 
 ### Test Strategy
 - **Always write and run tests after any code change** — both unit tests and UI/E2E tests
 - Run the full suite to confirm no regressions before considering work done
 
 ### Running Tests
-- Xcode: Product → Test (Cmd+U) runs all 76 tests
+- Xcode: Product → Test (Cmd+U) runs all 45 tests
 - Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
 
 ### Writing Unit Tests
 
-**Pattern**: Create a test struct per component, instantiate `MockSbxService` or inject it into stores.
+**Pattern**: Create a test struct per component, inject `StubSbxService` into stores.
 
 ```swift
 struct SandboxStoreTests {
     @Test func createReturnsAndRefreshes() async throws {
-        let service = MockSbxService()
+        let service = StubSbxService()
         let store = await SandboxStore(service: service)
         let sandbox = try await store.createSandbox(workspace: "/tmp/project", name: "test")
         #expect(sandbox.status == .running)
@@ -109,39 +110,42 @@ struct SandboxStoreTests {
 
 **Key patterns**:
 - Stores are `@MainActor` — access properties via `await store.property` from test context
-- `MockSbxService` is an `actor` — call methods with `await`
+- `StubSbxService` is an `actor` — call methods with `await`
 - Use `FailingSbxService` (defined in test file) to test error handling paths
 - Error assertions: use `do/catch` with `SbxServiceError` pattern matching
-- Mock delays: create ~800ms, stop ~300ms, remove ~200ms (real in tests, not mocked out)
 
 ### Writing E2E Tests
 
-**Pattern**: XCUITest with `SBX_MOCK=1` injected via `app.launchEnvironment`.
+**Pattern**: XCUITest with CLI mock (`SBX_CLI_MOCK=1`) injected via `app.launchEnvironment`.
 
 ```swift
 final class sbx_uiUITests: XCTestCase {
     var app: XCUIApplication!
 
+    private static let projectRoot: String = {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().path
+    }()
+    private static var toolsDir: String {
+        URL(fileURLWithPath: projectRoot).appendingPathComponent("tools").path
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchEnvironment["SBX_MOCK"] = "1"
+        app.launchEnvironment["SBX_CLI_MOCK"] = "1"
+        let stateDir = NSTemporaryDirectory() + "mock-sbx-\(UUID().uuidString)"
+        app.launchEnvironment["SBX_MOCK_STATE_DIR"] = stateDir
+        let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        app.launchEnvironment["PATH"] = "\(Self.toolsDir):\(existingPath)"
         app.launch()
-    }
-
-    @MainActor
-    func testMyWorkflow() throws {
-        // Find elements by accessibility identifier or text
-        let button = app.buttons["myButtonId"]
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
-        button.click()
     }
 }
 ```
 
 **Key patterns**:
-- `CreateProjectSheet` auto-fills workspace path to `/tmp/mock-project` when `SBX_MOCK=1`
-- Use `waitForExistence(timeout:)` generously (5-8s) for async operations
+- `CreateProjectSheet` auto-fills workspace path to `/tmp/mock-project` when `SBX_CLI_MOCK=1`
+- Use `waitForExistence(timeout:)` generously (5-10s) — CLI mock spawns processes, so it's slower than in-memory mocks
 - Find elements: `app.buttons["id"]`, `app.staticTexts["text"]`, `app.textFields["id"]`
 - SwiftUI VStacks with `.accessibilityIdentifier` are NOT reliably found as `app.groups` or `app.otherElements` — use child text/button identifiers instead
 - Buttons inside complex card views (with `.onTapGesture`, `.confirmationDialog`) may not be discoverable by XCUITest — test these via unit tests on the store layer instead
@@ -152,7 +156,7 @@ final class sbx_uiUITests: XCTestCase {
 ```swift
 private func createSandbox(name: String) {
     app.buttons["newSandboxButton"].click()
-    sleep(1) // Wait for .onAppear to set mock workspace
+    sleep(2) // Wait for .onAppear to set mock workspace
     let nameField = app.textFields["sandboxNameField"]
     nameField.click()
     nameField.typeText(name)
@@ -160,7 +164,7 @@ private func createSandbox(name: String) {
     let deployButton = app.buttons["deployButton"]
     let enabled = NSPredicate(format: "isEnabled == true")
     let exp = XCTNSPredicateExpectation(predicate: enabled, object: deployButton)
-    XCTWaiter.wait(for: [exp], timeout: 3)
+    XCTWaiter.wait(for: [exp], timeout: 5)
     deployButton.click()
 }
 ```

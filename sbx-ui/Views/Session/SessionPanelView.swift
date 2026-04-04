@@ -31,7 +31,7 @@ struct SessionPanelView: View {
             .background(Color.surfaceContainer)
 
             // Terminal area
-            TerminalViewWrapper(sandboxName: sandbox.name, isMock: sessionStore.isMock, ptyManager: ptyManager)
+            TerminalViewWrapper(sandboxName: sandbox.name, ptyManager: ptyManager)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("terminalView")
 

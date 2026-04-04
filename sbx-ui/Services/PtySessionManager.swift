@@ -4,89 +4,57 @@ import AppKit
 
 @MainActor @Observable
 final class PtySessionManager {
-    private var sessions: [String: SessionEntry] = [:]
+    private var sessions: Set<String> = []
 
-    struct SessionEntry {
-        let process: LocalProcess?
-        let emitter: MockPtyEmitter?
-        let terminal: Terminal?
-    }
-
-    func attach(name: String, terminalView: LocalProcessTerminalView, isMock: Bool) {
-        appLog(.info, "PTY", "Attaching session: \(name) (mode: \(isMock ? "mock" : "real"))")
+    func attach(name: String, terminalView: LocalProcessTerminalView) {
+        appLog(.info, "PTY", "Attaching session: \(name)")
         // Dispose existing session for this name
-        if sessions[name] != nil {
+        if sessions.contains(name) {
             dispose(name: name)
         }
 
         appLog(.debug, "PTY", "Terminal view: \(terminalView), window: \(String(describing: terminalView.window))")
 
-        if isMock {
-            let emitter = MockPtyEmitter()
-            let terminal = terminalView.getTerminal()
-            emitter.onData { [weak terminal, weak terminalView] data in
-                guard let terminal else { return }
-                let bytes = Array(data.utf8)
-                terminal.feed(byteArray: bytes)
-                DispatchQueue.main.async { [weak terminalView] in
-                    guard let view = terminalView else { return }
-                    view.setNeedsDisplay(view.bounds)
-                }
-            }
-            sessions[name] = SessionEntry(process: nil, emitter: emitter, terminal: terminal)
-        } else {
-            let shellPath = "/bin/zsh"
-            let args = ["-c", "sbx run \(name)"]
-            // Build environment: extend PATH and set TERM for color support
-            var env: [String] = []
-            var hasTerm = false
-            for (key, value) in ProcessInfo.processInfo.environment {
-                if key == "PATH" {
-                    let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
-                    env.append("\(key)=\(extended)")
-                } else if key == "TERM" {
-                    env.append("TERM=xterm-256color")
-                    hasTerm = true
-                } else {
-                    env.append("\(key)=\(value)")
-                }
-            }
-            if !hasTerm {
+        let shellPath = "/bin/zsh"
+        let args = ["-c", "sbx run \(name)"]
+        // Build environment: extend PATH and set TERM for color support
+        var env: [String] = []
+        var hasTerm = false
+        for (key, value) in ProcessInfo.processInfo.environment {
+            if key == "PATH" {
+                let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
+                env.append("\(key)=\(extended)")
+            } else if key == "TERM" {
                 env.append("TERM=xterm-256color")
+                hasTerm = true
+            } else {
+                env.append("\(key)=\(value)")
             }
-            env.append("COLORTERM=truecolor")
-            // Use startProcess on the terminal view directly so keyboard input
-            // is routed to the PTY process via LocalProcessTerminalView.send()
-            terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
-            appLog(.debug, "PTY", "Started process via terminalView.startProcess for: \(name)")
-            sessions[name] = SessionEntry(process: nil, emitter: nil, terminal: nil)
         }
-    }
-
-    func write(name: String, data: String) {
-        guard let session = sessions[name] else { return }
-        if let emitter = session.emitter {
-            emitter.write(data)
-        } else if let process = session.process {
-            let bytes = ArraySlice(Array((data + "\n").utf8))
-            process.send(data: bytes)
+        if !hasTerm {
+            env.append("TERM=xterm-256color")
         }
+        env.append("COLORTERM=truecolor")
+        // Use startProcess on the terminal view directly so keyboard input
+        // is routed to the PTY process via LocalProcessTerminalView.send()
+        terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
+        appLog(.debug, "PTY", "Started process via terminalView.startProcess for: \(name)")
+        sessions.insert(name)
     }
 
     func dispose(name: String) {
-        guard let session = sessions[name] else { return }
+        guard sessions.contains(name) else { return }
         appLog(.info, "PTY", "Disposing session: \(name)")
-        session.emitter?.dispose()
-        sessions.removeValue(forKey: name)
+        sessions.remove(name)
     }
 
     func disposeAll() {
-        for name in sessions.keys {
+        for name in sessions {
             dispose(name: name)
         }
     }
 
     func isAttached(name: String) -> Bool {
-        sessions[name] != nil
+        sessions.contains(name)
     }
 }
