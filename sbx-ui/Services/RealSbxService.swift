@@ -30,12 +30,20 @@ actor RealSbxService: SbxServiceProtocol {
     }
 
     func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox {
-        var args = ["run", agent, workspace]
-        if let name = opts?.name, !name.isEmpty {
-            guard SbxValidation.isValidName(name) else {
-                throw SbxServiceError.invalidName(name)
+        var args: [String]
+
+        if agent.isEmpty, let name = opts?.name, !name.isEmpty {
+            // Resume mode: sbx run <name>
+            args = ["run", name]
+        } else {
+            // Create mode: sbx run <agent> <workspace> [--name <name>]
+            args = ["run", agent, workspace]
+            if let name = opts?.name, !name.isEmpty {
+                guard SbxValidation.isValidName(name) else {
+                    throw SbxServiceError.invalidName(name)
+                }
+                args += ["--name", name]
             }
-            args += ["--name", name]
         }
         let result = try await cli.exec(command: "sbx", args: args)
         try checkCli(result)

@@ -35,6 +35,15 @@ import SwiftUI
         return sandbox
     }
 
+    func resumeSandbox(name: String) async throws {
+        loading = true
+        defer { loading = false }
+        appLog(.info, "SandboxStore", "Resuming sandbox: \(name)")
+        // sbx run <name> resumes a stopped sandbox
+        _ = try await service.run(agent: "", workspace: "", opts: RunOptions(name: name))
+        await fetchSandboxes()
+    }
+
     func stopSandbox(name: String) async throws {
         appLog(.info, "SandboxStore", "Stopping sandbox: \(name)")
         try await service.stop(name: name)

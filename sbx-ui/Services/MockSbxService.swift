@@ -56,6 +56,19 @@ actor MockSbxService: SbxServiceProtocol {
     }
 
     func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox {
+        // Resume mode: empty agent means resume by name
+        if agent.isEmpty, let resumeName = opts?.name, !resumeName.isEmpty {
+            if var existing = sandboxes[resumeName] {
+                existing.status = .creating
+                sandboxes[resumeName] = existing
+                try await Task.sleep(for: .milliseconds(800))
+                existing.status = .running
+                sandboxes[resumeName] = existing
+                return existing
+            }
+            throw SbxServiceError.notFound(resumeName)
+        }
+
         // Check for existing sandbox with same workspace
         if let existing = sandboxes.values.first(where: { $0.workspace == workspace && $0.status == .running }) {
             return existing

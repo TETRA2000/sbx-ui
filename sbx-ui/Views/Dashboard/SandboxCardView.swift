@@ -118,7 +118,7 @@ struct SandboxCardView: View {
             } else if sandbox.status == .stopped {
                 Task {
                     do {
-                        try await sandboxStore.createSandbox(workspace: sandbox.workspace, name: sandbox.name)
+                        try await sandboxStore.resumeSandbox(name: sandbox.name)
                     } catch {
                         toastManager.show(error.localizedDescription)
                     }
