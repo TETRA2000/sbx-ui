@@ -359,7 +359,8 @@ interface PtyHandle {
 
 interface SbxServiceError {
   code: "NOT_FOUND" | "ALREADY_EXISTS" | "PORT_CONFLICT"
-      | "NOT_RUNNING" | "CLI_ERROR" | "DOCKER_NOT_RUNNING";
+      | "NOT_RUNNING" | "CLI_ERROR" | "DOCKER_NOT_RUNNING"
+      | "INVALID_NAME";
   message: string;
   details?: string;
 }
@@ -390,7 +391,7 @@ interface SbxService {
 }
 ```
 
-- Preconditions: Sandbox must exist for stop, rm, ports, attach, sendMessage. Sandbox must be running for attach, sendMessage, portsPublish.
+- Preconditions: Sandbox must exist for stop, rm, ports, attach, sendMessage. Sandbox must be running for attach, sendMessage, portsPublish. Sandbox names must match `/^[a-z0-9][a-z0-9-]*$/` (lowercase alphanumeric and hyphens, no leading hyphen); `run` throws `INVALID_NAME` otherwise.
 - Postconditions: `run` returns sandbox transitioning from "creating" to "running". `stop` clears port mappings. `rm` removes all associated data.
 - Invariants: No two sandboxes share the same name. No two port mappings share the same host port across all sandboxes.
 
@@ -522,7 +523,7 @@ interface CliExecutor {
 
 - Preconditions: `sbx` binary must be on system PATH
 - Postconditions: Returns complete stdout/stderr after process exits
-- Invariants: Never modifies command arguments; passes through as-is
+- Invariants: Never modifies command arguments; passes through as-is. Always uses array-form `child_process.spawn` (never shell string interpolation) to prevent command injection.
 
 #### SbxOutputParser
 
@@ -615,11 +616,11 @@ interface ExternalTerminalLauncher {
 }
 ```
 
-- Preconditions: Target terminal application must be installed. Sandbox must be running.
+- Preconditions: Target terminal application must be installed. Sandbox must be running. Sandbox name must pass the same `/^[a-z0-9][a-z0-9-]*$/` validation before interpolation into AppleScript.
 - Postconditions: A new terminal window opens with an interactive bash shell inside the specified sandbox.
 
 **Implementation Notes**
-- Integration: Terminal.app via `osascript -e 'tell app "Terminal" to do script "sbx exec -it <name> bash"'`; iTerm via iTerm2 AppleScript API
+- Integration: Terminal.app via `osascript -e 'tell app "Terminal" to do script "sbx exec -it <name> bash"'`; iTerm via iTerm2 AppleScript API. Sandbox name must be escaped for AppleScript string context (backslash-escape `\` and `"`) before interpolation.
 - Validation: Filesystem check for `/Applications/Terminal.app` and `/Applications/iTerm.app`; Terminal.app is always present on macOS
 - Risks: Non-standard installation paths; user preference setting as fallback (11.5)
 
@@ -833,7 +834,10 @@ UI components follow "The Technical Monolith" design system. These are presentat
 - **PolicyLogViewer**: Data table with columns: sandbox, host, proxy type, rule, last seen, count, status. Filter controls for sandbox name dropdown and blocked-only toggle. Ghost borders (`outline-variant` at 15% opacity) for table rows.
 
 **Ports**
-- **PortPanel**: Per-sandbox drawer showing PortMappingRow components. Displays "ports cleared on stop" notice when sandbox is stopped. AddPortDialog trigger disabled when stopped (5.6).
+
+Port state lives in `Sandbox.ports[]` within SandboxStore. The `usePorts` hook calls port IPC methods (`portsPublish`, `portsUnpublish`, `portsList`) directly via `window.sbx` and triggers `SandboxStore.fetchSandboxes()` after each mutation to refresh the embedded `Sandbox.ports[]` array. No separate PortStore is needed.
+
+- **PortPanel**: Per-sandbox drawer showing PortMappingRow components. Reads port data from `SandboxStore` via the parent sandbox's `ports[]` field. Displays "ports cleared on stop" notice when sandbox is stopped. AddPortDialog trigger disabled when stopped (5.6).
 - **AddPortDialog**: Modal with host port and sandbox port number inputs. Validates numeric input and shows inline error for port conflicts.
 
 **Session**
@@ -960,5 +964,5 @@ All E2E tests run against MockSbxService (forced via `SBX_MOCK=1`) without requi
 - **contextBridge only**: The renderer has no access to `ipcRenderer`, `require`, or Node.js APIs. All communication goes through the typed `window.sbx` API (9.1, 9.3).
 - **No remote content**: The renderer loads local files only. No `loadURL` with external origins.
 - **CSP headers**: Content Security Policy restricts script sources to `'self'` only.
-- **Input sanitization**: Domain inputs for policies are validated before passing to CLI to prevent command injection. Port numbers are validated as positive integers within valid range.
+- **Input sanitization**: Sandbox names are validated against `/^[a-z0-9][a-z0-9-]*$/` before any CLI or osascript invocation. Domain inputs for policies are validated before passing to CLI. Port numbers are validated as positive integers within valid range. All CLI invocations use array-form `child_process.spawn` (never shell string interpolation). AppleScript string arguments are escaped before interpolation.
 - **PTY isolation**: PTY sessions run `sbx` commands, not arbitrary shell commands. The renderer cannot specify which command to run — only which sandbox to attach to.
