@@ -156,32 +156,36 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     participant User
-    participant View as SessionView
+    participant View as SessionView plus TerminalViewWrapper
     participant Model as SessionStore
+    participant PtyMgr as PtySessionManager
     participant Service as SbxServiceProtocol
     participant Term as SwiftTerm LocalProcess
 
     User->>View: Click running sandbox card
     View->>Model: attach name
-    Model->>Service: attach name
-    Service->>Term: startProcess sbx run name
-    Term-->>View: TerminalView renders PTY output
+    Model->>PtyMgr: attach name terminalView isMock
+    PtyMgr->>Term: startProcess sbx run name
+    Term-->>View: TerminalView renders PTY output via delegate
 
     User->>View: Type message and send
     View->>Model: sendMessage msg
     Model->>Service: sendMessage name msg
-    Service->>Term: write msg plus newline to PTY
+    Service->>PtyMgr: write name msg plus newline
+    PtyMgr->>Term: write to PTY stdin
     Term-->>View: TerminalView renders response
 
     User->>View: Navigate away
     View->>Model: detach
-    Model->>Service: detachSession name
-    Service->>Term: terminate process
+    Model->>PtyMgr: dispose name
+    PtyMgr->>Term: terminate process
 ```
 
 **Key decisions**:
-- `attach` spawns a PTY via SwiftTerm's `LocalProcess` (real mode) or feeds `MockPtyEmitter` data to a headless `Terminal` (mock mode)
-- `sendMessage` writes text + newline to PTY stdin (6.3)
+- PTY lifecycle is owned by `PtySessionManager`, not `SbxServiceProtocol` — this avoids impedance mismatch with SwiftTerm's delegate-based architecture
+- Real mode: `PtySessionManager` configures SwiftTerm's `LocalProcess` which feeds data directly to `TerminalView` via `LocalProcessDelegate`/`TerminalViewDelegate` — no callback extraction needed
+- Mock mode: `MockPtyEmitter` feeds simulated ANSI data to a `TerminalView` via the headless `Terminal` engine
+- `sendMessage` on `SbxServiceProtocol` delegates to `PtySessionManager.write()` (6.3)
 - Session auto-reattaches when a stopped sandbox resumes if the session panel is open (6.5)
 - Only one session active at a time per current UI design
 - SwiftTerm's `TerminalView` (NSView) is wrapped via `NSViewRepresentable` for SwiftUI integration
@@ -226,8 +230,8 @@ sequenceDiagram
 | 6.2 | Terminal with ANSI support | TerminalViewWrapper | SwiftTerm | Session |
 | 6.3 | Send message to PTY stdin | ChatInputView, SessionStore | SbxServiceProtocol.sendMessage | Session |
 | 6.4 | Agent status bar | AgentStatusBar | Sandbox type | — |
-| 6.5 | Auto-reattach on resume | SessionStore | SbxServiceProtocol.attach | Session |
-| 6.6 | Detach on navigate away | SessionStore | SbxServiceProtocol.detachSession | Session |
+| 6.5 | Auto-reattach on resume | SessionStore | PtySessionManager.attach | Session |
+| 6.6 | Detach on navigate away | SessionStore | PtySessionManager.dispose | Session |
 | 7.1 | Mock mode via SBX_MOCK env | ServiceFactory | — | — |
 | 7.2 | MockSbxService implements full protocol | MockSbxService | SbxServiceProtocol | — |
 | 7.3 | Realistic lifecycle delays | MockSbxService | — | Lifecycle |
@@ -304,8 +308,15 @@ sequenceDiagram
 **Responsibilities & Constraints**
 - Defines the compile-time contract between real CLI integration and in-memory mock
 - All methods are async and throwing
-- PTY-related operations return `PtyHandle` for event-stream management
 - Implementations throw `SbxServiceError` for operation failures
+- PTY session lifecycle (`attach`/`detach`) is owned by `PtySessionManager`, not this protocol — only `sendMessage` bridges to the PTY
+
+**Sendable and Existential Usage**
+- Protocol is `: Sendable` to allow crossing actor boundaries
+- Stores hold the service as `any SbxServiceProtocol` (existential) for runtime polymorphism via `ServiceFactory`
+- Both implementations (`RealSbxService`, `MockSbxService`) are `actor` types, which are inherently `Sendable`
+- Since `@MainActor`-isolated stores call `async` methods on actor-isolated services, all calls cross actor boundaries via `await` — this is safe and compiler-verified
+- If `Sendable` warnings arise from existential erasure, use `sending` parameter annotations or `nonisolated` protocol method declarations as needed
 
 **Contracts**: Service [x]
 
@@ -393,16 +404,16 @@ protocol SbxServiceProtocol: Sendable {
     func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping
     func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws
 
-    // Session
-    func attach(name: String) async throws -> PtyHandle
+    // Session messaging (PTY lifecycle managed by PtySessionManager, not here)
     func sendMessage(name: String, message: String) async throws
-    func detachSession(name: String) async throws
 }
 ```
 
-- Preconditions: Sandbox must exist for stop, rm, ports, attach, sendMessage. Sandbox must be running for attach, sendMessage, portsPublish. Sandbox names must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric and hyphens, no leading hyphen); `run` throws `invalidName` otherwise.
+- Preconditions: Sandbox must exist for stop, rm, ports, sendMessage. Sandbox must be running for sendMessage, portsPublish. Sandbox names must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric and hyphens, no leading hyphen); `run` throws `invalidName` otherwise.
 - Postconditions: `run` returns sandbox transitioning from "creating" to "running". `stop` clears port mappings. `rm` removes all associated data.
 - Invariants: No two sandboxes share the same name. No two port mappings share the same host port across all sandboxes.
+
+> **Note on PTY session lifecycle**: `attach` and `detachSession` are intentionally excluded from `SbxServiceProtocol`. In real mode, SwiftTerm's `MacLocalTerminalView` manages the full PTY-to-rendering pipeline internally via its delegate model — wrapping this in a callback-based `PtyHandle` would fight SwiftTerm's design. Instead, `PtySessionManager` owns session lifecycle directly, with mode-specific paths: real mode configures `MacLocalTerminalView` with the `sbx run <name>` command; mock mode uses `MockPtyEmitter` feeding data to a headless `TerminalView`. `sendMessage` remains on the protocol because it writes to the PTY stdin regardless of mode.
 
 #### RealSbxService
 
@@ -459,14 +470,14 @@ protocol SbxServiceProtocol: Sendable {
 
 | Field | Detail |
 |-------|--------|
-| Intent | Manages PTY session lifecycle per sandbox attachment |
+| Intent | Owns PTY session lifecycle per sandbox; bridges real SwiftTerm and mock modes |
 | Requirements | 6.1, 6.2, 6.3, 6.5, 6.6 |
 
 **Responsibilities & Constraints**
-- Implemented as a Swift `actor`
+- Implemented as a Swift `actor` — owns all PTY session state
 - Maintains at most one active PTY per sandbox name
-- Real mode: creates SwiftTerm `LocalProcess` running `sbx run <name>`
-- Mock mode: creates `MockPtyEmitter` instance feeding simulated data
+- **Real mode**: Configures `MacLocalTerminalView` (provided by `TerminalViewWrapper`) with the command `sbx run <name>`. SwiftTerm internally manages the PTY-to-rendering pipeline via its delegate model (`LocalProcessDelegate` → `TerminalViewDelegate`). PtySessionManager tracks the active `LocalProcess` reference for write and dispose.
+- **Mock mode**: Creates `MockPtyEmitter` conforming to `PtyHandle` and wires it to a headless SwiftTerm `TerminalView` for rendering. Data flows from `MockPtyEmitter` → `Terminal` engine → `TerminalView`.
 - Disposes PTY on detach or sandbox stop/removal
 
 **Dependencies**
@@ -479,16 +490,27 @@ protocol SbxServiceProtocol: Sendable {
 ##### Service Interface
 ```swift
 actor PtySessionManager {
-    func attach(name: String, isMock: Bool) -> PtyHandle
+    /// Real mode: configures the provided TerminalView with sbx run command and starts the process.
+    /// Mock mode: creates MockPtyEmitter and wires it to the provided TerminalView.
+    func attach(name: String, terminalView: AnyObject, isMock: Bool) async throws
+
+    /// Writes data to the active PTY stdin for the given sandbox.
     func write(name: String, data: String)
+
+    /// Disposes the PTY session for the given sandbox.
     func dispose(name: String)
+
+    /// Disposes all active PTY sessions.
     func disposeAll()
+
+    /// Returns whether a PTY session is active for the given sandbox.
     func isAttached(name: String) -> Bool
 }
 ```
 
-- Preconditions: Sandbox must be running for attach. Name must be attached for write and dispose.
-- Postconditions: `attach` creates PTY and begins emitting data. `dispose` terminates process and removes from tracking.
+- Preconditions: Sandbox must be running for attach. Name must be attached for write and dispose. `terminalView` must be a SwiftTerm `TerminalView` instance (type-erased for protocol flexibility).
+- Postconditions: `attach` starts the PTY process and begins rendering to the terminal view. `dispose` terminates the process and removes from tracking.
+- Design rationale: `attach` accepts the terminal view reference because SwiftTerm's real-mode `LocalProcess` needs to be wired directly to the view's delegate. This avoids the impedance mismatch of extracting PTY data into callbacks and re-feeding it.
 
 #### MockPtyEmitter
 
@@ -634,7 +656,7 @@ protocol ExternalTerminalProtocol: Sendable {
 
 ##### State Management
 ```swift
-@Observable final class SandboxStore {
+@MainActor @Observable final class SandboxStore {
     var sandboxes: [Sandbox] = []
     var loading: Bool = false
     var error: String?
@@ -653,7 +675,7 @@ protocol ExternalTerminalProtocol: Sendable {
 
 - State model: Array of Sandbox objects, loading flag, error string
 - Persistence: In-memory; refreshed via polling every 3 seconds
-- Concurrency: Polling via `Task` with `Task.sleep(for: .seconds(3))` loop; mutations trigger immediate re-fetch
+- Concurrency: `@MainActor` ensures all property mutations happen on the main thread. Polling via `Task` with `Task.sleep(for: .seconds(3))` loop; mutations trigger immediate re-fetch. Service calls use `await` to cross actor boundaries.
 
 #### PolicyStore
 
@@ -666,7 +688,7 @@ protocol ExternalTerminalProtocol: Sendable {
 
 ##### State Management
 ```swift
-@Observable final class PolicyStore {
+@MainActor @Observable final class PolicyStore {
     var rules: [PolicyRule] = []
     var logEntries: [PolicyLogEntry] = []
     var logFilter: LogFilter = LogFilter()
@@ -691,7 +713,7 @@ protocol ExternalTerminalProtocol: Sendable {
 
 - State model: Arrays of PolicyRule and PolicyLogEntry, filter state
 - Persistence: In-memory; rules fetched on view mount; log fetched on demand
-- Concurrency: Mutations trigger immediate re-fetch of rules list
+- Concurrency: `@MainActor` ensures all property mutations happen on the main thread. Mutations trigger immediate re-fetch of rules list.
 
 #### SessionStore
 
@@ -704,13 +726,13 @@ protocol ExternalTerminalProtocol: Sendable {
 
 ##### State Management
 ```swift
-@Observable final class SessionStore {
+@MainActor @Observable final class SessionStore {
     var activeSandbox: String?
     var connected: Bool = false
     var error: String?
 
+    private let ptyManager: PtySessionManager
     private let service: any SbxServiceProtocol
-    private var currentHandle: PtyHandle?
 
     func attach(name: String) async throws
     func sendMessage(_ message: String) async throws
@@ -718,9 +740,9 @@ protocol ExternalTerminalProtocol: Sendable {
 }
 ```
 
-- State model: Active sandbox name, connection flag, PTY handle reference
+- State model: Active sandbox name, connection flag
 - Persistence: In-memory; session is transient per user interaction
-- Concurrency: Only one active session at a time; attaching a new session detaches the previous
+- Concurrency: `@MainActor` ensures all property mutations happen on the main thread. Only one active session at a time; attaching a new session detaches the previous. PTY lifecycle is delegated to `PtySessionManager`.
 
 #### SettingsStore
 
@@ -733,7 +755,7 @@ protocol ExternalTerminalProtocol: Sendable {
 
 ##### State Management
 ```swift
-@Observable final class SettingsStore {
+@MainActor @Observable final class SettingsStore {
     var preferredTerminal: TerminalApp? {
         didSet {
             UserDefaults.standard.set(preferredTerminal?.rawValue, forKey: "preferredTerminal")
@@ -790,7 +812,7 @@ Port state lives in `Sandbox.ports[]` within `SandboxStore`. Views call port ser
 **Session**
 - **SessionPanelView**: `VSplitView` or `VStack` layout — `TerminalViewWrapper` occupying upper area, `ChatInputView` fixed at bottom. `AgentStatusBar` between. Takes full detail area when active.
 - **ChatInputView**: `TextField` with send `Button`. Sends on Enter via `.onSubmit`. Disabled when not connected. JetBrains Mono font.
-- **TerminalViewWrapper**: `NSViewRepresentable` wrapping SwiftTerm's `MacLocalTerminalView` (real mode) or `TerminalView` fed by `MockPtyEmitter` (mock mode). `surface` (#0E0E0E) background. Auto-resizes via SwiftTerm's built-in resize handling.
+- **TerminalViewWrapper**: `NSViewRepresentable` wrapping SwiftTerm's `TerminalView`. In real mode, `PtySessionManager.attach()` configures it as a `MacLocalTerminalView` with `LocalProcess` — SwiftTerm handles the full PTY-to-rendering pipeline internally via delegates. In mock mode, `PtySessionManager.attach()` wires a `MockPtyEmitter` to the headless `Terminal` engine feeding the same `TerminalView`. The wrapper exposes the underlying `TerminalView` reference to `PtySessionManager` via the `Coordinator`. `surface` (#0E0E0E) background. Auto-resizes via SwiftTerm's built-in resize handling.
 - **AgentStatusBar**: Horizontal `HStack` showing model name ("claude"), sandbox name, uptime counter (via `TimelineView`), and connection status indicator (green circle when connected).
 
 ## Data Models
