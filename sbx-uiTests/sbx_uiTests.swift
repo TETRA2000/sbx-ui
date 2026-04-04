@@ -62,6 +62,23 @@ actor StubSbxService: SbxServiceProtocol {
             let dirname = URL(fileURLWithPath: workspace).lastPathComponent
             name = "claude-\(dirname)"
         }
+
+        guard SbxValidation.isValidName(name) else {
+            throw SbxServiceError.invalidName(name)
+        }
+
+        // Return existing running sandbox for same workspace
+        if let existing = sandboxes.values.first(where: { $0.workspace == workspace && $0.status == .running }) {
+            return existing
+        }
+
+        // Resume stopped sandbox with same name
+        if var existing = sandboxes[name], existing.status == .stopped {
+            existing.status = .running
+            sandboxes[name] = existing
+            return existing
+        }
+
         let sandbox = Sandbox(id: UUID().uuidString, name: name, agent: agent, status: .running, workspace: workspace, ports: [], createdAt: Date())
         sandboxes[name] = sandbox
         return sandbox
@@ -114,7 +131,16 @@ actor StubSbxService: SbxServiceProtocol {
     }
 
     func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping {
-        guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
+        guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
+        guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
+
+        // Check for duplicate host port across all sandboxes
+        for (_, mappings) in portMappings {
+            if mappings.contains(where: { $0.hostPort == hostPort }) {
+                throw SbxServiceError.portConflict(hostPort)
+            }
+        }
+
         let mapping = PortMapping(hostPort: hostPort, sandboxPort: sbxPort, protocolType: "tcp")
         portMappings[name, default: []].append(mapping)
         return mapping
@@ -159,6 +185,250 @@ struct SbxValidationTests {
 
     @Test func invalidEmpty() {
         #expect(!SbxValidation.isValidName(""))
+    }
+}
+
+// MARK: - StubSbxService Behavioral Tests
+
+struct StubSbxServiceTests {
+
+    // MARK: - Lifecycle
+
+    @Test func createTransitionsToRunning() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        #expect(sandbox.status == .running)
+        #expect(sandbox.name == "claude-project")
+        #expect(sandbox.agent == "claude")
+    }
+
+    @Test func stopTransitionsToStopped() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        try await service.stop(name: sandbox.name)
+        let list = try await service.list()
+        #expect(list.first?.status == .stopped)
+    }
+
+    @Test func stoppedCanResume() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        try await service.stop(name: sandbox.name)
+        let resumed = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: sandbox.name))
+        #expect(resumed.status == .running)
+    }
+
+    @Test func removeDeletesSandbox() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        try await service.rm(name: sandbox.name)
+        let list = try await service.list()
+        #expect(list.isEmpty)
+    }
+
+    @Test func duplicateWorkspaceReturnsExisting() async throws {
+        let service = StubSbxService()
+        let first = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        let second = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        #expect(first.id == second.id)
+        let list = try await service.list()
+        #expect(list.count == 1)
+    }
+
+    @Test func invalidNameThrows() async throws {
+        let service = StubSbxService()
+        do {
+            _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "-invalid"))
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .invalidName = error {
+                // Expected
+            } else {
+                #expect(Bool(false), "Wrong error type: \(error)")
+            }
+        }
+    }
+
+    @Test func customNameIsUsed() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "my-sandbox"))
+        #expect(sandbox.name == "my-sandbox")
+    }
+
+    // MARK: - Edge Cases
+
+    @Test func stopNonExistentThrowsNotFound() async throws {
+        let service = StubSbxService()
+        do {
+            try await service.stop(name: "ghost")
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .notFound("ghost") = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func rmNonExistentThrowsNotFound() async throws {
+        let service = StubSbxService()
+        do {
+            try await service.rm(name: "ghost")
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .notFound = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func sendMessageNonExistentThrows() async throws {
+        let service = StubSbxService()
+        do {
+            try await service.sendMessage(name: "ghost", message: "hi")
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .notFound = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func sendMessageStoppedThrows() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        try await service.stop(name: sandbox.name)
+        do {
+            try await service.sendMessage(name: sandbox.name, message: "hi")
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .notRunning = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func multipleSandboxesCoexist() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project-a", opts: nil)
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project-b", opts: nil)
+        let list = try await service.list()
+        #expect(list.count == 2)
+    }
+
+    // MARK: - Policy Tests
+
+    @Test func balancedDefaultsPresent() async throws {
+        let service = StubSbxService()
+        let policies = try await service.policyList()
+        #expect(policies.count == 10)
+        let resources = Set(policies.map(\.resources))
+        #expect(resources.contains("api.anthropic.com"))
+        #expect(resources.contains("github.com"))
+        #expect(resources.contains("*.npmjs.org"))
+    }
+
+    @Test func addAllowRule() async throws {
+        let service = StubSbxService()
+        let rule = try await service.policyAllow(resources: "example.com")
+        #expect(rule.decision == .allow)
+        #expect(rule.resources == "example.com")
+    }
+
+    @Test func addDenyRule() async throws {
+        let service = StubSbxService()
+        let rule = try await service.policyDeny(resources: "evil.com")
+        #expect(rule.decision == .deny)
+        #expect(rule.resources == "evil.com")
+    }
+
+    @Test func removeRule() async throws {
+        let service = StubSbxService()
+        let before = try await service.policyList()
+        let count = before.count
+        try await service.policyRemove(resource: "api.anthropic.com")
+        let after = try await service.policyList()
+        #expect(after.count == count - 1)
+    }
+
+    @Test func policyLogFilterBySandbox() async throws {
+        let service = StubSbxService()
+        let all = try await service.policyLog(sandboxName: nil)
+        #expect(all.count == 3)
+        let filtered = try await service.policyLog(sandboxName: "claude-myproject")
+        #expect(filtered.count == 3)
+        let empty = try await service.policyLog(sandboxName: "nonexistent")
+        #expect(empty.isEmpty)
+    }
+
+    // MARK: - Port Tests
+
+    @Test func publishPort() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        let mapping = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
+        #expect(mapping.hostPort == 8080)
+        #expect(mapping.sandboxPort == 3000)
+    }
+
+    @Test func duplicateHostPortThrows() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
+        do {
+            _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 4000)
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .portConflict(8080) = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func portsClearedOnStop() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
+        try await service.stop(name: sandbox.name)
+        let ports = try await service.portsList(name: sandbox.name)
+        #expect(ports.isEmpty)
+    }
+
+    @Test func publishOnStoppedThrows() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        try await service.stop(name: sandbox.name)
+        do {
+            _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .notRunning = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func portUniquenessAcrossSandboxes() async throws {
+        let service = StubSbxService()
+        let a = try await service.run(agent: "claude", workspace: "/tmp/a", opts: RunOptions(name: "sandbox-a"))
+        let b = try await service.run(agent: "claude", workspace: "/tmp/b", opts: RunOptions(name: "sandbox-b"))
+        _ = try await service.portsPublish(name: a.name, hostPort: 8080, sbxPort: 3000)
+        do {
+            _ = try await service.portsPublish(name: b.name, hostPort: 8080, sbxPort: 4000)
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as SbxServiceError {
+            if case .portConflict(8080) = error {} else {
+                #expect(Bool(false), "Wrong error: \(error)")
+            }
+        }
+    }
+
+    @Test func unpublishPortRemovesMapping() async throws {
+        let service = StubSbxService()
+        let sandbox = try await service.run(agent: "claude", workspace: "/tmp/project", opts: nil)
+        _ = try await service.portsPublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
+        try await service.portsUnpublish(name: sandbox.name, hostPort: 8080, sbxPort: 3000)
+        let ports = try await service.portsList(name: sandbox.name)
+        #expect(ports.isEmpty)
     }
 }
 

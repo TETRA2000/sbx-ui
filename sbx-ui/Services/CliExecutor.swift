@@ -56,6 +56,11 @@ struct CliExecutor: CliExecutorProtocol, Sendable {
             }
             process.environment = env
 
+            // Ensure child process gets /dev/null as stdin — GUI apps have
+            // no usable stdin, and leaving it inherited can cause bash scripts
+            // to hang (e.g. mock-sbx interactive mode detection).
+            process.standardInput = FileHandle.nullDevice
+
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
             process.standardOutput = stdoutPipe

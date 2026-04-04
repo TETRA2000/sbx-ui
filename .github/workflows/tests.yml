@@ -60,19 +60,10 @@ jobs:
             -destination 'platform=macOS' \
             -only-testing:sbx-uiTests
 
-      - name: Run UI Tests (in-memory mock)
+      - name: Run UI Tests
         run: |
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
-            -only-testing:sbx-uiUITests/sbx_uiUITests \
-            -only-testing:sbx-uiUITests/sbx_uiUITestsLaunchTests
-
-      - name: Run UI Tests (CLI mock)
-        run: |
-          xcodebuild test-without-building \
-            -project sbx-ui.xcodeproj \
-            -scheme sbx-ui \
-            -destination 'platform=macOS' \
-            -only-testing:sbx-uiUITests/sbx_uiCliMockUITests
+            -only-testing:sbx-uiUITests

@@ -88,7 +88,7 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
 - Run the full suite to confirm no regressions before considering work done
 
 ### Running Tests
-- Xcode: Product → Test (Cmd+U) runs all 45 tests
+- Xcode: Product → Test (Cmd+U) runs all 73 tests
 - Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
 
 ### Writing Unit Tests
