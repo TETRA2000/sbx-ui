@@ -37,16 +37,24 @@ final class PtySessionManager {
         } else {
             let shellPath = "/bin/zsh"
             let args = ["-c", "sbx run \(name)"]
-            // Extend PATH so sbx is found (GUI apps miss /opt/homebrew/bin)
+            // Build environment: extend PATH and set TERM for color support
             var env: [String] = []
+            var hasTerm = false
             for (key, value) in ProcessInfo.processInfo.environment {
                 if key == "PATH" {
                     let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
                     env.append("\(key)=\(extended)")
+                } else if key == "TERM" {
+                    env.append("TERM=xterm-256color")
+                    hasTerm = true
                 } else {
                     env.append("\(key)=\(value)")
                 }
             }
+            if !hasTerm {
+                env.append("TERM=xterm-256color")
+            }
+            env.append("COLORTERM=truecolor")
             // Use startProcess on the terminal view directly so keyboard input
             // is routed to the PTY process via LocalProcessTerminalView.send()
             terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
