@@ -13,7 +13,7 @@ concurrency:
 jobs:
   test:
     name: Unit & UI Tests
-    runs-on: macos-latest
+    runs-on: macos-26
 
     steps:
       - name: Checkout
@@ -21,8 +21,6 @@ jobs:
 
       - name: Select latest Xcode
         run: |
-          # List available Xcode versions and select the latest
-          ls /Applications | grep Xcode | sort -V
           LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
           echo "Using: $LATEST_XCODE"
           sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
@@ -35,34 +33,35 @@ jobs:
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui
 
-      - name: Build
+      - name: Build for testing
         run: |
+          set -o pipefail
           xcodebuild build-for-testing \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
             -skipPackagePluginValidation \
-            | xcpretty --color || true
+            2>&1 | xcpretty --color
 
       - name: Run Unit Tests
         run: |
+          set -o pipefail
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
             -only-testing:sbx-uiTests \
-            | xcpretty --color --report junit --output test-results/unit-tests.xml || true
+            2>&1 | xcpretty --color --report junit --output test-results/unit-tests.xml
 
       - name: Run UI Tests
-        env:
-          SBX_MOCK: "1"
         run: |
+          set -o pipefail
           xcodebuild test-without-building \
             -project sbx-ui.xcodeproj \
             -scheme sbx-ui \
             -destination 'platform=macOS' \
             -only-testing:sbx-uiUITests \
-            | xcpretty --color --report junit --output test-results/ui-tests.xml || true
+            2>&1 | xcpretty --color --report junit --output test-results/ui-tests.xml
 
       - name: Upload test results
         if: always()
