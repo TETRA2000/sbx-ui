@@ -35,7 +35,17 @@ final class PtySessionManager {
             let process = LocalProcess(delegate: terminalView)
             let shellPath = "/bin/zsh"
             let args = ["-c", "sbx run \(name)"]
-            process.startProcess(executable: shellPath, args: args, environment: nil, execName: nil)
+            // Extend PATH so sbx is found (GUI apps miss /opt/homebrew/bin)
+            var env: [String] = []
+            for (key, value) in ProcessInfo.processInfo.environment {
+                if key == "PATH" {
+                    let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
+                    env.append("\(key)=\(extended)")
+                } else {
+                    env.append("\(key)=\(value)")
+                }
+            }
+            process.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
             sessions[name] = SessionEntry(process: process, emitter: nil, terminal: nil)
         }
     }
