@@ -19,6 +19,8 @@ final class PtySessionManager {
             dispose(name: name)
         }
 
+        appLog(.debug, "PTY", "Terminal view: \(terminalView), window: \(String(describing: terminalView.window))")
+
         if isMock {
             let emitter = MockPtyEmitter()
             let terminal = terminalView.getTerminal()
@@ -33,7 +35,6 @@ final class PtySessionManager {
             }
             sessions[name] = SessionEntry(process: nil, emitter: emitter, terminal: terminal)
         } else {
-            let process = LocalProcess(delegate: terminalView)
             let shellPath = "/bin/zsh"
             let args = ["-c", "sbx run \(name)"]
             // Extend PATH so sbx is found (GUI apps miss /opt/homebrew/bin)
@@ -46,8 +47,11 @@ final class PtySessionManager {
                     env.append("\(key)=\(value)")
                 }
             }
-            process.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
-            sessions[name] = SessionEntry(process: process, emitter: nil, terminal: nil)
+            // Use startProcess on the terminal view directly so keyboard input
+            // is routed to the PTY process via LocalProcessTerminalView.send()
+            terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
+            appLog(.debug, "PTY", "Started process via terminalView.startProcess for: \(name)")
+            sessions[name] = SessionEntry(process: nil, emitter: nil, terminal: nil)
         }
     }
 
