@@ -1,10 +1,10 @@
 import SwiftUI
-import SwiftTerm
+@preconcurrency import SwiftTerm
 
 struct TerminalViewWrapper: NSViewRepresentable {
     let sandboxName: String
     let isMock: Bool
-    @Environment(SessionStore.self) private var sessionStore
+    let ptyManager: PtySessionManager
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let terminalView = LocalProcessTerminalView(frame: .zero)
@@ -15,20 +15,21 @@ struct TerminalViewWrapper: NSViewRepresentable {
             alpha: 1.0
         )
         terminalView.nativeForegroundColor = .white
-
-        // Set JetBrains Mono font if available, fallback to Menlo
-        if let font = NSFont(name: "JetBrainsMono-Regular", size: 13) {
-            terminalView.font = font
-        } else {
-            terminalView.font = NSFont(name: "Menlo", size: 13) ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        }
+        terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
         context.coordinator.terminalView = terminalView
+
+        let name = sandboxName
+        let mock = isMock
+        let manager = ptyManager
+        DispatchQueue.main.async {
+            manager.attach(name: name, terminalView: terminalView, isMock: mock)
+        }
+
         return terminalView
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        // Re-attach if needed
     }
 
     func makeCoordinator() -> Coordinator {

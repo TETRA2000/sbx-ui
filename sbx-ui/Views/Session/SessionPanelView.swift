@@ -4,17 +4,14 @@ struct SessionPanelView: View {
     let sandbox: Sandbox
     var onBack: () -> Void
     @Environment(SessionStore.self) private var sessionStore
-
-    private var isMock: Bool {
-        ProcessInfo.processInfo.environment["SBX_MOCK"] == "1"
-    }
+    @State private var ptyManager = PtySessionManager()
 
     var body: some View {
         VStack(spacing: 0) {
             // Navigation bar
             HStack {
                 Button {
-                    sessionStore.detach()
+                    sessionStore.detach(ptyManager: ptyManager)
                     onBack()
                 } label: {
                     HStack(spacing: 4) {
@@ -33,7 +30,7 @@ struct SessionPanelView: View {
             .background(Color.surfaceContainer)
 
             // Terminal area
-            TerminalViewWrapper(sandboxName: sandbox.name, isMock: isMock)
+            TerminalViewWrapper(sandboxName: sandbox.name, isMock: sessionStore.isMock, ptyManager: ptyManager)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("terminalView")
 
@@ -41,18 +38,18 @@ struct SessionPanelView: View {
             AgentStatusBar(sandbox: sandbox)
 
             // Chat input
-            ChatInputView()
+            ChatInputView(ptyManager: ptyManager)
         }
         .background(Color.surfaceLowest)
         .task {
             do {
-                try await sessionStore.attach(name: sandbox.name)
+                try await sessionStore.attach(name: sandbox.name, ptyManager: ptyManager)
             } catch {
                 // Handle error
             }
         }
         .onDisappear {
-            sessionStore.detach()
+            sessionStore.detach(ptyManager: ptyManager)
         }
     }
 }

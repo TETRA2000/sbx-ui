@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ChatInputView: View {
+    let ptyManager: PtySessionManager
     @Environment(SessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
     @State private var message = ""
@@ -38,7 +39,7 @@ struct ChatInputView: View {
         message = ""
         Task {
             do {
-                try await sessionStore.sendMessage(text)
+                try await sessionStore.sendMessage(text, ptyManager: ptyManager)
             } catch {
                 toastManager.show(error.localizedDescription)
             }

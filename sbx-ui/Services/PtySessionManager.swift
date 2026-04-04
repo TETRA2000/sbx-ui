@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 @preconcurrency import SwiftTerm
 
-@MainActor
+@MainActor @Observable
 final class PtySessionManager {
     private var sessions: [String: SessionEntry] = [:]
 
