@@ -163,7 +163,11 @@ cmd_run() {
       interactive_mode "$_name"
     else
       # Block until stdin closes (keeps PTY process alive for in-app terminals)
-      cat > /dev/null 2>&1 || true
+      # Keep process alive for in-app SwiftTerm sessions (SBX_CLI_MOCK=1)
+      if [[ "${SBX_CLI_MOCK:-}" == "1" ]]; then
+        trap 'exit 0' INT TERM
+        while true; do sleep 1; done
+      fi
     fi
     return
   fi
@@ -193,7 +197,11 @@ cmd_run() {
       if [[ -t 0 ]]; then
         interactive_mode "$name"
       else
-        cat > /dev/null 2>&1 || true
+        # Keep process alive for in-app SwiftTerm sessions (SBX_CLI_MOCK=1)
+      if [[ "${SBX_CLI_MOCK:-}" == "1" ]]; then
+        trap 'exit 0' INT TERM
+        while true; do sleep 1; done
+      fi
       fi
       return
     fi
@@ -204,7 +212,11 @@ cmd_run() {
     if [[ -t 0 ]]; then
       interactive_mode "$name"
     else
-      cat > /dev/null 2>&1 || true
+      # Keep process alive for in-app SwiftTerm sessions (SBX_CLI_MOCK=1)
+      if [[ "${SBX_CLI_MOCK:-}" == "1" ]]; then
+        trap 'exit 0' INT TERM
+        while true; do sleep 1; done
+      fi
     fi
     return
   fi
