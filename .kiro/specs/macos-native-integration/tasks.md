@@ -58,14 +58,14 @@
   - Test multiple simultaneous transitions post multiple notifications
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.7, 2.8, 2.9, 2.10_
 
-- [ ] 3. Menu Bar Extra
-- [ ] 3.1 (P) Add the menu bar extra scene with popover view
+- [x] 3. Menu Bar Extra
+- [x] 3.1 (P) Add the menu bar extra scene with popover view
   - Add a MenuBarExtra scene as a sibling to the existing WindowGroup in the App body, using the window popover style
   - Display a shipping-box system image as the icon; append the running sandbox count to the label when at least one sandbox is running; show no count when idle
   - Inject the shared stores into the menu bar scene via environment, identical to the window group
   - _Requirements: 1.1, 1.2, 1.3, 1.12_
 
-- [ ] 3.2 (P) Build the menu bar popover content with sandbox list and actions
+- [x] 3.2 (P) Build the menu bar popover content with sandbox list and actions
   - List all sandboxes grouped by status (running first, then stopped), showing name and status for each
   - For running sandboxes, provide "Stop" and "Open in App" action buttons
   - For stopped sandboxes, provide "Resume" and "Open in App" action buttons
@@ -76,7 +76,7 @@
   - Add accessibility identifiers for all interactive elements
   - _Requirements: 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11_
 
-- [ ] 3.3 UI tests for menu bar extra
+- [x] 3.3 UI tests for menu bar extra
   - Verify the menu bar icon exists on app launch
   - Verify the popover shows the sandbox list after creating a sandbox
   - Verify Stop action changes sandbox status to stopped on the dashboard

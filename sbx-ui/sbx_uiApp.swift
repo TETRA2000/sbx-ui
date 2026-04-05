@@ -18,6 +18,16 @@ struct sbx_uiApp: App {
         _sessionStore = State(initialValue: container.sessionStore)
     }
 
+    private var menuBarLabel: String {
+        let count = sandboxStore.sandboxes.filter { $0.status == .running }.count
+        return count > 0 ? "sbx (\(count))" : "sbx"
+    }
+
+    private var menuBarIcon: String {
+        let hasRunning = sandboxStore.sandboxes.contains { $0.status == .running }
+        return hasRunning ? "shippingbox.fill" : "shippingbox"
+    }
+
     var body: some Scene {
         WindowGroup {
             ShellView()
@@ -28,5 +38,11 @@ struct sbx_uiApp: App {
                 .environment(toastManager)
                 .preferredColorScheme(.dark)
         }
+
+        MenuBarExtra(menuBarLabel, systemImage: menuBarIcon) {
+            MenuBarPopoverView()
+                .preferredColorScheme(.dark)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
