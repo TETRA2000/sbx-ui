@@ -23,12 +23,15 @@ class FocusableTerminalView: LocalProcessTerminalView {
 }
 
 struct TerminalViewWrapper: NSViewRepresentable {
-    let sandboxName: String
+    let sessionID: String
     @Environment(TerminalSessionStore.self) private var sessionStore
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView(frame: .zero)
-        let terminalView = sessionStore.startSession(name: sandboxName)
+        guard let session = sessionStore.session(for: sessionID) else {
+            return container
+        }
+        let terminalView = session.terminalView
         terminalView.removeFromSuperview()
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(terminalView)

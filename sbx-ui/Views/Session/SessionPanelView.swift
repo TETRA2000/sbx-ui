@@ -1,9 +1,14 @@
 import SwiftUI
 
 struct SessionPanelView: View {
+    let sessionID: String
     let sandbox: Sandbox
     var onBack: () -> Void
     @Environment(TerminalSessionStore.self) private var sessionStore
+
+    private var session: TerminalSession? {
+        sessionStore.session(for: sessionID)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,10 +27,17 @@ struct SessionPanelView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("backToDashboard")
 
+                if let label = session?.label {
+                    Text(label)
+                        .font(.code(11))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 8)
+                }
+
                 Spacer()
 
                 Button {
-                    sessionStore.disconnect(name: sandbox.name)
+                    sessionStore.disconnect(sessionID: sessionID)
                     onBack()
                 } label: {
                     HStack(spacing: 4) {
@@ -43,12 +55,12 @@ struct SessionPanelView: View {
             .background(Color.surfaceContainer)
 
             // Terminal area
-            TerminalViewWrapper(sandboxName: sandbox.name)
+            TerminalViewWrapper(sessionID: sessionID)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("terminalView")
 
-            // Agent status bar
-            AgentStatusBar(sandbox: sandbox)
+            // Status bar
+            AgentStatusBar(sandbox: sandbox, sessionID: sessionID)
         }
         .background(Color.surfaceLowest)
     }

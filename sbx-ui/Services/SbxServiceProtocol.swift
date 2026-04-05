@@ -23,11 +23,6 @@ protocol SbxServiceProtocol: Sendable {
     func sendMessage(name: String, message: String) async throws
 }
 
-protocol ExternalTerminalProtocol: Sendable {
-    func detectAvailable() async -> [TerminalApp]
-    func openShell(sandboxName: String, app: TerminalApp) async throws
-}
-
 protocol CliExecutorProtocol: Sendable {
     func exec(command: String, args: [String]) async throws -> CliResult
     func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T

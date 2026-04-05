@@ -6,6 +6,10 @@ struct SidebarView: View {
     @Environment(TerminalSessionStore.self) private var sessionStore
     @State private var showCreateSheet = false
 
+    private var sortedSessions: [TerminalSession] {
+        sessionStore.activeSessions.values.sorted { $0.startTime < $1.startTime }
+    }
+
     var body: some View {
         List(selection: $selection) {
             Section {
@@ -28,7 +32,7 @@ struct SidebarView: View {
                 .tag(SidebarDestination.policies)
             }
 
-            if !sessionStore.activeSessionNames.isEmpty {
+            if !sessionStore.activeSessions.isEmpty {
                 Section {
                     Text("SESSIONS")
                         .font(.label(9))
@@ -37,22 +41,22 @@ struct SidebarView: View {
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16))
 
-                    ForEach(sessionStore.activeSessionNames, id: \.self) { name in
+                    ForEach(sortedSessions, id: \.id) { session in
                         Button {
-                            onSelectSession(name)
+                            onSelectSession(session.id)
                         } label: {
                             HStack(spacing: 8) {
                                 Circle()
-                                    .fill(Color.secondary)
+                                    .fill(session.sessionType == .agent ? Color.accent : Color.secondary)
                                     .frame(width: 6, height: 6)
-                                Text(name)
+                                Text(session.label)
                                     .font(.code(11))
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                             }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityIdentifier("sidebarSession-\(name)")
+                        .accessibilityIdentifier("sidebarSession-\(session.label)")
                     }
                 }
             }

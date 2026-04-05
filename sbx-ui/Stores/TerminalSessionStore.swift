@@ -5,13 +5,19 @@ import AppKit
 // MARK: - Process Launcher Abstraction
 
 protocol TerminalProcessLauncher {
-    func launch(on terminalView: FocusableTerminalView, sandboxName: String)
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType)
 }
 
 struct RealTerminalProcessLauncher: TerminalProcessLauncher {
-    func launch(on terminalView: FocusableTerminalView, sandboxName: String) {
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {
         let shellPath = "/bin/zsh"
-        let args = ["-c", "sbx run \(sandboxName)"]
+        let args: [String]
+        switch sessionType {
+        case .agent:
+            args = ["-c", "sbx run \(sandboxName)"]
+        case .shell:
+            args = ["-c", "sbx exec -it \(sandboxName) bash"]
+        }
         var env: [String] = []
         var hasTerm = false
         for (key, value) in ProcessInfo.processInfo.environment {
@@ -37,7 +43,10 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
 // MARK: - Terminal Session
 
 struct TerminalSession {
+    let id: String
     let sandboxName: String
+    let sessionType: SessionType
+    let label: String
     let terminalView: FocusableTerminalView
     let startTime: Date
     var connected: Bool
@@ -45,42 +54,70 @@ struct TerminalSession {
 
 @MainActor @Observable
 final class TerminalSessionStore {
-    private(set) var activeSessions: [String: TerminalSession] = [:]
-    private(set) var thumbnails: [String: NSImage] = [:]
+    private(set) var activeSessions: [String: TerminalSession] = [:]  // keyed by session ID
+    private(set) var thumbnails: [String: NSImage] = [:]              // keyed by session ID
     var error: String?
 
     private let service: any SbxServiceProtocol
     private let processLauncher: any TerminalProcessLauncher
+    private var shellCounters: [String: Int] = [:]
 
     init(service: any SbxServiceProtocol, processLauncher: any TerminalProcessLauncher = RealTerminalProcessLauncher()) {
         self.service = service
         self.processLauncher = processLauncher
     }
 
-    var activeSessionNames: [String] {
-        activeSessions.keys.sorted()
+    var activeSessionIDs: [String] {
+        activeSessions.values.sorted { $0.startTime < $1.startTime }.map(\.id)
     }
 
     var activeSessionCount: Int {
         activeSessions.count
     }
 
-    func session(for name: String) -> TerminalSession? {
-        activeSessions[name]
+    func session(for sessionID: String) -> TerminalSession? {
+        activeSessions[sessionID]
     }
 
-    func isActive(name: String) -> Bool {
-        activeSessions[name] != nil
+    /// Check if any session exists for the given sandbox.
+    func hasAnySession(sandboxName: String) -> Bool {
+        activeSessions.values.contains { $0.sandboxName == sandboxName }
     }
 
-    /// Returns existing terminal view if session exists, or creates a new one.
-    func startSession(name: String) -> FocusableTerminalView {
-        if let existing = activeSessions[name] {
-            appLog(.info, "PTY", "Reattaching existing session: \(name)")
-            return existing.terminalView
+    /// Find the agent session ID for a given sandbox, if one exists.
+    func agentSessionID(for sandboxName: String) -> String? {
+        activeSessions.values.first { $0.sandboxName == sandboxName && $0.sessionType == .agent }?.id
+    }
+
+    /// All sessions for a given sandbox.
+    func sessions(for sandboxName: String) -> [TerminalSession] {
+        activeSessions.values
+            .filter { $0.sandboxName == sandboxName }
+            .sorted { $0.startTime < $1.startTime }
+    }
+
+    /// Start a new session or reattach to an existing agent session.
+    /// Agent sessions are idempotent (returns existing). Shell sessions always create new.
+    @discardableResult
+    func startSession(sandboxName: String, type: SessionType) -> (id: String, view: FocusableTerminalView) {
+        // Agent sessions are idempotent — reattach if one already exists
+        if type == .agent,
+           let existing = activeSessions.values.first(where: { $0.sandboxName == sandboxName && $0.sessionType == .agent }) {
+            appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName)")
+            return (existing.id, existing.terminalView)
         }
 
-        appLog(.info, "PTY", "Starting new session: \(name)")
+        let sessionID = UUID().uuidString
+        let label: String
+        switch type {
+        case .agent:
+            label = "\(sandboxName) (agent)"
+        case .shell:
+            shellCounters[sandboxName, default: 0] += 1
+            label = "\(sandboxName) (shell \(shellCounters[sandboxName]!))"
+        }
+
+        appLog(.info, "PTY", "Starting new \(type.rawValue) session: \(label)")
         let terminalView = FocusableTerminalView(frame: .zero)
         terminalView.nativeBackgroundColor = NSColor(
             red: 0x0E / 255.0,
@@ -94,58 +131,63 @@ final class TerminalSessionStore {
         terminalView.onProcessExit = { [weak self] exitCode in
             DispatchQueue.main.async {
                 guard let self else { return }
-                appLog(.info, "PTY", "Process exited for session: \(name) (code: \(exitCode.map(String.init) ?? "nil"))")
-                self.disconnect(name: name)
+                appLog(.info, "PTY", "Process exited for session: \(label) (code: \(exitCode.map(String.init) ?? "nil"))")
+                self.disconnect(sessionID: sessionID)
             }
         }
 
-        processLauncher.launch(on: terminalView, sandboxName: name)
-        appLog(.debug, "PTY", "Launched process for: \(name)")
+        processLauncher.launch(on: terminalView, sandboxName: sandboxName, sessionType: type)
+        appLog(.debug, "PTY", "Launched process for: \(label)")
 
         let session = TerminalSession(
-            sandboxName: name,
+            id: sessionID,
+            sandboxName: sandboxName,
+            sessionType: type,
+            label: label,
             terminalView: terminalView,
             startTime: Date(),
             connected: true
         )
-        activeSessions[name] = session
-        return terminalView
+        activeSessions[sessionID] = session
+        return (sessionID, terminalView)
     }
 
-    func disconnect(name: String) {
-        guard activeSessions[name] != nil else { return }
-        appLog(.info, "PTY", "Disconnecting session: \(name)")
-        activeSessions.removeValue(forKey: name)
-        thumbnails.removeValue(forKey: name)
+    func disconnect(sessionID: String) {
+        guard let session = activeSessions[sessionID] else { return }
+        appLog(.info, "PTY", "Disconnecting session: \(session.label)")
+        activeSessions.removeValue(forKey: sessionID)
+        thumbnails.removeValue(forKey: sessionID)
     }
 
     func disconnectAll() {
-        let names = Array(activeSessions.keys)
-        for name in names {
-            disconnect(name: name)
+        let ids = Array(activeSessions.keys)
+        for id in ids {
+            disconnect(sessionID: id)
         }
     }
 
     /// Remove sessions whose sandbox is no longer running.
     func cleanupStaleSessions(sandboxes: [Sandbox]) {
         let runningNames = Set(sandboxes.filter { $0.status == .running }.map(\.name))
-        let staleNames = activeSessions.keys.filter { !runningNames.contains($0) }
-        for name in staleNames {
-            appLog(.info, "PTY", "Cleaning up stale session: \(name)")
-            activeSessions.removeValue(forKey: name)
-            thumbnails.removeValue(forKey: name)
+        let staleIDs = activeSessions.filter { !runningNames.contains($0.value.sandboxName) }.map(\.key)
+        for id in staleIDs {
+            appLog(.info, "PTY", "Cleaning up stale session: \(activeSessions[id]?.label ?? id)")
+            activeSessions.removeValue(forKey: id)
+            thumbnails.removeValue(forKey: id)
         }
+        // Clean up shell counters for sandboxes that no longer have sessions
+        let activeSandboxNames = Set(activeSessions.values.map(\.sandboxName))
+        shellCounters = shellCounters.filter { activeSandboxNames.contains($0.key) }
     }
 
     /// Capture bitmap snapshots of all active terminal views.
     func captureSnapshots() {
-        for (name, session) in activeSessions {
+        for (id, session) in activeSessions {
             let view = session.terminalView
             var captureRect = view.bounds
             let needsTempFrame = captureRect.width == 0 || captureRect.height == 0
 
             if needsTempFrame {
-                // View was never displayed — give it temporary bounds for capture
                 view.frame = NSRect(origin: .zero, size: NSSize(width: 800, height: 600))
                 view.layoutSubtreeIfNeeded()
                 captureRect = view.bounds
@@ -162,12 +204,12 @@ final class TerminalSessionStore {
 
             let image = NSImage(size: captureRect.size)
             image.addRepresentation(bitmapRep)
-            thumbnails[name] = image
+            thumbnails[id] = image
         }
     }
 
-    func sendMessage(_ message: String, to name: String) async throws {
-        guard activeSessions[name] != nil else { return }
-        try await service.sendMessage(name: name, message: message)
+    func sendMessage(_ message: String, to sandboxName: String) async throws {
+        guard hasAnySession(sandboxName: sandboxName) else { return }
+        try await service.sendMessage(name: sandboxName, message: message)
     }
 }

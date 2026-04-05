@@ -7,7 +7,7 @@ enum SidebarDestination: Hashable {
 
 struct ShellView: View {
     @State private var selection: SidebarDestination? = .dashboard
-    @State private var selectedSandbox: Sandbox?
+    @State private var selectedSessionID: String?
     @State private var showDebugLog = false
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
@@ -21,23 +21,32 @@ struct ShellView: View {
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
-                SidebarView(selection: $selection, onSelectSession: { name in
-                    if let sandbox = sandboxStore.sandboxes.first(where: { $0.name == name }) {
-                        selectedSandbox = sandbox
-                    }
+                SidebarView(selection: $selection, onSelectSession: { sessionID in
+                    selectedSessionID = sessionID
                 })
             } detail: {
                 Group {
-                    if let selected = selectedSandbox,
-                       let sandbox = sandboxStore.sandboxes.first(where: { $0.name == selected.name }),
+                    if let sessionID = selectedSessionID,
+                       let session = sessionStore.session(for: sessionID),
+                       let sandbox = sandboxStore.sandboxes.first(where: { $0.name == session.sandboxName }),
                        sandbox.status == .running {
-                        SessionPanelView(sandbox: sandbox, onBack: { selectedSandbox = nil })
+                        SessionPanelView(sessionID: sessionID, sandbox: sandbox, onBack: { selectedSessionID = nil })
                     } else {
                         switch selection {
                         case .dashboard, .none:
-                            DashboardView(onSelectSandbox: { sandbox in
-                                selectedSandbox = sandbox
-                            })
+                            DashboardView(
+                                onSelectSandbox: { sandbox in
+                                    if let agentID = sessionStore.agentSessionID(for: sandbox.name) {
+                                        selectedSessionID = agentID
+                                    } else {
+                                        let (id, _) = sessionStore.startSession(sandboxName: sandbox.name, type: .agent)
+                                        selectedSessionID = id
+                                    }
+                                },
+                                onOpenShellSession: { sessionID in
+                                    selectedSessionID = sessionID
+                                }
+                            )
                         case .policies:
                             PolicyPanelView()
                         }
@@ -82,10 +91,9 @@ struct ShellView: View {
         .onChange(of: runningSandboxNames) { _, _ in
             sessionStore.cleanupStaleSessions(sandboxes: sandboxStore.sandboxes)
         }
-        .onChange(of: sessionStore.activeSessionNames) { _, newNames in
-            // Auto-navigate back to dashboard when the active session's process exits
-            if let selected = selectedSandbox, !newNames.contains(selected.name) {
-                selectedSandbox = nil
+        .onChange(of: sessionStore.activeSessionIDs) { _, newIDs in
+            if let selected = selectedSessionID, !newIDs.contains(selected) {
+                selectedSessionID = nil
             }
         }
     }
@@ -93,6 +101,7 @@ struct ShellView: View {
 
 struct DashboardView: View {
     var onSelectSandbox: (Sandbox) -> Void
+    var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
     @State private var showCreateSheet = false
@@ -113,7 +122,8 @@ struct DashboardView: View {
                 ScrollView {
                     SandboxGridView(
                         onSelectSandbox: onSelectSandbox,
-                        onCreateNew: { showCreateSheet = true }
+                        onCreateNew: { showCreateSheet = true },
+                        onOpenShellSession: onOpenShellSession
                     )
                     .padding()
                 }

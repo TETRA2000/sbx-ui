@@ -3,6 +3,7 @@ import SwiftUI
 struct SandboxGridView: View {
     var onSelectSandbox: (Sandbox) -> Void
     var onCreateNew: () -> Void
+    var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
 
     private let columns = [
@@ -12,7 +13,11 @@ struct SandboxGridView: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 16) {
             ForEach(sandboxStore.sandboxes) { sandbox in
-                SandboxCardView(sandbox: sandbox, onSelect: onSelectSandbox)
+                SandboxCardView(
+                    sandbox: sandbox,
+                    onSelect: onSelectSandbox,
+                    onOpenShellSession: onOpenShellSession
+                )
             }
 
             // "+" placeholder card

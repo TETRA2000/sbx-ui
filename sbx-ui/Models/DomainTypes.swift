@@ -4,6 +4,11 @@ enum SandboxStatus: String, Sendable, Codable {
     case running, stopped, creating, removing
 }
 
+enum SessionType: String, Sendable {
+    case agent   // sbx run <name>
+    case shell   // sbx exec -it <name> bash
+}
+
 struct Sandbox: Identifiable, Sendable {
     let id: String
     let name: String
@@ -77,21 +82,3 @@ enum SbxValidation {
     }
 }
 
-enum TerminalApp: String, Sendable, Codable, CaseIterable {
-    case terminal  // com.apple.Terminal
-    case iterm     // com.googlecode.iterm2
-
-    var displayName: String {
-        switch self {
-        case .terminal: "Terminal"
-        case .iterm: "iTerm"
-        }
-    }
-
-    var bundleIdentifier: String {
-        switch self {
-        case .terminal: "com.apple.Terminal"
-        case .iterm: "com.googlecode.iterm2"
-        }
-    }
-}

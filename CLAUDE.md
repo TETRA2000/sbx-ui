@@ -170,8 +170,9 @@ private func createSandbox(name: String) {
 ```
 
 ### Available Accessibility Identifiers
-- **Dashboard**: `newSandboxButton`, `sandboxCard-{name}`, `statusChip-{status}`, `stopButton-{name}`, `terminateButton-{name}`, `openShellButton-{name}`
+- **Dashboard**: `newSandboxButton`, `sandboxCard-{name}`, `statusChip-{status}`, `stopButton-{name}`, `terminateButton-{name}`, `openShellButton-{name}`, `copyCommandButton-{name}`, `sessionBadge-{name}`, `sessionThumbnail-{name}`
 - **Create Sheet**: `browseButton`, `sandboxNameField`, `deployButton`
 - **Policies**: `addPolicyButton`, `removePolicy-{resources}`, `domainInput`, `decisionPicker`, `submitPolicyButton`, `logSandboxFilter`, `blockedOnlyToggle`
 - **Ports**: `addPortButton`, `hostPortField`, `sbxPortField`, `publishPortButton`, `unpublishPort-{hostPort}`
-- **Session**: `terminalView`, `agentStatusBar`, `backToDashboard`
+- **Session**: `terminalView`, `agentStatusBar`, `backToDashboard`, `disconnectButton`
+- **Sidebar**: `sidebarSession-{label}` (label format: `"{name} (agent)"` or `"{name} (shell N)"`)

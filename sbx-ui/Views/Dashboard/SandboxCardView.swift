@@ -1,10 +1,11 @@
 import SwiftUI
+import AppKit
 
 struct SandboxCardView: View {
     let sandbox: Sandbox
     var onSelect: (Sandbox) -> Void
+    var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
-    @Environment(SettingsStore.self) private var settingsStore
     @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
     @State private var isHovered = false
@@ -27,7 +28,7 @@ struct SandboxCardView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if sessionStore.isActive(name: sandbox.name) {
+                if sessionStore.hasAnySession(sandboxName: sandbox.name) {
                     HStack(spacing: 3) {
                         Image(systemName: "terminal.fill")
                             .font(.system(size: 9))
@@ -65,10 +66,10 @@ struct SandboxCardView: View {
                 }
             }
 
-            // Terminal thumbnail
-            if sessionStore.isActive(name: sandbox.name) {
+            // Terminal thumbnail (show agent session thumbnail)
+            if let agentID = sessionStore.agentSessionID(for: sandbox.name) {
                 Group {
-                    if let thumbnail = sessionStore.thumbnails[sandbox.name] {
+                    if let thumbnail = sessionStore.thumbnails[agentID] {
                         Image(nsImage: thumbnail)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
@@ -117,24 +118,29 @@ struct SandboxCardView: View {
                     .disabled(isTransient)
                     .accessibilityIdentifier("stopButton-\(sandbox.name)")
 
+                    // Open in-app shell session
                     Button {
-                        let launcher = ExternalTerminalLauncher()
-                        Task {
-                            do {
-                                try await launcher.openShell(
-                                    sandboxName: sandbox.name,
-                                    app: settingsStore.preferredTerminal ?? .terminal
-                                )
-                            } catch {
-                                toastManager.show(error.localizedDescription)
-                            }
-                        }
+                        let (id, _) = sessionStore.startSession(sandboxName: sandbox.name, type: .shell)
+                        onOpenShellSession(id)
                     } label: {
                         Image(systemName: "terminal")
                             .font(.system(size: 11))
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("openShellButton-\(sandbox.name)")
+
+                    // Copy exec command to clipboard
+                    Button {
+                        let command = "sbx exec -it \(sandbox.name) bash"
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(command, forType: .string)
+                        toastManager.show("Copied: \(command)", isError: false)
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("copyCommandButton-\(sandbox.name)")
                 }
 
                 Spacer()
