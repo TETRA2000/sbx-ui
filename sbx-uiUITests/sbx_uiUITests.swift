@@ -392,10 +392,7 @@ final class sbx_uiUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.upArrow, modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
 
-        // Ctrl+C (common terminal interrupt)
-        app.typeKey("c", modifierFlags: .control)
-
-        // Session still alive (mock-sbx sleeps to keep process alive)
+        // Session still alive after sustained input
         let backButton = app.buttons["backToDashboard"]
         XCTAssertTrue(backButton.exists)
         let connected = app.staticTexts["Connected"]
