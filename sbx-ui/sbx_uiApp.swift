@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct sbx_uiApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var sandboxStore: SandboxStore
     @State private var policyStore: PolicyStore
     @State private var sessionStore: TerminalSessionStore
@@ -10,13 +11,21 @@ struct sbx_uiApp: App {
     @State private var logStore = LogStore.shared
 
     init() {
-        let service = ServiceFactory.create()
-        let sandbox = SandboxStore(service: service)
-        let policy = PolicyStore(service: service)
-        let session = TerminalSessionStore(service: service)
-        _sandboxStore = State(initialValue: sandbox)
-        _policyStore = State(initialValue: policy)
-        _sessionStore = State(initialValue: session)
+        ServiceContainer.initialize()
+        let container = ServiceContainer.shared!
+        _sandboxStore = State(initialValue: container.sandboxStore)
+        _policyStore = State(initialValue: container.policyStore)
+        _sessionStore = State(initialValue: container.sessionStore)
+    }
+
+    private var menuBarLabel: String {
+        let count = sandboxStore.sandboxes.filter { $0.status == .running }.count
+        return count > 0 ? "sbx (\(count))" : "sbx"
+    }
+
+    private var menuBarIcon: String {
+        let hasRunning = sandboxStore.sandboxes.contains { $0.status == .running }
+        return hasRunning ? "shippingbox.fill" : "shippingbox"
     }
 
     var body: some Scene {
@@ -29,5 +38,11 @@ struct sbx_uiApp: App {
                 .environment(toastManager)
                 .preferredColorScheme(.dark)
         }
+
+        MenuBarExtra(menuBarLabel, systemImage: menuBarIcon) {
+            MenuBarPopoverView()
+                .preferredColorScheme(.dark)
+        }
+        .menuBarExtraStyle(.window)
     }
 }

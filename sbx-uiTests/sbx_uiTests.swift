@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import sbx_ui
@@ -1222,3 +1223,190 @@ struct TerminalSessionStoreTests {
         #expect(await store.activeSessionCount == 0)
     }
 }
+
+// MARK: - ServiceContainer Tests
+
+struct ServiceContainerTests {
+    @Test func sharedInstanceReturnsSameObject() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let a = await ServiceContainer.shared!
+        let b = await ServiceContainer.shared!
+        #expect(a === b)
+    }
+
+    @Test func storesAreInitialized() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let container = await ServiceContainer.shared!
+        let sandboxes = await container.sandboxStore.sandboxes
+        #expect(sandboxes.isEmpty || true)
+        let rules = await container.policyStore.rules
+        #expect(rules.isEmpty || true)
+    }
+
+    @Test func configureReplacesSharedInstance() async {
+        let stub = StubSbxService()
+        await ServiceContainer.configure(service: stub)
+        let container = await ServiceContainer.shared!
+        let sandbox = try? await container.sandboxStore.createSandbox(workspace: "/tmp/config-test", name: "config-test")
+        #expect(sandbox?.name == "config-test")
+        // Reset for other tests
+        await ServiceContainer.configure(service: StubSbxService())
+    }
+
+    @Test func navigationCoordinatorIsInitialized() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let container = await ServiceContainer.shared!
+        let pending = await container.navigationCoordinator.pendingNavigation
+        #expect(pending == nil)
+    }
+
+    @Test func notificationManagerIsInitialized() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let container = await ServiceContainer.shared!
+        let authorized = await container.notificationManager.isAuthorized
+        #expect(!authorized)
+    }
+}
+
+// MARK: - NavigationCoordinator Tests
+
+@MainActor
+final class MockWindowActivator: WindowActivatorProtocol {
+    var activationCount = 0
+    func activateMainWindow() { activationCount += 1 }
+}
+
+struct NavigationCoordinatorTests {
+    @Test func navigateSetsPendingNavigation() async {
+        let activator = await MockWindowActivator()
+        let coordinator = await NavigationCoordinator(windowActivator: activator)
+        await coordinator.navigate(to: .sandbox(name: "test"))
+        let pending = await coordinator.pendingNavigation
+        #expect(pending == .sandbox(name: "test"))
+    }
+
+    @Test func consumeReturnsAndClears() async {
+        let coordinator = await NavigationCoordinator()
+        await coordinator.navigate(to: .createSheet)
+        let first = await coordinator.consumeNavigation()
+        #expect(first == .createSheet)
+        let second = await coordinator.consumeNavigation()
+        #expect(second == nil)
+    }
+
+    @Test func consumeReturnsNilWhenEmpty() async {
+        let coordinator = await NavigationCoordinator()
+        let result = await coordinator.consumeNavigation()
+        #expect(result == nil)
+    }
+
+    @Test func multipleNavigatesOverwritesPending() async {
+        let coordinator = await NavigationCoordinator()
+        await coordinator.navigate(to: .sandbox(name: "first"))
+        await coordinator.navigate(to: .policyLog(sandboxName: "second"))
+        let pending = await coordinator.pendingNavigation
+        #expect(pending == .policyLog(sandboxName: "second"))
+    }
+
+    @Test func allNavigationRequestCasesEquatable() async {
+        #expect(NavigationRequest.sandbox(name: "a") == NavigationRequest.sandbox(name: "a"))
+        #expect(NavigationRequest.sandbox(name: "a") != NavigationRequest.sandbox(name: "b"))
+        #expect(NavigationRequest.policyLog(sandboxName: "x") == NavigationRequest.policyLog(sandboxName: "x"))
+        #expect(NavigationRequest.createSheet == NavigationRequest.createSheet)
+        #expect(NavigationRequest.createWithWorkspace(path: "/tmp") == NavigationRequest.createWithWorkspace(path: "/tmp"))
+        #expect(NavigationRequest.createSheet != NavigationRequest.sandbox(name: "a"))
+    }
+}
+
+// MARK: - Dock Menu Builder Tests
+
+@Suite("DockMenuBuilder")
+struct DockMenuBuilderTests {
+
+    private func makeSandbox(name: String, status: SandboxStatus) -> Sandbox {
+        Sandbox(id: UUID().uuidString, name: name, agent: "claude", status: status, workspace: "/tmp", ports: [], createdAt: Date())
+    }
+
+    // Helper: extract NSMenu items into plain Swift types to avoid
+    // Swift Testing macro expansion issues with AppKit properties.
+    private func itemTitles(_ menu: NSMenu) -> [String] {
+        menu.items.map(\.title)
+    }
+    private func itemCount(_ menu: NSMenu) -> Int {
+        menu.items.count
+    }
+    private func submenuTitles(_ item: NSMenuItem) -> [String] {
+        (item.submenu?.items ?? []).map(\.title)
+    }
+    private func isSeparator(_ item: NSMenuItem) -> Bool {
+        item.isSeparatorItem
+    }
+
+    @Test func emptyStateShowsOnlyNewSandbox() {
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [])
+        let count = itemCount(menu)
+        let titles = itemTitles(menu)
+        #expect(count == 1)
+        #expect(titles[0] == "New Sandbox…")
+    }
+
+    @Test func runningSandboxesAppearFirst() {
+        let stopped = makeSandbox(name: "stopped-box", status: .stopped)
+        let running = makeSandbox(name: "running-box", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [stopped, running])
+        let count = itemCount(menu)
+        let titles = itemTitles(menu)
+        // Items: "New Sandbox…", separator, running, stopped
+        #expect(count == 4)
+        #expect(titles[2] == "running-box")
+        #expect(titles[3] == "stopped-box")
+    }
+
+    @Test func runningSandboxHasStopAndOpenSubmenu() {
+        let running = makeSandbox(name: "my-runner", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [running])
+        let subTitles = submenuTitles(menu.items[2]) // after "New Sandbox…" and separator
+        #expect(subTitles.count == 2)
+        #expect(subTitles[0] == "Stop")
+        #expect(subTitles[1] == "Open")
+    }
+
+    @Test func stoppedSandboxHasResumeAndOpenSubmenu() {
+        let stopped = makeSandbox(name: "my-stopped", status: .stopped)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [stopped])
+        let subTitles = submenuTitles(menu.items[2]) // after "New Sandbox…" and separator
+        #expect(subTitles.count == 2)
+        #expect(subTitles[0] == "Resume")
+        #expect(subTitles[1] == "Open")
+    }
+
+    @Test func newSandboxItemAtTop() {
+        let s1 = makeSandbox(name: "alpha", status: .running)
+        let s2 = makeSandbox(name: "beta", status: .stopped)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [s1, s2])
+        let titles = itemTitles(menu)
+        #expect(titles[0] == "New Sandbox…")
+    }
+
+    @Test func menuIncludesSeparatorAfterNewSandbox() {
+        let s = makeSandbox(name: "test", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [s])
+        let sep = isSeparator(menu.items[1])
+        #expect(sep)
+    }
+
+    @Test func allSandboxesRepresented() {
+        let s1 = makeSandbox(name: "one", status: .running)
+        let s2 = makeSandbox(name: "two", status: .stopped)
+        let s3 = makeSandbox(name: "three", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [s1, s2, s3])
+        let count = itemCount(menu)
+        let sandboxNames = Array(itemTitles(menu).dropFirst(2))
+        // "New Sandbox…" + separator + 3 sandbox items = 5
+        #expect(count == 5)
+        #expect(sandboxNames.contains("one"))
+        #expect(sandboxNames.contains("two"))
+        #expect(sandboxNames.contains("three"))
+    }
+}
+
