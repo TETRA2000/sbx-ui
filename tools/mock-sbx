@@ -161,13 +161,6 @@ cmd_run() {
     fi
     if [[ -t 0 ]]; then
       interactive_mode "$_name"
-    else
-      # Block until stdin closes (keeps PTY process alive for in-app terminals)
-      # Keep process alive for in-app SwiftTerm sessions (SBX_CLI_MOCK=1)
-      if [[ "${SBX_CLI_MOCK:-}" == "1" ]]; then
-        trap 'exit 0' INT TERM
-        while true; do sleep 1; done
-      fi
     fi
     return
   fi
@@ -196,12 +189,6 @@ cmd_run() {
     if [[ "$status" == "running" ]]; then
       if [[ -t 0 ]]; then
         interactive_mode "$name"
-      else
-        # Keep process alive for in-app SwiftTerm sessions (SBX_CLI_MOCK=1)
-      if [[ "${SBX_CLI_MOCK:-}" == "1" ]]; then
-        trap 'exit 0' INT TERM
-        while true; do sleep 1; done
-      fi
       fi
       return
     fi
@@ -211,12 +198,6 @@ cmd_run() {
     mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
     if [[ -t 0 ]]; then
       interactive_mode "$name"
-    else
-      # Keep process alive for in-app SwiftTerm sessions (SBX_CLI_MOCK=1)
-      if [[ "${SBX_CLI_MOCK:-}" == "1" ]]; then
-        trap 'exit 0' INT TERM
-        while true; do sleep 1; done
-      fi
     fi
     return
   fi
@@ -232,11 +213,9 @@ cmd_run() {
   echo "  Workspace: $workspace (direct mount)"
   echo "  Agent: $agent"
 
-  # If stdin is a TTY, enter interactive mode; otherwise block on stdin
+  # If stdin is a TTY, enter interactive mode
   if [[ -t 0 ]]; then
     interactive_mode "$name"
-  else
-    cat > /dev/null 2>&1 || true
   fi
 }
 

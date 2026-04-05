@@ -11,12 +11,13 @@ protocol TerminalProcessLauncher {
 struct RealTerminalProcessLauncher: TerminalProcessLauncher {
     func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {
         let shellPath = "/bin/zsh"
+        // `exec cat` keeps the PTY process alive if sbx exits unexpectedly
         let args: [String]
         switch sessionType {
         case .agent:
-            args = ["-c", "sbx run \(sandboxName)"]
+            args = ["-c", "sbx run \(sandboxName); exec cat"]
         case .shell:
-            args = ["-c", "sbx exec -it \(sandboxName) bash"]
+            args = ["-c", "sbx exec -it \(sandboxName) bash; exec cat"]
         }
         var env: [String] = []
         var hasTerm = false
