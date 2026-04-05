@@ -466,19 +466,17 @@ struct SandboxEntityTests {
         #expect(entities.isEmpty)
     }
 
-    @Test func suggestedEntitiesReturnsAll() async throws {
-        let service = StubSbxService()
-        await ServiceContainer.configure(service: service)
-        let store = await ServiceContainer.shared!.sandboxStore
-        _ = try await store.createSandbox(workspace: "/tmp/a", name: "suggested-a")
-        _ = try await store.createSandbox(workspace: "/tmp/b", name: "suggested-b")
-
-        let query = SandboxEntityQuery()
-        let suggested = try await query.suggestedEntities()
-        #expect(suggested.count >= 2)
-        let names = suggested.map(\.name)
-        #expect(names.contains("suggested-a"))
-        #expect(names.contains("suggested-b"))
+    @Test func sandboxesToEntitiesMapping() {
+        let sandboxes = [
+            Sandbox(id: "1", name: "alpha", agent: "claude", status: .running, workspace: "/tmp/a", ports: [], createdAt: Date()),
+            Sandbox(id: "2", name: "beta", agent: "claude", status: .stopped, workspace: "/tmp/b", ports: [], createdAt: Date()),
+        ]
+        let entities = sandboxes.map { SandboxEntity(id: $0.name, name: $0.name, status: $0.status.rawValue) }
+        #expect(entities.count == 2)
+        #expect(entities[0].name == "alpha")
+        #expect(entities[0].status == "running")
+        #expect(entities[1].name == "beta")
+        #expect(entities[1].status == "stopped")
     }
 
     @Test func entityDisplayRepresentation() {

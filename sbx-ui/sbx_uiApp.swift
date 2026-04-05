@@ -5,7 +5,6 @@ struct sbx_uiApp: App {
     @State private var sandboxStore: SandboxStore
     @State private var policyStore: PolicyStore
     @State private var sessionStore: TerminalSessionStore
-    @State private var navigationCoordinator: NavigationCoordinator
     @State private var settingsStore = SettingsStore()
     @State private var toastManager = ToastManager()
     @State private var logStore = LogStore.shared
@@ -16,7 +15,6 @@ struct sbx_uiApp: App {
         _sandboxStore = State(initialValue: container.sandboxStore)
         _policyStore = State(initialValue: container.policyStore)
         _sessionStore = State(initialValue: container.sessionStore)
-        _navigationCoordinator = State(initialValue: container.navigationCoordinator)
     }
 
     var body: some Scene {
@@ -25,7 +23,6 @@ struct sbx_uiApp: App {
                 .environment(sandboxStore)
                 .environment(policyStore)
                 .environment(sessionStore)
-                .environment(navigationCoordinator)
                 .environment(settingsStore)
                 .environment(toastManager)
                 .preferredColorScheme(.dark)

@@ -105,7 +105,6 @@ struct DashboardView: View {
     var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
-    @Environment(NavigationCoordinator.self) private var navigationCoordinator
     @State private var showCreateSheet = false
     @State private var isDropTargeted = false
     @State private var droppedWorkspacePath: String?
@@ -136,7 +135,7 @@ struct DashboardView: View {
                     DropHandler.handleDrop(
                         providers: providers,
                         sandboxes: sandboxStore.sandboxes,
-                        coordinator: navigationCoordinator,
+                        coordinator: ServiceContainer.shared!.navigationCoordinator,
                         showCreateSheet: &showCreateSheet,
                         droppedWorkspacePath: &droppedWorkspacePath
                     )
