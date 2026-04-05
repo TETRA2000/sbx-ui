@@ -4,6 +4,10 @@ import Testing
 
 // MARK: - Test Helpers
 
+struct StubProcessLauncher: TerminalProcessLauncher {
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String) {}
+}
+
 actor FailingSbxService: SbxServiceProtocol {
     nonisolated func list() async throws -> [Sandbox] { throw SbxServiceError.cliError("test error") }
     nonisolated func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox { throw SbxServiceError.cliError("test error") }
@@ -818,7 +822,7 @@ struct PolicyStoreLoadingStateTests {
 struct TerminalSessionStoreTests {
     @Test func initialStateIsEmpty() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         let count = await store.activeSessionCount
         let names = await store.activeSessionNames
         #expect(count == 0)
@@ -827,21 +831,21 @@ struct TerminalSessionStoreTests {
 
     @Test func isActiveReturnsFalseForUnknown() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         let active = await store.isActive(name: "nonexistent")
         #expect(active == false)
     }
 
     @Test func sessionLookupReturnsNilForUnknown() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         let session = await store.session(for: "nonexistent")
         #expect(session == nil)
     }
 
     @Test func disconnectNoOpForUnknown() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         // Should not crash
         await store.disconnect(name: "nonexistent")
         let count = await store.activeSessionCount
@@ -850,7 +854,7 @@ struct TerminalSessionStoreTests {
 
     @Test func disconnectAllClearsEverything() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         await store.disconnectAll()
         let count = await store.activeSessionCount
         #expect(count == 0)
@@ -858,7 +862,7 @@ struct TerminalSessionStoreTests {
 
     @Test func cleanupStaleSessions() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         // Start a session (creates terminal view but process won't actually run in test)
         _ = await store.startSession(name: "sandbox-a")
@@ -873,7 +877,7 @@ struct TerminalSessionStoreTests {
 
     @Test func cleanupKeepsRunningSessions() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "sandbox-a")
         let runningSandbox = Sandbox(
@@ -887,7 +891,7 @@ struct TerminalSessionStoreTests {
 
     @Test func startSessionIsIdempotent() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         let view1 = await store.startSession(name: "test")
         let view2 = await store.startSession(name: "test")
@@ -899,7 +903,7 @@ struct TerminalSessionStoreTests {
 
     @Test func multipleSessionsTrackedIndependently() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "alpha")
         _ = await store.startSession(name: "beta")
@@ -919,14 +923,14 @@ struct TerminalSessionStoreTests {
 
     @Test func sendMessageWhenNoSessionNoOp() async throws {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         // Should not throw — guard returns early
         try await store.sendMessage("hello", to: "nonexistent")
     }
 
     @Test func captureSnapshotsDoesNotCrash() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "snap-test")
         // Should not crash even in headless test environment
@@ -935,7 +939,7 @@ struct TerminalSessionStoreTests {
 
     @Test func disconnectClearsThumbnail() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "snap-cleanup")
         // Manually insert a thumbnail to test cleanup logic
@@ -948,7 +952,7 @@ struct TerminalSessionStoreTests {
 
     @Test func cleanupStaleSessionsClearsThumbnails() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "snap-stale")
         await store.captureSnapshots()
@@ -963,7 +967,7 @@ struct TerminalSessionStoreTests {
 
     @Test func captureSnapshotsEmptyNoOp() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         // Should not crash with no sessions
         await store.captureSnapshots()
         let thumbnails = await store.thumbnails
@@ -974,7 +978,7 @@ struct TerminalSessionStoreTests {
 
     @Test func switchBetweenThreeSessions() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         // Start three sessions
         let viewA = await store.startSession(name: "session-a")
@@ -1006,7 +1010,7 @@ struct TerminalSessionStoreTests {
 
     @Test func disconnectMiddleSessionPreservesOthers() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "first")
         _ = await store.startSession(name: "middle")
@@ -1035,7 +1039,7 @@ struct TerminalSessionStoreTests {
 
     @Test func disconnectAllWithMultipleSessions() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "a")
         _ = await store.startSession(name: "b")
@@ -1055,7 +1059,7 @@ struct TerminalSessionStoreTests {
 
     @Test func cleanupRemovesOnlyStaleFromMultiple() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "running-1")
         _ = await store.startSession(name: "running-2")
@@ -1085,7 +1089,7 @@ struct TerminalSessionStoreTests {
 
     @Test func restartSessionAfterDisconnect() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         let view1 = await store.startSession(name: "restart-test")
         let session1 = await store.session(for: "restart-test")
@@ -1111,7 +1115,7 @@ struct TerminalSessionStoreTests {
 
     @Test func processExitDisconnectsSession() async throws {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         let view = await store.startSession(name: "exit-test")
         let activeBefore = await store.isActive(name: "exit-test")
@@ -1130,7 +1134,7 @@ struct TerminalSessionStoreTests {
 
     @Test func processExitClearsThumbnail() async throws {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         let view = await store.startSession(name: "exit-thumb")
         await store.captureSnapshots()
@@ -1145,7 +1149,7 @@ struct TerminalSessionStoreTests {
 
     @Test func processExitPreservesOtherSessions() async throws {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         let viewA = await store.startSession(name: "alive")
         let viewB = await store.startSession(name: "exiting")
@@ -1164,7 +1168,7 @@ struct TerminalSessionStoreTests {
 
     @Test func sessionMetadataPerSession() async {
         let service = StubSbxService()
-        let store = await TerminalSessionStore(service: service)
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
 
         _ = await store.startSession(name: "alpha")
         // Small delay to ensure different timestamps

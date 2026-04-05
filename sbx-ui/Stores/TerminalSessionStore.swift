@@ -2,6 +2,40 @@ import Foundation
 import AppKit
 @preconcurrency import SwiftTerm
 
+// MARK: - Process Launcher Abstraction
+
+protocol TerminalProcessLauncher {
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String)
+}
+
+struct RealTerminalProcessLauncher: TerminalProcessLauncher {
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String) {
+        let shellPath = "/bin/zsh"
+        let args = ["-c", "sbx run \(sandboxName)"]
+        var env: [String] = []
+        var hasTerm = false
+        for (key, value) in ProcessInfo.processInfo.environment {
+            if key == "PATH" {
+                let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
+                env.append("\(key)=\(extended)")
+            } else if key == "TERM" {
+                env.append("TERM=xterm-256color")
+                hasTerm = true
+            } else {
+                env.append("\(key)=\(value)")
+            }
+        }
+        if !hasTerm {
+            env.append("TERM=xterm-256color")
+        }
+        env.append("COLORTERM=truecolor")
+
+        terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
+    }
+}
+
+// MARK: - Terminal Session
+
 struct TerminalSession {
     let sandboxName: String
     let terminalView: FocusableTerminalView
@@ -16,9 +50,11 @@ final class TerminalSessionStore {
     var error: String?
 
     private let service: any SbxServiceProtocol
+    private let processLauncher: any TerminalProcessLauncher
 
-    init(service: any SbxServiceProtocol) {
+    init(service: any SbxServiceProtocol, processLauncher: any TerminalProcessLauncher = RealTerminalProcessLauncher()) {
         self.service = service
+        self.processLauncher = processLauncher
     }
 
     var activeSessionNames: [String] {
@@ -55,26 +91,6 @@ final class TerminalSessionStore {
         terminalView.nativeForegroundColor = .white
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
-        let shellPath = "/bin/zsh"
-        let args = ["-c", "sbx run \(name)"]
-        var env: [String] = []
-        var hasTerm = false
-        for (key, value) in ProcessInfo.processInfo.environment {
-            if key == "PATH" {
-                let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
-                env.append("\(key)=\(extended)")
-            } else if key == "TERM" {
-                env.append("TERM=xterm-256color")
-                hasTerm = true
-            } else {
-                env.append("\(key)=\(value)")
-            }
-        }
-        if !hasTerm {
-            env.append("TERM=xterm-256color")
-        }
-        env.append("COLORTERM=truecolor")
-
         terminalView.onProcessExit = { [weak self] exitCode in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -83,8 +99,8 @@ final class TerminalSessionStore {
             }
         }
 
-        terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
-        appLog(.debug, "PTY", "Started process via terminalView.startProcess for: \(name)")
+        processLauncher.launch(on: terminalView, sandboxName: name)
+        appLog(.debug, "PTY", "Launched process for: \(name)")
 
         let session = TerminalSession(
             sandboxName: name,
