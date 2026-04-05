@@ -103,6 +103,32 @@
 - **Selected**: SandboxStore already tracks `busyOperations` with `.stopping` state. NotificationManager checks this before posting "unexpected stop."
 - **Rationale**: No new tracking needed — the existing `busyOperations` dictionary is the source of truth for user-initiated operations.
 
+### Decision: Protocol-Based Test Doubles for macOS System APIs
+- **Context**: NotificationManager wraps UNUserNotificationCenter, NavigationCoordinator uses NSApplication.shared.activate() — both are untestable without abstraction
+- **Alternatives**:
+  1. Test against real UNUserNotificationCenter — requires user permission prompts in CI, nondeterministic
+  2. Don't test notification/navigation logic — leaves critical paths unverified
+  3. Protocol abstractions with mock implementations — testable, follows existing codebase pattern
+- **Selected**: `NotificationCenterProtocol` and `WindowActivatorProtocol` injected into production and test code
+- **Rationale**: Matches the existing `SbxServiceProtocol` → `StubSbxService`/`FailingSbxService` pattern. `MockNotificationCenter` records posted requests for assertion. `MockWindowActivator` counts activation calls.
+- **Trade-offs**: Two additional protocols, but they are small (3-4 methods each) and enable 100% automated testing of notification and navigation logic.
+- **Note (review fix)**: `NotificationCenterProtocol` uses `isAuthorized() async -> Bool` instead of `getNotificationSettings() -> UNNotificationSettings` because `UNNotificationSettings` has no public initializer and cannot be mocked.
+
+### Decision: ServiceContainer `configure(service:)` for Test Injection
+- **Context**: App Intents access `ServiceContainer.shared` directly. `static let` cannot be overridden in tests.
+- **Selected**: `private(set) static var shared` with `static func configure(service:)` for test setUp injection
+- **Rationale**: Follows minimal-change principle. Tests call `ServiceContainer.configure(service: StubSbxService())` to swap the backing service. Production code uses default initializer via `ServiceContainer.shared`.
+
+### Decision: SwiftUI `.onChange` for Notification State Diffing
+- **Context**: NotificationManager needs previous/current sandbox state to detect transitions. Original design coupled this to SandboxStore.fetchSandboxes().
+- **Selected**: Use `.onChange(of: sandboxStore.sandboxes)` in the App body or ShellView to capture state diffs and forward to NotificationManager.
+- **Rationale**: Keeps SandboxStore's single responsibility intact. Follows the existing SwiftUI observation patterns used throughout the app (e.g., `.onChange(of: runningSandboxNames)` already exists in ShellView).
+
+### Decision: DockMenuBuilder as Pure Function
+- **Context**: Dock menu is built in `applicationDockMenu(_:)` which is called by the system — hard to unit test the delegate method directly
+- **Selected**: Extract menu construction into a standalone `DockMenuBuilder.buildMenu(sandboxes:)` that returns `NSMenu`. The delegate method simply calls this.
+- **Rationale**: Pure function over sandbox state is trivially testable. 7 test cases cover all menu structure requirements.
+
 ## Risks & Mitigations
 - **Risk**: App Intents not discoverable in Shortcuts if metadata is wrong → Mitigation: Comprehensive parameter summaries and `AppShortcutsProvider` with explicit phrases
 - **Risk**: Notification permission denied silently breaks notification feature → Mitigation: Check authorization status before posting; no error surfaced to user
