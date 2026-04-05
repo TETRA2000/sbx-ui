@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import sbx_ui
@@ -1316,3 +1317,318 @@ struct NavigationCoordinatorTests {
         #expect(NavigationRequest.createSheet != NavigationRequest.sandbox(name: "a"))
     }
 }
+
+// MARK: - Dock Menu Builder Tests
+
+@Suite("DockMenuBuilder")
+struct DockMenuBuilderTests {
+
+    private func makeSandbox(name: String, status: SandboxStatus) -> Sandbox {
+        Sandbox(id: UUID().uuidString, name: name, agent: "claude", status: status, workspace: "/tmp", ports: [], createdAt: Date())
+    }
+
+    // Helper: extract NSMenu items into plain Swift types to avoid
+    // Swift Testing macro expansion issues with AppKit properties.
+    private func itemTitles(_ menu: NSMenu) -> [String] {
+        menu.items.map(\.title)
+    }
+    private func itemCount(_ menu: NSMenu) -> Int {
+        menu.items.count
+    }
+    private func submenuTitles(_ item: NSMenuItem) -> [String] {
+        (item.submenu?.items ?? []).map(\.title)
+    }
+    private func isSeparator(_ item: NSMenuItem) -> Bool {
+        item.isSeparatorItem
+    }
+
+    @Test func emptyStateShowsOnlyNewSandbox() {
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [])
+        let count = itemCount(menu)
+        let titles = itemTitles(menu)
+        #expect(count == 1)
+        #expect(titles[0] == "New Sandbox…")
+    }
+
+    @Test func runningSandboxesAppearFirst() {
+        let stopped = makeSandbox(name: "stopped-box", status: .stopped)
+        let running = makeSandbox(name: "running-box", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [stopped, running])
+        let count = itemCount(menu)
+        let titles = itemTitles(menu)
+        // Items: "New Sandbox…", separator, running, stopped
+        #expect(count == 4)
+        #expect(titles[2] == "running-box")
+        #expect(titles[3] == "stopped-box")
+    }
+
+    @Test func runningSandboxHasStopAndOpenSubmenu() {
+        let running = makeSandbox(name: "my-runner", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [running])
+        let subTitles = submenuTitles(menu.items[2]) // after "New Sandbox…" and separator
+        #expect(subTitles.count == 2)
+        #expect(subTitles[0] == "Stop")
+        #expect(subTitles[1] == "Open")
+    }
+
+    @Test func stoppedSandboxHasResumeAndOpenSubmenu() {
+        let stopped = makeSandbox(name: "my-stopped", status: .stopped)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [stopped])
+        let subTitles = submenuTitles(menu.items[2]) // after "New Sandbox…" and separator
+        #expect(subTitles.count == 2)
+        #expect(subTitles[0] == "Resume")
+        #expect(subTitles[1] == "Open")
+    }
+
+    @Test func newSandboxItemAtTop() {
+        let s1 = makeSandbox(name: "alpha", status: .running)
+        let s2 = makeSandbox(name: "beta", status: .stopped)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [s1, s2])
+        let titles = itemTitles(menu)
+        #expect(titles[0] == "New Sandbox…")
+    }
+
+    @Test func menuIncludesSeparatorAfterNewSandbox() {
+        let s = makeSandbox(name: "test", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [s])
+        let sep = isSeparator(menu.items[1])
+        #expect(sep)
+    }
+
+    @Test func allSandboxesRepresented() {
+        let s1 = makeSandbox(name: "one", status: .running)
+        let s2 = makeSandbox(name: "two", status: .stopped)
+        let s3 = makeSandbox(name: "three", status: .running)
+        let menu = DockMenuBuilder.buildMenu(sandboxes: [s1, s2, s3])
+        let count = itemCount(menu)
+        let sandboxNames = Array(itemTitles(menu).dropFirst(2))
+        // "New Sandbox…" + separator + 3 sandbox items = 5
+        #expect(count == 5)
+        #expect(sandboxNames.contains("one"))
+        #expect(sandboxNames.contains("two"))
+        #expect(sandboxNames.contains("three"))
+    }
+}
+
+// MARK: - MockNotificationCenter
+
+import UserNotifications
+
+actor MockNotificationCenter: NotificationCenterProtocol {
+    var postedRequests: [UNNotificationRequest] = []
+    var registeredCategories: Set<UNNotificationCategory> = []
+    var authorizationGranted: Bool = true
+
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
+        authorizationGranted
+    }
+
+    func add(_ request: UNNotificationRequest) async throws {
+        postedRequests.append(request)
+    }
+
+    func setNotificationCategories(_ categories: Set<UNNotificationCategory>) {
+        registeredCategories = categories
+    }
+
+    func isAuthorized() async -> Bool {
+        authorizationGranted
+    }
+
+    func setAuthorizationGranted(_ granted: Bool) {
+        authorizationGranted = granted
+    }
+}
+
+// MARK: - NotificationManager Tests
+
+struct NotificationManagerTests {
+
+    private func makeSandbox(name: String, status: SandboxStatus) -> Sandbox {
+        Sandbox(id: name, name: name, agent: "claude", status: status, workspace: "/tmp/\(name)", ports: [], createdAt: Date())
+    }
+
+    /// Poll mock until expected count reached, using RunLoop to drain main actor.
+    private func waitForNotifications(_ mock: MockNotificationCenter, count: Int, timeout: TimeInterval = 1.0) async -> [UNNotificationRequest] {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let requests = await mock.postedRequests
+            if requests.count >= count { return requests }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        return await mock.postedRequests
+    }
+
+    @Test func requestAuthorizationSetsIsAuthorized() async {
+        let mock = MockNotificationCenter()
+        await mock.setAuthorizationGranted(true)
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+        let authorized = await manager.isAuthorized
+        #expect(authorized == true)
+    }
+
+    @Test func requestAuthorizationDeniedSetsIsAuthorizedFalse() async {
+        let mock = MockNotificationCenter()
+        await mock.setAuthorizationGranted(false)
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+        let authorized = await manager.isAuthorized
+        #expect(authorized == false)
+    }
+
+    @Test func creatingToRunningPostsCreationComplete() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [makeSandbox(name: "test-sbx", status: .creating)]
+        let current = [makeSandbox(name: "test-sbx", status: .running)]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: [:])
+
+        let requests = await waitForNotifications(mock, count: 1)
+        #expect(requests.count == 1)
+        #expect(requests[0].content.title == "Creation Complete")
+        #expect(requests[0].content.categoryIdentifier == "sandbox-lifecycle")
+    }
+
+    @Test func runningToStoppedPostsUnexpectedStop() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [makeSandbox(name: "test-sbx", status: .running)]
+        let current = [makeSandbox(name: "test-sbx", status: .stopped)]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: [:])
+
+        let requests = await waitForNotifications(mock, count: 1)
+        #expect(requests.count == 1)
+        #expect(requests[0].content.title == "Unexpected Stop")
+        #expect(requests[0].content.categoryIdentifier == "sandbox-lifecycle")
+    }
+
+    @Test func runningToStoppedWithBusyStoppingSuppressesNotification() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [makeSandbox(name: "test-sbx", status: .running)]
+        let current = [makeSandbox(name: "test-sbx", status: .stopped)]
+        let busyOps: [String: SandboxOperation] = ["test-sbx": .stopping]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: busyOps)
+
+        let requests = await waitForNotifications(mock, count: 0, timeout: 0.2)
+        #expect(requests.count == 0)
+    }
+
+    @Test func policyViolationPostsNotification() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        await manager.postPolicyViolation(sandboxName: "test-sbx", blockedHost: "evil.example.com")
+
+        let requests = await waitForNotifications(mock, count: 1)
+        #expect(requests.count == 1)
+        #expect(requests[0].content.title == "Policy Violation")
+        #expect(requests[0].content.categoryIdentifier == "policy-violation")
+    }
+
+    @Test func sessionDisconnectedPostsNotification() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        await manager.postSessionDisconnected(sandboxName: "test-sbx")
+
+        let requests = await waitForNotifications(mock, count: 1)
+        #expect(requests.count == 1)
+        #expect(requests[0].content.title == "Session Disconnected")
+        #expect(requests[0].content.categoryIdentifier == "session-event")
+    }
+
+    @Test func noNotificationsWhenUnauthorized() async {
+        let mock = MockNotificationCenter()
+        await mock.setAuthorizationGranted(false)
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let authorized = await manager.isAuthorized
+        #expect(authorized == false)
+
+        let previous = [makeSandbox(name: "test-sbx", status: .creating)]
+        let current = [makeSandbox(name: "test-sbx", status: .running)]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: [:])
+        await manager.postPolicyViolation(sandboxName: "test-sbx", blockedHost: "evil.com")
+        await manager.postSessionDisconnected(sandboxName: "test-sbx")
+
+        let requests = await waitForNotifications(mock, count: 0, timeout: 0.2)
+        #expect(requests.count == 0)
+    }
+
+    @Test func categoriesRegisteredAfterAuthorization() async {
+        let mock = MockNotificationCenter()
+        let beforeCategories = await mock.registeredCategories
+        #expect(beforeCategories.isEmpty)
+
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let afterCategories = await mock.registeredCategories
+        #expect(afterCategories.count == 3)
+        let identifiers = Set(afterCategories.map(\.identifier))
+        #expect(identifiers.contains("sandbox-lifecycle"))
+        #expect(identifiers.contains("policy-violation"))
+        #expect(identifiers.contains("session-event"))
+    }
+
+    @Test func threadIdentifierSetPerSandbox() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [makeSandbox(name: "foo", status: .creating)]
+        let current = [makeSandbox(name: "foo", status: .running)]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: [:])
+
+        let requests = await waitForNotifications(mock, count: 1)
+        #expect(requests.count == 1)
+        #expect(requests[0].content.threadIdentifier == "sandbox-foo")
+    }
+
+    @Test func noChangeInStatePostsNoNotifications() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let sandboxes = [makeSandbox(name: "test-sbx", status: .running)]
+        await manager.onSandboxesUpdated(previous: sandboxes, current: sandboxes, busyOperations: [:])
+
+        let requests = await waitForNotifications(mock, count: 0, timeout: 0.2)
+        #expect(requests.count == 0)
+    }
+
+    @Test func multipleTransitionsPostMultipleNotifications() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [
+            makeSandbox(name: "sbx-a", status: .creating),
+            makeSandbox(name: "sbx-b", status: .running),
+        ]
+        let current = [
+            makeSandbox(name: "sbx-a", status: .running),
+            makeSandbox(name: "sbx-b", status: .stopped),
+        ]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: [:])
+
+        let requests = await waitForNotifications(mock, count: 2)
+        #expect(requests.count == 2)
+
+        let titles = Set(requests.map(\.content.title))
+        #expect(titles.contains("Creation Complete"))
+        #expect(titles.contains("Unexpected Stop"))
+    }
+}
+

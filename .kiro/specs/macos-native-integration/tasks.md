@@ -29,15 +29,15 @@
   - Run the full test suite to confirm no regressions from the refactor
   - _Requirements: 1.9, 1.12_
 
-- [ ] 2. System Notifications
-- [ ] 2.1 (P) Create the notification center protocol and notification manager
+- [x] 2. System Notifications
+- [x] 2.1 (P) Create the notification center protocol and notification manager
   - Define a notification center protocol with methods for authorization request, posting notification requests, registering categories, and checking authorization status (simple boolean, not UNNotificationSettings)
   - Implement the production wrapper that delegates to UNUserNotificationCenter
   - Implement the notification manager that requests authorization on initialization, tracks authorization status, and registers three notification categories: sandbox lifecycle, policy violation, and session event
   - Each category defines a foreground action ("Open", "View Log", or "Reconnect") and uses per-sandbox thread identifiers for grouping
   - _Requirements: 2.7, 2.8, 2.9_
 
-- [ ] 2.2 (P) Implement notification state diffing and posting logic
+- [x] 2.2 (P) Implement notification state diffing and posting logic
   - Add the sandbox-updated callback that receives previous and current sandbox lists plus the busy operations map
   - Detect creating-to-running transitions and post a "Creation Complete" notification
   - Detect running-to-stopped transitions; check whether the sandbox name appears in busy operations as stopping — if so, suppress the notification; otherwise post "Unexpected Stop"
@@ -45,7 +45,7 @@
   - Only post when the manager reports authorized
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.10_
 
-- [ ] 2.3 Unit tests for notification manager
+- [x] 2.3 Unit tests for notification manager
   - Create a mock notification center that records posted requests, registered categories, and configurable authorization result
   - Test authorization granted and denied paths
   - Test creating-to-running posts "Creation Complete" with correct category and thread identifier
@@ -87,7 +87,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.7, 1.8, 1.9, 1.10_
 
 - [ ] 4. Drag & Drop Workspace
-- [ ] 4.1 (P) Add the drop zone overlay and onDrop handler to the dashboard
+- [x] 4.1 (P) Add the drop zone overlay and onDrop handler to the dashboard
   - Create a drop zone overlay view that renders a dashed border and "Drop to create sandbox" label when the targeted state is active, using design system colors
   - Add the drop zone overlay on top of the dashboard scroll view, bound to a targeted state boolean
   - Attach an onDrop handler accepting file URLs on the dashboard view
@@ -95,7 +95,7 @@
   - Add accessibility identifier for the drop zone overlay
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
 
-- [ ] 4.2 (P) Unit tests for drag and drop handler logic
+- [x] 4.2 (P) Unit tests for drag and drop handler logic
   - Extract the drop validation and routing logic into a testable function
   - Test that a valid directory returns true and sets the appropriate create-with-workspace navigation request
   - Test that a non-directory file returns false with no side effects
@@ -104,7 +104,7 @@
   - _Requirements: 3.3, 3.4, 3.6, 3.7_
 
 - [ ] 5. Dock Menu
-- [ ] 5.1 (P) Create the dock menu builder as a pure function
+- [x] 5.1 (P) Create the dock menu builder as a pure function
   - Implement a standalone function that takes a list of sandboxes and returns a constructed menu
   - Always include "New Sandbox…" as the first item
   - Add a separator when sandboxes exist
@@ -113,7 +113,7 @@
   - Stopped sandbox items get a submenu with "Resume" and "Open"
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.8, 4.9_
 
-- [ ] 5.2 (P) Unit tests for dock menu builder
+- [x] 5.2 (P) Unit tests for dock menu builder
   - Test empty state produces only "New Sandbox…"
   - Test running sandboxes appear before stopped sandboxes
   - Test running sandbox submenu contains "Stop" and "Open"
@@ -123,14 +123,14 @@
   - Test all sandboxes are represented in the menu
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.8, 4.9_
 
-- [ ] 6. App Intents and Shortcuts
-- [ ] 6.1 (P) Create the sandbox entity and entity query
+- [x] 6. App Intents and Shortcuts
+- [x] 6.1 (P) Create the sandbox entity and entity query
   - Define an app entity representing a sandbox with name, status, and display representation
   - Implement an entity query that fetches entities by identifier from the shared container's sandbox store
   - Implement suggested entities that returns all sandboxes
   - _Requirements: 5.10, 5.12_
 
-- [ ] 6.2 (P) Implement the five sandbox intent structs
+- [x] 6.2 (P) Implement the five sandbox intent structs
   - Create Sandbox intent: accepts workspace path (required) and optional name, creates the sandbox via the store, returns the sandbox name as the result
   - Stop Sandbox intent: accepts a sandbox entity parameter, stops the sandbox, returns descriptive error if the sandbox does not exist
   - Resume Sandbox intent: accepts a sandbox entity parameter, resumes the sandbox, returns success without error if already running (idempotent)
@@ -140,12 +140,12 @@
   - All intents include parameter summaries and descriptions for clear Shortcuts labels
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.10, 5.11_
 
-- [ ] 6.3 (P) Create the shortcuts provider with Siri phrases
+- [x] 6.3 (P) Create the shortcuts provider with Siri phrases
   - Register predefined Siri phrases for creating a sandbox, stopping a sandbox, and listing sandboxes
   - Ensure the total number of registered shortcuts stays within the framework limit of 10
   - _Requirements: 5.9_
 
-- [ ] 6.4 Unit tests for app intents and sandbox entity
+- [x] 6.4 Unit tests for app intents and sandbox entity
   - Configure the service container with a stub service in test setup
   - Test create intent returns the correct sandbox name
   - Test create intent with custom name uses that name

@@ -2,6 +2,12 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CreateProjectSheet: View {
+    var prefilledPath: String?
+
+    nonisolated init(prefilledPath: String? = nil) {
+        self.prefilledPath = prefilledPath
+    }
+
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(ToastManager.self) private var toastManager
     @Environment(\.dismiss) private var dismiss
@@ -104,7 +110,9 @@ struct CreateProjectSheet: View {
         .frame(width: 480, height: 320)
         .background(Color.surfaceContainer)
         .onAppear {
-            if ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" {
+            if let path = prefilledPath {
+                selectedPath = URL(fileURLWithPath: path)
+            } else if ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" {
                 selectedPath = URL(fileURLWithPath: "/tmp/mock-project")
             }
         }

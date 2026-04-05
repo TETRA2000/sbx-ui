@@ -51,7 +51,7 @@ final class NotificationManager {
         }
     }
 
-    func onSandboxesUpdated(previous: [Sandbox], current: [Sandbox], busyOperations: [String: SandboxOperation]) {
+    func onSandboxesUpdated(previous: [Sandbox], current: [Sandbox], busyOperations: [String: SandboxOperation]) async {
         guard isAuthorized else { return }
 
         let previousByName = Dictionary(previous.map { ($0.name, $0) }, uniquingKeysWith: { _, last in last })
@@ -60,7 +60,7 @@ final class NotificationManager {
             guard let prev = previousByName[sandbox.name] else { continue }
 
             if prev.status == .creating && sandbox.status == .running {
-                postNotification(
+                await postNotification(
                     title: "Creation Complete",
                     body: "Sandbox '\(sandbox.name)' is now running.",
                     category: "sandbox-lifecycle",
@@ -71,7 +71,7 @@ final class NotificationManager {
 
             if prev.status == .running && sandbox.status == .stopped {
                 if busyOperations[sandbox.name] == .stopping { continue }
-                postNotification(
+                await postNotification(
                     title: "Unexpected Stop",
                     body: "Sandbox '\(sandbox.name)' stopped unexpectedly.",
                     category: "sandbox-lifecycle",
@@ -82,9 +82,9 @@ final class NotificationManager {
         }
     }
 
-    func postPolicyViolation(sandboxName: String, blockedHost: String) {
+    func postPolicyViolation(sandboxName: String, blockedHost: String) async {
         guard isAuthorized else { return }
-        postNotification(
+        await postNotification(
             title: "Policy Violation",
             body: "Sandbox '\(sandboxName)' was blocked from reaching \(blockedHost).",
             category: "policy-violation",
@@ -93,9 +93,9 @@ final class NotificationManager {
         )
     }
 
-    func postSessionDisconnected(sandboxName: String) {
+    func postSessionDisconnected(sandboxName: String) async {
         guard isAuthorized else { return }
-        postNotification(
+        await postNotification(
             title: "Session Disconnected",
             body: "Terminal session for '\(sandboxName)' disconnected.",
             category: "session-event",
@@ -123,7 +123,7 @@ final class NotificationManager {
         center.setNotificationCategories([lifecycleCategory, policyCategory, sessionCategory])
     }
 
-    private func postNotification(title: String, body: String, category: String, threadId: String, sandboxName: String) {
+    private func postNotification(title: String, body: String, category: String, threadId: String, sandboxName: String) async {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -137,8 +137,6 @@ final class NotificationManager {
             trigger: nil
         )
 
-        Task {
-            try? await center.add(request)
-        }
+        try? await center.add(request)
     }
 }

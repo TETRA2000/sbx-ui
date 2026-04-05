@@ -2,7 +2,12 @@ import Foundation
 
 @MainActor
 final class ServiceContainer {
-    nonisolated(unsafe) private(set) static var shared: ServiceContainer!
+    private static var _shared: ServiceContainer?
+
+    static var shared: ServiceContainer? {
+        get { _shared }
+        set { _shared = newValue }
+    }
 
     let service: any SbxServiceProtocol
     let sandboxStore: SandboxStore
@@ -12,8 +17,8 @@ final class ServiceContainer {
     let notificationManager: NotificationManager
 
     static func initialize() {
-        guard shared == nil else { return }
-        shared = ServiceContainer(service: ServiceFactory.create())
+        guard _shared == nil else { return }
+        _shared = ServiceContainer(service: ServiceFactory.create())
     }
 
     init(service: any SbxServiceProtocol) {
@@ -27,6 +32,6 @@ final class ServiceContainer {
 
     /// Test-only: replace the shared container with one backed by a given service.
     static func configure(service: any SbxServiceProtocol) {
-        shared = ServiceContainer(service: service)
+        _shared = ServiceContainer(service: service)
     }
 }

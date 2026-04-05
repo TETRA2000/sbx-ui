@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum SidebarDestination: Hashable {
     case dashboard
@@ -104,7 +105,10 @@ struct DashboardView: View {
     var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
+    @Environment(NavigationCoordinator.self) private var navigationCoordinator
     @State private var showCreateSheet = false
+    @State private var isDropTargeted = false
+    @State private var droppedWorkspacePath: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -127,11 +131,21 @@ struct DashboardView: View {
                     )
                     .padding()
                 }
+                .overlay { DropZoneOverlay(isVisible: isDropTargeted) }
+                .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                    DropHandler.handleDrop(
+                        providers: providers,
+                        sandboxes: sandboxStore.sandboxes,
+                        coordinator: navigationCoordinator,
+                        showCreateSheet: &showCreateSheet,
+                        droppedWorkspacePath: &droppedWorkspacePath
+                    )
+                }
             }
         }
         .background(Color.surface)
         .sheet(isPresented: $showCreateSheet) {
-            CreateProjectSheet()
+            CreateProjectSheet(prefilledPath: droppedWorkspacePath)
         }
         .task {
             while !Task.isCancelled {
