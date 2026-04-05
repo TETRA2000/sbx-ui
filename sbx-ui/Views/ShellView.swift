@@ -88,6 +88,7 @@ struct ShellView: View {
 struct DashboardView: View {
     var onSelectSandbox: (Sandbox) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
+    @Environment(TerminalSessionStore.self) private var sessionStore
     @State private var showCreateSheet = false
 
     var body: some View {
@@ -104,6 +105,12 @@ struct DashboardView: View {
         .background(Color.surface)
         .sheet(isPresented: $showCreateSheet) {
             CreateProjectSheet()
+        }
+        .task {
+            while !Task.isCancelled {
+                sessionStore.captureSnapshots()
+                try? await Task.sleep(for: .seconds(3))
+            }
         }
     }
 }

@@ -65,6 +65,34 @@ struct SandboxCardView: View {
                 }
             }
 
+            // Terminal thumbnail
+            if sessionStore.isActive(name: sandbox.name) {
+                Group {
+                    if let thumbnail = sessionStore.thumbnails[sandbox.name] {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 120)
+                            .clipped()
+                    } else {
+                        HStack(spacing: 8) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.tertiary)
+                            Text("Connecting...")
+                                .font(.code(11))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 120)
+                    }
+                }
+                .background(Color.surfaceLowest)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityIdentifier("sessionThumbnail-\(sandbox.name)")
+            }
+
             // Actions
             HStack(spacing: 8) {
                 if sandbox.status == .running {

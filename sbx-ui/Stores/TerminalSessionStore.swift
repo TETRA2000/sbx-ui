@@ -12,6 +12,7 @@ struct TerminalSession {
 @MainActor @Observable
 final class TerminalSessionStore {
     private(set) var activeSessions: [String: TerminalSession] = [:]
+    private(set) var thumbnails: [String: NSImage] = [:]
     var error: String?
 
     private let service: any SbxServiceProtocol
@@ -91,6 +92,7 @@ final class TerminalSessionStore {
         guard activeSessions[name] != nil else { return }
         appLog(.info, "PTY", "Disconnecting session: \(name)")
         activeSessions.removeValue(forKey: name)
+        thumbnails.removeValue(forKey: name)
     }
 
     func disconnectAll() {
@@ -106,7 +108,37 @@ final class TerminalSessionStore {
             if !runningNames.contains(name) {
                 appLog(.info, "PTY", "Cleaning up stale session: \(name)")
                 activeSessions.removeValue(forKey: name)
+                thumbnails.removeValue(forKey: name)
             }
+        }
+    }
+
+    /// Capture bitmap snapshots of all active terminal views.
+    func captureSnapshots() {
+        for (name, session) in activeSessions {
+            let view = session.terminalView
+            var captureRect = view.bounds
+            let needsTempFrame = captureRect.width == 0 || captureRect.height == 0
+
+            if needsTempFrame {
+                // View was never displayed — give it temporary bounds for capture
+                view.frame = NSRect(origin: .zero, size: NSSize(width: 800, height: 600))
+                view.layoutSubtreeIfNeeded()
+                captureRect = view.bounds
+            }
+
+            guard captureRect.width > 0, captureRect.height > 0,
+                  let bitmapRep = view.bitmapImageRepForCachingDisplay(in: captureRect) else {
+                if needsTempFrame { view.frame = .zero }
+                continue
+            }
+
+            view.cacheDisplay(in: captureRect, to: bitmapRep)
+            if needsTempFrame { view.frame = .zero }
+
+            let image = NSImage(size: captureRect.size)
+            image.addRepresentation(bitmapRep)
+            thumbnails[name] = image
         }
     }
 

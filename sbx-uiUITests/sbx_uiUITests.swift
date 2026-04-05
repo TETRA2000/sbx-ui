@@ -508,4 +508,29 @@ final class sbx_uiUITests: XCTestCase {
         let sessionsLabel = app.staticTexts["SESSIONS"]
         XCTAssertTrue(sessionsLabel.waitForExistence(timeout: 5))
     }
+
+    @MainActor
+    func testTerminalThumbnailAppearsOnCard() throws {
+        createSandbox(name: "test-thumb")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        // Open terminal session then go back
+        openSession(name: "test-thumb")
+        sleep(3)  // Let terminal render some content
+        app.buttons["backToDashboard"].click()
+
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Wait for snapshot refresh cycle (3 seconds) and verify thumbnail appears
+        let thumbnail = app.images["sessionThumbnail-test-thumb"]
+            .firstMatch
+        // The thumbnail container has the accessibility identifier
+        let thumbnailContainer = app.otherElements["sessionThumbnail-test-thumb"]
+        // Try both — SwiftUI may expose as image or group depending on content
+        let found = thumbnail.waitForExistence(timeout: 8) || thumbnailContainer.waitForExistence(timeout: 2)
+        XCTAssertTrue(found, "Terminal thumbnail should appear on sandbox card")
+    }
 }

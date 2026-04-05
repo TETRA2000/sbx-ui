@@ -774,4 +774,54 @@ struct TerminalSessionStoreTests {
         // Should not throw — guard returns early
         try await store.sendMessage("hello", to: "nonexistent")
     }
+
+    @Test func captureSnapshotsPopulatesThumbnails() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "snap-test")
+        await store.captureSnapshots()
+
+        let thumbnail = await store.thumbnails["snap-test"]
+        // Thumbnail should be created (even if content is blank)
+        #expect(thumbnail != nil)
+    }
+
+    @Test func disconnectClearsThumbnail() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "snap-cleanup")
+        await store.captureSnapshots()
+        let before = await store.thumbnails["snap-cleanup"]
+        #expect(before != nil)
+
+        await store.disconnect(name: "snap-cleanup")
+        let after = await store.thumbnails["snap-cleanup"]
+        #expect(after == nil)
+    }
+
+    @Test func cleanupStaleSessionsClearsThumbnails() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "snap-stale")
+        await store.captureSnapshots()
+        let before = await store.thumbnails["snap-stale"]
+        #expect(before != nil)
+
+        // Cleanup with no running sandboxes — should remove thumbnail
+        await store.cleanupStaleSessions(sandboxes: [])
+        let after = await store.thumbnails["snap-stale"]
+        #expect(after == nil)
+    }
+
+    @Test func captureSnapshotsEmptyNoOp() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+        // Should not crash with no sessions
+        await store.captureSnapshots()
+        let thumbnails = await store.thumbnails
+        #expect(thumbnails.isEmpty)
+    }
 }
