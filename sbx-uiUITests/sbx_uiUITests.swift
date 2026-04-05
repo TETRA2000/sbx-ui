@@ -509,6 +509,161 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(sessionsLabel.waitForExistence(timeout: 5))
     }
 
+    // MARK: - Multi-Session Switching E2E
+
+    @MainActor
+    func testSwitchBetweenTwoBackgroundSessions() throws {
+        // Create two sandboxes
+        createSandbox(name: "test-switch-a")
+        let liveA = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveA.waitForExistence(timeout: 10))
+
+        createSandbox(name: "test-switch-b")
+        sleep(3)  // Wait for polling to show the second sandbox
+
+        // Start session A, type into it, then background it
+        openSession(name: "test-switch-a")
+        sleep(2)
+        app.typeKey("a", modifierFlags: [])
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Start session B, type into it, then background it
+        openSession(name: "test-switch-b")
+        sleep(2)
+        app.typeKey("b", modifierFlags: [])
+        app.buttons["backToDashboard"].click()
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Both sessions should show badges on dashboard
+        let sessionBadges = app.staticTexts.matching(identifier: "SESSION")
+        // Wait for badges to appear
+        sleep(2)
+        XCTAssertGreaterThanOrEqual(sessionBadges.count, 2,
+            "Both sandbox cards should show SESSION badges")
+
+        // Switch to session A via sidebar
+        let sidebarA = app.buttons["sidebarSession-test-switch-a"]
+        XCTAssertTrue(sidebarA.waitForExistence(timeout: 5))
+        sidebarA.click()
+
+        // Verify we're in session A's terminal
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+        let connected = app.staticTexts["Connected"]
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
+
+        // Go back and switch to session B via sidebar
+        backButton.click()
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        let sidebarB = app.buttons["sidebarSession-test-switch-b"]
+        XCTAssertTrue(sidebarB.waitForExistence(timeout: 5))
+        sidebarB.click()
+
+        // Verify we're in session B's terminal
+        XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
+
+        // Type in session B — should still accept input
+        app.typeKey("x", modifierFlags: [])
+        XCTAssertTrue(backButton.exists, "Should still be in session panel after typing")
+    }
+
+    @MainActor
+    func testDisconnectOneSessionPreservesOther() throws {
+        // Create two sandboxes
+        createSandbox(name: "test-keep-a")
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        createSandbox(name: "test-keep-b")
+        sleep(3)
+
+        // Start both sessions
+        openSession(name: "test-keep-a")
+        sleep(2)
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        openSession(name: "test-keep-b")
+        sleep(2)
+
+        // Disconnect session B (using disconnect button, not back)
+        let disconnectButton = app.buttons["disconnectButton"]
+        XCTAssertTrue(disconnectButton.exists)
+        disconnectButton.click()
+
+        // Should be back on dashboard
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Session A should still be in sidebar
+        let sidebarA = app.buttons["sidebarSession-test-keep-a"]
+        XCTAssertTrue(sidebarA.waitForExistence(timeout: 5))
+
+        // Session B should NOT be in sidebar
+        let sidebarB = app.buttons["sidebarSession-test-keep-b"]
+        XCTAssertFalse(sidebarB.waitForExistence(timeout: 3))
+
+        // Can still switch to session A
+        sidebarA.click()
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+        let connected = app.staticTexts["Connected"]
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testRapidSessionSwitching() throws {
+        // Create two sandboxes
+        createSandbox(name: "test-rapid-a")
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+
+        createSandbox(name: "test-rapid-b")
+        sleep(3)
+
+        // Start both sessions
+        openSession(name: "test-rapid-a")
+        sleep(2)
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        openSession(name: "test-rapid-b")
+        sleep(2)
+        app.buttons["backToDashboard"].click()
+        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+        // Rapidly switch between sessions via sidebar
+        for _ in 0..<3 {
+            let sidebarA = app.buttons["sidebarSession-test-rapid-a"]
+            XCTAssertTrue(sidebarA.waitForExistence(timeout: 5))
+            sidebarA.click()
+
+            let backButton = app.buttons["backToDashboard"]
+            XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+            backButton.click()
+            XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+
+            let sidebarB = app.buttons["sidebarSession-test-rapid-b"]
+            XCTAssertTrue(sidebarB.waitForExistence(timeout: 5))
+            sidebarB.click()
+
+            XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+            backButton.click()
+            XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+        }
+
+        // Both sessions should still be active after rapid switching
+        let sidebarA = app.buttons["sidebarSession-test-rapid-a"]
+        let sidebarB = app.buttons["sidebarSession-test-rapid-b"]
+        XCTAssertTrue(sidebarA.exists)
+        XCTAssertTrue(sidebarB.exists)
+    }
+
     @MainActor
     func testTerminalThumbnailAreaAppearsOnCard() throws {
         createSandbox(name: "test-thumb")

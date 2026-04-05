@@ -820,4 +820,166 @@ struct TerminalSessionStoreTests {
         let thumbnails = await store.thumbnails
         #expect(thumbnails.isEmpty)
     }
+
+    // MARK: - Multi-Session Switching
+
+    @Test func switchBetweenThreeSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        // Start three sessions
+        let viewA = await store.startSession(name: "session-a")
+        let viewB = await store.startSession(name: "session-b")
+        let viewC = await store.startSession(name: "session-c")
+
+        let count = await store.activeSessionCount
+        #expect(count == 3)
+        let names = await store.activeSessionNames
+        #expect(names == ["session-a", "session-b", "session-c"])
+
+        // Reattach to session-a — should return same view (idempotent)
+        let viewA2 = await store.startSession(name: "session-a")
+        #expect(viewA === viewA2)
+
+        // Reattach to session-b — should return same view
+        let viewB2 = await store.startSession(name: "session-b")
+        #expect(viewB === viewB2)
+
+        // All three still active
+        let countAfter = await store.activeSessionCount
+        #expect(countAfter == 3)
+
+        // Views are distinct instances
+        #expect(viewA !== viewB)
+        #expect(viewB !== viewC)
+        #expect(viewA !== viewC)
+    }
+
+    @Test func disconnectMiddleSessionPreservesOthers() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "first")
+        _ = await store.startSession(name: "middle")
+        _ = await store.startSession(name: "last")
+
+        // Disconnect the middle one
+        await store.disconnect(name: "middle")
+
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+        let activeFirst = await store.isActive(name: "first")
+        let activeMiddle = await store.isActive(name: "middle")
+        let activeLast = await store.isActive(name: "last")
+        #expect(activeFirst == true)
+        #expect(activeMiddle == false)
+        #expect(activeLast == true)
+
+        // Can still get sessions for remaining
+        let sessionFirst = await store.session(for: "first")
+        let sessionLast = await store.session(for: "last")
+        #expect(sessionFirst != nil)
+        #expect(sessionLast != nil)
+        #expect(sessionFirst?.sandboxName == "first")
+        #expect(sessionLast?.sandboxName == "last")
+    }
+
+    @Test func disconnectAllWithMultipleSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "a")
+        _ = await store.startSession(name: "b")
+        _ = await store.startSession(name: "c")
+        await store.captureSnapshots()
+
+        let countBefore = await store.activeSessionCount
+        #expect(countBefore == 3)
+
+        await store.disconnectAll()
+
+        let countAfter = await store.activeSessionCount
+        let thumbnails = await store.thumbnails
+        #expect(countAfter == 0)
+        #expect(thumbnails.isEmpty)
+    }
+
+    @Test func cleanupRemovesOnlyStaleFromMultiple() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "running-1")
+        _ = await store.startSession(name: "running-2")
+        _ = await store.startSession(name: "stopped-1")
+        _ = await store.startSession(name: "stopped-2")
+
+        let runningSandboxes = [
+            Sandbox(id: "running-1", name: "running-1", agent: "claude",
+                    status: .running, workspace: "/tmp", ports: [], createdAt: Date()),
+            Sandbox(id: "running-2", name: "running-2", agent: "claude",
+                    status: .running, workspace: "/tmp", ports: [], createdAt: Date()),
+        ]
+
+        await store.cleanupStaleSessions(sandboxes: runningSandboxes)
+
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+        let activeRunning1 = await store.isActive(name: "running-1")
+        let activeRunning2 = await store.isActive(name: "running-2")
+        let activeStopped1 = await store.isActive(name: "stopped-1")
+        let activeStopped2 = await store.isActive(name: "stopped-2")
+        #expect(activeRunning1 == true)
+        #expect(activeRunning2 == true)
+        #expect(activeStopped1 == false)
+        #expect(activeStopped2 == false)
+    }
+
+    @Test func restartSessionAfterDisconnect() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        let view1 = await store.startSession(name: "restart-test")
+        let session1 = await store.session(for: "restart-test")
+        let startTime1 = session1?.startTime
+
+        await store.disconnect(name: "restart-test")
+        let activeAfterDisconnect = await store.isActive(name: "restart-test")
+        #expect(activeAfterDisconnect == false)
+
+        // Start a new session with the same name — should create a fresh view
+        let view2 = await store.startSession(name: "restart-test")
+        let session2 = await store.session(for: "restart-test")
+        let startTime2 = session2?.startTime
+
+        #expect(view1 !== view2)  // Different view instance
+        let activeAfterRestart = await store.isActive(name: "restart-test")
+        #expect(activeAfterRestart == true)
+        // New start time should be >= original
+        if let t1 = startTime1, let t2 = startTime2 {
+            #expect(t2 >= t1)
+        }
+    }
+
+    @Test func sessionMetadataPerSession() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        _ = await store.startSession(name: "alpha")
+        // Small delay to ensure different timestamps
+        try? await Task.sleep(for: .milliseconds(10))
+        _ = await store.startSession(name: "beta")
+
+        let sessionA = await store.session(for: "alpha")
+        let sessionB = await store.session(for: "beta")
+
+        #expect(sessionA?.sandboxName == "alpha")
+        #expect(sessionB?.sandboxName == "beta")
+        #expect(sessionA?.connected == true)
+        #expect(sessionB?.connected == true)
+
+        // Each session has its own start time
+        if let tA = sessionA?.startTime, let tB = sessionB?.startTime {
+            #expect(tB >= tA)
+        }
+    }
 }
