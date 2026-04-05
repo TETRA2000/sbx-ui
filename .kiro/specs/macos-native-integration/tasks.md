@@ -86,7 +86,7 @@
   - Verify the running count badge appears with running sandboxes and disappears when idle
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.7, 1.8, 1.9, 1.10_
 
-- [ ] 4. Drag & Drop Workspace
+- [x] 4. Drag & Drop Workspace
 - [x] 4.1 (P) Add the drop zone overlay and onDrop handler to the dashboard
   - Create a drop zone overlay view that renders a dashed border and "Drop to create sandbox" label when the targeted state is active, using design system colors
   - Add the drop zone overlay on top of the dashboard scroll view, bound to a targeted state boolean
@@ -103,7 +103,7 @@
   - Test that a directory matching an existing running sandbox's workspace navigates to that sandbox instead of opening the create sheet
   - _Requirements: 3.3, 3.4, 3.6, 3.7_
 
-- [ ] 5. Dock Menu
+- [x] 5. Dock Menu
 - [x] 5.1 (P) Create the dock menu builder as a pure function
   - Implement a standalone function that takes a list of sandboxes and returns a constructed menu
   - Always include "New Sandbox…" as the first item
