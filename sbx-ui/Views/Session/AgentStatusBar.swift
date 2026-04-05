@@ -2,18 +2,25 @@ import SwiftUI
 
 struct AgentStatusBar: View {
     let sandbox: Sandbox
-    @Environment(SessionStore.self) private var sessionStore
+    let sessionID: String
+    @Environment(TerminalSessionStore.self) private var sessionStore
+
+    private var session: TerminalSession? {
+        sessionStore.session(for: sessionID)
+    }
 
     var body: some View {
         HStack(spacing: 16) {
-            // Model name
-            HStack(spacing: 4) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 10))
-                Text("claude")
-                    .font(.code(11))
+            // Session type indicator
+            if let sessionType = session?.sessionType {
+                HStack(spacing: 4) {
+                    Image(systemName: sessionType == .agent ? "cpu" : "terminal")
+                        .font(.system(size: 10))
+                    Text(sessionType == .agent ? "agent" : "shell")
+                        .font(.code(11))
+                }
+                .foregroundStyle(.secondary)
             }
-            .foregroundStyle(.secondary)
 
             // Sandbox name
             Text(sandbox.name)
@@ -21,7 +28,7 @@ struct AgentStatusBar: View {
                 .foregroundStyle(.primary)
 
             // Uptime
-            if let startTime = sessionStore.connectionStartTime {
+            if let startTime = session?.startTime {
                 TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
                     let elapsed = timeline.date.timeIntervalSince(startTime)
                     Text(formatUptime(elapsed))
@@ -34,10 +41,11 @@ struct AgentStatusBar: View {
 
             // Connection indicator
             HStack(spacing: 4) {
+                let isConnected = session != nil
                 Circle()
-                    .fill(sessionStore.connected ? Color.secondary : Color.error)
+                    .fill(isConnected ? Color.secondary : Color.error)
                     .frame(width: 6, height: 6)
-                Text(sessionStore.connected ? "Connected" : "Disconnected")
+                Text(isConnected ? "Connected" : "Disconnected")
                     .font(.label(10))
                     .foregroundStyle(.secondary)
             }

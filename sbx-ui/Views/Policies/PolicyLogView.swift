@@ -34,6 +34,10 @@ struct PolicyLogView: View {
             .padding(.vertical, 8)
 
             // Table
+            if policyStore.loadingLog && policyStore.logEntries.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             Table(policyStore.filteredLog) {
                 TableColumn("Sandbox") { entry in
                     Text(entry.sandbox)

@@ -1,17 +1,20 @@
 import SwiftUI
 
 struct SessionPanelView: View {
+    let sessionID: String
     let sandbox: Sandbox
     var onBack: () -> Void
-    @Environment(SessionStore.self) private var sessionStore
-    @State private var ptyManager = PtySessionManager()
+    @Environment(TerminalSessionStore.self) private var sessionStore
+
+    private var session: TerminalSession? {
+        sessionStore.session(for: sessionID)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // Navigation bar
             HStack {
                 Button {
-                    sessionStore.detach(ptyManager: ptyManager)
                     onBack()
                 } label: {
                     HStack(spacing: 4) {
@@ -24,30 +27,42 @@ struct SessionPanelView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("backToDashboard")
 
+                if let label = session?.label {
+                    Text(label)
+                        .font(.code(11))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 8)
+                }
+
                 Spacer()
+
+                Button {
+                    sessionStore.disconnect(sessionID: sessionID)
+                    onBack()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark.circle")
+                        Text("Disconnect")
+                            .font(.ui(11))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.error)
+                .accessibilityIdentifier("disconnectButton")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(Color.surfaceContainer)
 
-            // Terminal area
-            TerminalViewWrapper(sandboxName: sandbox.name, ptyManager: ptyManager)
+            // Terminal area — .id forces SwiftUI to recreate the NSViewRepresentable when switching sessions
+            TerminalViewWrapper(sessionID: sessionID)
+                .id(sessionID)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("terminalView")
 
-            // Agent status bar
-            AgentStatusBar(sandbox: sandbox)
+            // Status bar
+            AgentStatusBar(sandbox: sandbox, sessionID: sessionID)
         }
         .background(Color.surfaceLowest)
-        .task {
-            do {
-                try await sessionStore.attach(name: sandbox.name, ptyManager: ptyManager)
-            } catch {
-                // Handle error
-            }
-        }
-        .onDisappear {
-            sessionStore.detach(ptyManager: ptyManager)
-        }
     }
 }

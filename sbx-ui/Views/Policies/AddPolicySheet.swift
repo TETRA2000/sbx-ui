@@ -57,8 +57,18 @@ struct AddPolicySheet: View {
 
                 Spacer()
 
-                Button("Add Rule") {
+                Button {
                     submitPolicy()
+                } label: {
+                    if isSubmitting {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Adding\u{2026}")
+                        }
+                    } else {
+                        Text("Add Rule")
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(decision == .allow ? Color.secondary : Color.error)

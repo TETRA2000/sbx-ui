@@ -55,12 +55,24 @@ struct AddPortSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Publish") { publishPort() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.accent)
-                    .disabled(!isValid || isSubmitting)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier("publishPortButton")
+                Button {
+                    publishPort()
+                } label: {
+                    if isSubmitting {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Publishing\u{2026}")
+                        }
+                    } else {
+                        Text("Publish")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.accent)
+                .disabled(!isValid || isSubmitting)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("publishPortButton")
             }
         }
         .padding(24)

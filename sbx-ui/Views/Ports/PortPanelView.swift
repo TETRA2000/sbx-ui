@@ -83,11 +83,17 @@ struct PortMappingRow: View {
                     }
                 }
             } label: {
-                Image(systemName: "xmark.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.error.opacity(0.7))
+                if sandboxStore.busyOperations[sandbox.name] == .unpublishingPort {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.error.opacity(0.7))
+                }
             }
             .buttonStyle(.plain)
+            .disabled(sandboxStore.busyOperations[sandbox.name] == .unpublishingPort)
             .accessibilityIdentifier("unpublishPort-\(port.hostPort)")
         }
         .padding(.vertical, 4)

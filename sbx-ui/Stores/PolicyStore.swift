@@ -5,6 +5,8 @@ import Foundation
     var logEntries: [PolicyLogEntry] = []
     var logFilter: LogFilter = LogFilter()
     var loading: Bool = false
+    var loadingLog: Bool = false
+    var removingResources: Set<String> = []
     var error: String?
 
     struct LogFilter {
@@ -43,11 +45,15 @@ import Foundation
     }
 
     func removeRule(resource: String) async throws {
+        removingResources.insert(resource)
+        defer { removingResources.remove(resource) }
         try await service.policyRemove(resource: resource)
         await fetchPolicies()
     }
 
     func fetchLog(sandboxName: String? = nil) async {
+        loadingLog = true
+        defer { loadingLog = false }
         do {
             logEntries = try await service.policyLog(sandboxName: sandboxName)
             error = nil

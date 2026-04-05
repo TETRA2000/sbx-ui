@@ -187,7 +187,9 @@ cmd_run() {
     local status
     status="$(read_sandbox_field "$name" "status")"
     if [[ "$status" == "running" ]]; then
-      interactive_mode "$name"
+      if [[ -t 0 ]]; then
+        interactive_mode "$name"
+      fi
       return
     fi
     # Resume: update status to running

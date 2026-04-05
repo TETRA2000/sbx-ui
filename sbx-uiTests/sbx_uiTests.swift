@@ -4,6 +4,10 @@ import Testing
 
 // MARK: - Test Helpers
 
+struct StubProcessLauncher: TerminalProcessLauncher {
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {}
+}
+
 actor FailingSbxService: SbxServiceProtocol {
     nonisolated func list() async throws -> [Sandbox] { throw SbxServiceError.cliError("test error") }
     nonisolated func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox { throw SbxServiceError.cliError("test error") }
@@ -596,6 +600,114 @@ struct SandboxStoreTests {
     }
 }
 
+// MARK: - SandboxStore busyOperations Tests
+
+struct SandboxStoreBusyOperationsTests {
+    @Test func busyOperationsClearedAfterStop() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-stop")
+        try await store.stopSandbox(name: "test-busy-stop")
+        let busy = await store.isBusy("test-busy-stop")
+        #expect(!busy)
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterRemove() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-rm")
+        try await store.removeSandbox(name: "test-busy-rm")
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterResume() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-resume")
+        try await store.stopSandbox(name: "test-busy-resume")
+        try await store.resumeSandbox(name: "test-busy-resume")
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterPublishPort() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-port")
+        try await store.publishPort(name: "test-busy-port", hostPort: 9090, sbxPort: 3000)
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterUnpublishPort() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-unport")
+        try await store.publishPort(name: "test-busy-unport", hostPort: 9091, sbxPort: 3000)
+        try await store.unpublishPort(name: "test-busy-unport", hostPort: 9091, sbxPort: 3000)
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func isCreatingClearedAfterCreate() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-create")
+        let creating = await store.isCreating
+        #expect(!creating)
+    }
+
+    @Test func busyOperationsClearedOnError() async throws {
+        let service = FailingSbxService()
+        let store = await SandboxStore(service: service)
+        do {
+            try await store.stopSandbox(name: "nonexistent")
+        } catch {
+            // Expected
+        }
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func isCreatingClearedOnError() async throws {
+        let service = FailingSbxService()
+        let store = await SandboxStore(service: service)
+        do {
+            try await store.createSandbox(workspace: "/tmp/project", name: "fail")
+        } catch {
+            // Expected
+        }
+        let creating = await store.isCreating
+        #expect(!creating)
+    }
+
+    @Test func initialLoadingTrueBeforeFetch() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        let loading = await store.initialLoading
+        #expect(loading)
+    }
+
+    @Test func initialLoadingFalseAfterFetch() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        await store.fetchSandboxes()
+        let loading = await store.initialLoading
+        #expect(!loading)
+    }
+
+    @Test func initialLoadingFalseAfterFetchError() async throws {
+        let service = FailingSbxService()
+        let store = await SandboxStore(service: service)
+        await store.fetchSandboxes()
+        let loading = await store.initialLoading
+        #expect(!loading)
+    }
+}
+
 // MARK: - PolicyStore Tests
 
 struct PolicyStoreTests {
@@ -664,56 +776,449 @@ struct PolicyStoreTests {
     }
 }
 
-// MARK: - SessionStore Tests
+// MARK: - PolicyStore Loading State Tests
 
-struct SessionStoreTests {
-    @Test func attachSetsState() async throws {
+struct PolicyStoreLoadingStateTests {
+    @Test func removingResourcesClearedAfterRemove() async throws {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "test")
-        let active = await store.activeSandbox
-        let connected = await store.connected
-        let startTime = await store.connectionStartTime
-        #expect(active == "test")
-        #expect(connected == true)
-        #expect(startTime != nil)
+        let store = await PolicyStore(service: service)
+        await store.fetchPolicies()
+        try await store.removeRule(resource: "api.anthropic.com")
+        let removing = await store.removingResources
+        #expect(removing.isEmpty)
     }
 
-    @Test func detachClearsState() async throws {
+    @Test func removingResourcesClearedOnError() async throws {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "test")
-        await store.detach()
-        let active = await store.activeSandbox
-        let connected = await store.connected
-        let startTime = await store.connectionStartTime
-        #expect(active == nil)
-        #expect(connected == false)
-        #expect(startTime == nil)
+        let store = await PolicyStore(service: service)
+        do {
+            try await store.removeRule(resource: "nonexistent.com")
+        } catch {
+            // Expected
+        }
+        let removing = await store.removingResources
+        #expect(removing.isEmpty)
     }
 
-    @Test func attachAutoDetachesPrevious() async throws {
+    @Test func loadingLogClearedAfterFetch() async throws {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "sandbox-a")
-        try await store.attach(name: "sandbox-b")
-        let active = await store.activeSandbox
-        #expect(active == "sandbox-b")
+        let store = await PolicyStore(service: service)
+        await store.fetchLog()
+        let loading = await store.loadingLog
+        #expect(!loading)
     }
 
-    @Test func sendMessageWhenNotConnectedNoOp() async throws {
+    @Test func loadingClearedAfterFetchPolicies() async throws {
         let service = StubSbxService()
-        let store = await SessionStore(service: service)
-        // Should not throw — guard returns early
-        try await store.sendMessage("hello")
+        let store = await PolicyStore(service: service)
+        await store.fetchPolicies()
+        let loading = await store.loading
+        #expect(!loading)
+    }
+}
+
+// MARK: - TerminalSessionStore Tests
+
+struct TerminalSessionStoreTests {
+    @Test func initialStateIsEmpty() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let count = await store.activeSessionCount
+        let ids = await store.activeSessionIDs
+        #expect(count == 0)
+        #expect(ids.isEmpty)
     }
 
-    @Test func sendMessageDelegatesToService() async throws {
+    @Test func hasAnySessionReturnsFalseForUnknown() async {
         let service = StubSbxService()
-        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-session"))
-        let store = await SessionStore(service: service)
-        try await store.attach(name: "test-session")
-        // Should succeed — sandbox exists and is running
-        try await store.sendMessage("hello from test")
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let active = await store.hasAnySession(sandboxName: "nonexistent")
+        #expect(active == false)
+    }
+
+    @Test func sessionLookupReturnsNilForUnknown() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let session = await store.session(for: "nonexistent-id")
+        #expect(session == nil)
+    }
+
+    @Test func disconnectNoOpForUnknown() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        await store.disconnect(sessionID: "nonexistent-id")
+        let count = await store.activeSessionCount
+        #expect(count == 0)
+    }
+
+    @Test func disconnectAllClearsEverything() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        await store.disconnectAll()
+        let count = await store.activeSessionCount
+        #expect(count == 0)
+    }
+
+    @Test func cleanupStaleSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "sandbox-a", type: .agent)
+        let countBefore = await store.activeSessionCount
+        #expect(countBefore == 1)
+
+        await store.cleanupStaleSessions(sandboxes: [])
+        let countAfter = await store.activeSessionCount
+        #expect(countAfter == 0)
+    }
+
+    @Test func cleanupKeepsRunningSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "sandbox-a", type: .agent)
+        let runningSandbox = Sandbox(
+            id: "sandbox-a", name: "sandbox-a", agent: "claude",
+            status: .running, workspace: "/tmp", ports: [], createdAt: Date()
+        )
+        await store.cleanupStaleSessions(sandboxes: [runningSandbox])
+        let count = await store.activeSessionCount
+        #expect(count == 1)
+    }
+
+    @Test func agentSessionIsIdempotent() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id1, view1) = await store.startSession(sandboxName: "test", type: .agent)
+        let (id2, view2) = await store.startSession(sandboxName: "test", type: .agent)
+        #expect(id1 == id2)
+        #expect(view1 === view2)
+        let count = await store.activeSessionCount
+        #expect(count == 1)
+    }
+
+    @Test func shellSessionAlwaysCreatesNew() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id1, _) = await store.startSession(sandboxName: "test", type: .shell)
+        let (id2, _) = await store.startSession(sandboxName: "test", type: .shell)
+        #expect(id1 != id2)
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+    }
+
+    @Test func agentAndShellCoexist() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (agentID, _) = await store.startSession(sandboxName: "test", type: .agent)
+        let (shellID, _) = await store.startSession(sandboxName: "test", type: .shell)
+        #expect(agentID != shellID)
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+
+        let foundAgentID = await store.agentSessionID(for: "test")
+        #expect(foundAgentID == agentID)
+
+        let sessions = await store.sessions(for: "test")
+        #expect(sessions.count == 2)
+    }
+
+    @Test func disconnectShellPreservesAgent() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "test", type: .agent)
+        let (shellID, _) = await store.startSession(sandboxName: "test", type: .shell)
+        await store.disconnect(sessionID: shellID)
+
+        let count = await store.activeSessionCount
+        #expect(count == 1)
+        let hasAgent = await store.agentSessionID(for: "test")
+        #expect(hasAgent != nil)
+    }
+
+    @Test func shellLabelsIncrement() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id1, _) = await store.startSession(sandboxName: "test", type: .shell)
+        let (id2, _) = await store.startSession(sandboxName: "test", type: .shell)
+        let s1 = await store.session(for: id1)
+        let s2 = await store.session(for: id2)
+        #expect(s1?.label == "test (shell 1)")
+        #expect(s2?.label == "test (shell 2)")
+    }
+
+    @Test func multipleAgentSessionsTrackedIndependently() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (idA, _) = await store.startSession(sandboxName: "alpha", type: .agent)
+        let (idB, _) = await store.startSession(sandboxName: "beta", type: .agent)
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+
+        await store.disconnect(sessionID: idA)
+        let countAfter = await store.activeSessionCount
+        let activeAlpha = await store.hasAnySession(sandboxName: "alpha")
+        let activeBeta = await store.hasAnySession(sandboxName: "beta")
+        #expect(countAfter == 1)
+        #expect(activeAlpha == false)
+        #expect(activeBeta == true)
+    }
+
+    @Test func sendMessageWhenNoSessionNoOp() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        try await store.sendMessage("hello", to: "nonexistent")
+    }
+
+    @Test func captureSnapshotsDoesNotCrash() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "snap-test", type: .agent)
+        await store.captureSnapshots()
+    }
+
+    @Test func disconnectClearsThumbnail() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id, _) = await store.startSession(sandboxName: "snap-cleanup", type: .agent)
+        await store.captureSnapshots()
+
+        await store.disconnect(sessionID: id)
+        let after = await store.thumbnails[id]
+        #expect(after == nil)
+    }
+
+    @Test func cleanupStaleSessionsClearsThumbnails() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id, _) = await store.startSession(sandboxName: "snap-stale", type: .agent)
+        await store.captureSnapshots()
+
+        await store.cleanupStaleSessions(sandboxes: [])
+        let after = await store.thumbnails[id]
+        #expect(after == nil)
+        let count = await store.activeSessionCount
+        #expect(count == 0)
+    }
+
+    @Test func captureSnapshotsEmptyNoOp() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        await store.captureSnapshots()
+        let thumbnails = await store.thumbnails
+        #expect(thumbnails.isEmpty)
+    }
+
+    // MARK: - Multi-Session Switching
+
+    @Test func switchBetweenThreeAgentSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (_, viewA) = await store.startSession(sandboxName: "session-a", type: .agent)
+        let (_, viewB) = await store.startSession(sandboxName: "session-b", type: .agent)
+        let (_, viewC) = await store.startSession(sandboxName: "session-c", type: .agent)
+
+        let count = await store.activeSessionCount
+        #expect(count == 3)
+
+        // Reattach to session-a — should return same view (idempotent)
+        let (_, viewA2) = await store.startSession(sandboxName: "session-a", type: .agent)
+        #expect(viewA === viewA2)
+
+        // Views are distinct instances
+        #expect(viewA !== viewB)
+        #expect(viewB !== viewC)
+        #expect(viewA !== viewC)
+    }
+
+    @Test func disconnectMiddleSessionPreservesOthers() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (idFirst, _) = await store.startSession(sandboxName: "first", type: .agent)
+        let (idMiddle, _) = await store.startSession(sandboxName: "middle", type: .agent)
+        _ = await store.startSession(sandboxName: "last", type: .agent)
+
+        await store.disconnect(sessionID: idMiddle)
+
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+        #expect(await store.hasAnySession(sandboxName: "first") == true)
+        #expect(await store.hasAnySession(sandboxName: "middle") == false)
+        #expect(await store.hasAnySession(sandboxName: "last") == true)
+
+        let sessionFirst = await store.session(for: idFirst)
+        #expect(sessionFirst?.sandboxName == "first")
+    }
+
+    @Test func disconnectAllWithMultipleSessions() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "a", type: .agent)
+        _ = await store.startSession(sandboxName: "b", type: .agent)
+        _ = await store.startSession(sandboxName: "c", type: .agent)
+        await store.captureSnapshots()
+
+        #expect(await store.activeSessionCount == 3)
+
+        await store.disconnectAll()
+
+        #expect(await store.activeSessionCount == 0)
+        #expect(await store.thumbnails.isEmpty)
+    }
+
+    @Test func cleanupRemovesOnlyStaleFromMultiple() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "running-1", type: .agent)
+        _ = await store.startSession(sandboxName: "running-2", type: .agent)
+        _ = await store.startSession(sandboxName: "stopped-1", type: .agent)
+        _ = await store.startSession(sandboxName: "stopped-2", type: .agent)
+
+        let runningSandboxes = [
+            Sandbox(id: "running-1", name: "running-1", agent: "claude",
+                    status: .running, workspace: "/tmp", ports: [], createdAt: Date()),
+            Sandbox(id: "running-2", name: "running-2", agent: "claude",
+                    status: .running, workspace: "/tmp", ports: [], createdAt: Date()),
+        ]
+
+        await store.cleanupStaleSessions(sandboxes: runningSandboxes)
+
+        #expect(await store.activeSessionCount == 2)
+        #expect(await store.hasAnySession(sandboxName: "running-1") == true)
+        #expect(await store.hasAnySession(sandboxName: "running-2") == true)
+        #expect(await store.hasAnySession(sandboxName: "stopped-1") == false)
+        #expect(await store.hasAnySession(sandboxName: "stopped-2") == false)
+    }
+
+    @Test func restartAgentSessionAfterDisconnect() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id1, view1) = await store.startSession(sandboxName: "restart-test", type: .agent)
+        let session1 = await store.session(for: id1)
+        let startTime1 = session1?.startTime
+
+        await store.disconnect(sessionID: id1)
+        #expect(await store.hasAnySession(sandboxName: "restart-test") == false)
+
+        let (id2, view2) = await store.startSession(sandboxName: "restart-test", type: .agent)
+        let session2 = await store.session(for: id2)
+
+        #expect(id1 != id2)
+        #expect(view1 !== view2)
+        #expect(await store.hasAnySession(sandboxName: "restart-test") == true)
+        if let t1 = startTime1, let t2 = session2?.startTime {
+            #expect(t2 >= t1)
+        }
+    }
+
+    @Test func processExitDisconnectsSession() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (_, view) = await store.startSession(sandboxName: "exit-test", type: .agent)
+        #expect(await store.hasAnySession(sandboxName: "exit-test") == true)
+
+        await view.onProcessExit?(0)
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(await store.hasAnySession(sandboxName: "exit-test") == false)
+        #expect(await store.activeSessionCount == 0)
+    }
+
+    @Test func processExitClearsThumbnail() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (id, view) = await store.startSession(sandboxName: "exit-thumb", type: .agent)
+        await store.captureSnapshots()
+
+        await view.onProcessExit?(0)
+        try await Task.sleep(for: .milliseconds(100))
+
+        let thumb = await store.thumbnails[id]
+        #expect(thumb == nil)
+    }
+
+    @Test func processExitPreservesOtherSessions() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "alive", type: .agent)
+        let (_, viewB) = await store.startSession(sandboxName: "exiting", type: .agent)
+
+        await viewB.onProcessExit?(0)
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(await store.hasAnySession(sandboxName: "alive") == true)
+        #expect(await store.hasAnySession(sandboxName: "exiting") == false)
+        #expect(await store.activeSessionCount == 1)
+    }
+
+    @Test func sessionMetadataPerSession() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (idA, _) = await store.startSession(sandboxName: "alpha", type: .agent)
+        try? await Task.sleep(for: .milliseconds(10))
+        let (idB, _) = await store.startSession(sandboxName: "beta", type: .agent)
+
+        let sessionA = await store.session(for: idA)
+        let sessionB = await store.session(for: idB)
+
+        #expect(sessionA?.sandboxName == "alpha")
+        #expect(sessionB?.sandboxName == "beta")
+        #expect(sessionA?.connected == true)
+        #expect(sessionB?.connected == true)
+        #expect(sessionA?.sessionType == .agent)
+
+        if let tA = sessionA?.startTime, let tB = sessionB?.startTime {
+            #expect(tB >= tA)
+        }
+    }
+
+    @Test func agentAndShellHaveDistinctTerminalViews() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (agentID, agentView) = await store.startSession(sandboxName: "test", type: .agent)
+        let (shellID, shellView) = await store.startSession(sandboxName: "test", type: .shell)
+
+        // Different session IDs
+        #expect(agentID != shellID)
+        // Different terminal view instances — critical for session switching
+        #expect(agentView !== shellView)
+
+        // Each session lookup returns the correct view
+        let agentSession = await store.session(for: agentID)
+        let shellSession = await store.session(for: shellID)
+        #expect(agentSession?.terminalView === agentView)
+        #expect(shellSession?.terminalView === shellView)
+    }
+
+    @Test func cleanupClearsAllSessionTypesForSandbox() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        _ = await store.startSession(sandboxName: "sandbox-a", type: .agent)
+        _ = await store.startSession(sandboxName: "sandbox-a", type: .shell)
+        _ = await store.startSession(sandboxName: "sandbox-a", type: .shell)
+        #expect(await store.activeSessionCount == 3)
+
+        await store.cleanupStaleSessions(sandboxes: [])
+        #expect(await store.activeSessionCount == 0)
     }
 }

@@ -1,16 +1,18 @@
 import SwiftUI
+import AppKit
 
 struct SandboxCardView: View {
     let sandbox: Sandbox
     var onSelect: (Sandbox) -> Void
+    var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
-    @Environment(SettingsStore.self) private var settingsStore
+    @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
     @State private var isHovered = false
     @State private var showTerminateConfirm = false
 
     private var isTransient: Bool {
-        sandbox.status == .creating || sandbox.status == .removing
+        sandbox.status == .creating || sandbox.status == .removing || sandboxStore.isBusy(sandbox.name)
     }
 
     var body: some View {
@@ -26,6 +28,20 @@ struct SandboxCardView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if sessionStore.hasAnySession(sandboxName: sandbox.name) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 9))
+                        Text("SESSION")
+                            .font(.label(9))
+                    }
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .accessibilityIdentifier("sessionBadge-\(sandbox.name)")
+                }
                 StatusChipView(status: sandbox.status)
             }
 
@@ -50,6 +66,34 @@ struct SandboxCardView: View {
                 }
             }
 
+            // Terminal thumbnail (show agent session thumbnail)
+            if let agentID = sessionStore.agentSessionID(for: sandbox.name) {
+                Group {
+                    if let thumbnail = sessionStore.thumbnails[agentID] {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 120)
+                            .clipped()
+                    } else {
+                        HStack(spacing: 8) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.tertiary)
+                            Text("Connecting...")
+                                .font(.code(11))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 120)
+                    }
+                }
+                .background(Color.surfaceLowest)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityIdentifier("sessionThumbnail-\(sandbox.name)")
+            }
+
             // Actions
             HStack(spacing: 8) {
                 if sandbox.status == .running {
@@ -62,31 +106,41 @@ struct SandboxCardView: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "pause.fill")
-                            .font(.system(size: 11))
+                        if sandboxStore.busyOperations[sandbox.name] == .stopping {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "pause.fill")
+                                .font(.system(size: 11))
+                        }
                     }
                     .buttonStyle(.bordered)
                     .disabled(isTransient)
                     .accessibilityIdentifier("stopButton-\(sandbox.name)")
 
+                    // Open in-app shell session
                     Button {
-                        let launcher = ExternalTerminalLauncher()
-                        Task {
-                            do {
-                                try await launcher.openShell(
-                                    sandboxName: sandbox.name,
-                                    app: settingsStore.preferredTerminal ?? .terminal
-                                )
-                            } catch {
-                                toastManager.show(error.localizedDescription)
-                            }
-                        }
+                        let (id, _) = sessionStore.startSession(sandboxName: sandbox.name, type: .shell)
+                        onOpenShellSession(id)
                     } label: {
                         Image(systemName: "terminal")
                             .font(.system(size: 11))
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("openShellButton-\(sandbox.name)")
+
+                    // Copy exec command to clipboard
+                    Button {
+                        let command = "sbx exec -it \(sandbox.name) bash"
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(command, forType: .string)
+                        toastManager.show("Copied: \(command)", isError: false)
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("copyCommandButton-\(sandbox.name)")
                 }
 
                 Spacer()
@@ -94,8 +148,17 @@ struct SandboxCardView: View {
                 Button(role: .destructive) {
                     showTerminateConfirm = true
                 } label: {
-                    Text("Terminate")
-                        .font(.ui(11))
+                    if sandboxStore.busyOperations[sandbox.name] == .removing {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Removing\u{2026}")
+                                .font(.ui(11))
+                        }
+                    } else {
+                        Text("Terminate")
+                            .font(.ui(11))
+                    }
                 }
                 .buttonStyle(.bordered)
                 .tint(Color.error)
@@ -112,10 +175,25 @@ struct SandboxCardView: View {
                 isHovered = hovering
             }
         }
+        .overlay {
+            if sandboxStore.busyOperations[sandbox.name] == .resuming {
+                RoundedRectangle(cornerRadius: DesignSystem.cornerRadius)
+                    .fill(Color.surfaceLowest.opacity(0.6))
+                    .overlay {
+                        VStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.regular)
+                            Text("Resuming\u{2026}")
+                                .font(.ui(12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+            }
+        }
         .onTapGesture {
             if sandbox.status == .running {
                 onSelect(sandbox)
-            } else if sandbox.status == .stopped {
+            } else if sandbox.status == .stopped && !sandboxStore.isBusy(sandbox.name) {
                 Task {
                     do {
                         try await sandboxStore.resumeSandbox(name: sandbox.name)

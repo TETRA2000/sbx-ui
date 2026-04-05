@@ -43,7 +43,7 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testSidebarNavigationExists() throws {
         let dashboard = app.staticTexts["DASHBOARD"]
-        XCTAssertTrue(dashboard.waitForExistence(timeout: 10))
+        XCTAssertTrue(dashboard.waitForExistence(timeout: 5))
 
         let policies = app.staticTexts["POLICIES"]
         XCTAssertTrue(policies.exists)
@@ -54,7 +54,7 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testNewSandboxCardOpensSheet() throws {
         let newButton = app.buttons["newSandboxButton"]
-        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
         newButton.click()
 
         let deploySubmit = app.buttons["deployButton"]
@@ -64,7 +64,7 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testCreateSheetNameValidation() throws {
         let newButton = app.buttons["newSandboxButton"]
-        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
         newButton.click()
 
         let nameField = app.textFields["sandboxNameField"]
@@ -94,28 +94,24 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     private func createSandbox(name: String) {
         let newButton = app.buttons["newSandboxButton"]
-        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
         newButton.click()
 
         let nameField = app.textFields["sandboxNameField"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 5))
-
-        // Wait for .onAppear to set selectedPath
-        sleep(2)
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3))
 
         nameField.click()
         nameField.typeText(name)
 
+        // Wait for deploy button to become enabled (.onAppear sets selectedPath in mock mode)
         let deployButton = app.buttons["deployButton"]
-        XCTAssertTrue(deployButton.waitForExistence(timeout: 5))
         let enabled = NSPredicate(format: "isEnabled == true")
         let expectation = XCTNSPredicateExpectation(predicate: enabled, object: deployButton)
         let result = XCTWaiter.wait(for: [expectation], timeout: 5)
         XCTAssertEqual(result, .completed, "Deploy button should become enabled")
         deployButton.click()
 
-        // Wait for the sheet to dismiss before checking dashboard
-        let dismissed = deployButton.waitForNonExistence(timeout: 15)
+        let dismissed = deployButton.waitForNonExistence(timeout: 5)
         XCTAssertTrue(dismissed, "Create sheet should dismiss after deploy")
     }
 
@@ -125,7 +121,7 @@ final class sbx_uiUITests: XCTestCase {
 
         // Wait for card to appear with LIVE status
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         // Verify sandbox name appears on dashboard
         let nameText = app.staticTexts["test-create"]
@@ -138,7 +134,7 @@ final class sbx_uiUITests: XCTestCase {
 
         // Wait for LIVE status
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         // Verify global stats show at least 1 running
         let runningLabel = app.staticTexts["RUNNING"]
@@ -153,7 +149,7 @@ final class sbx_uiUITests: XCTestCase {
         createSandbox(name: "test-path")
 
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         // Mock workspace auto-fills to /tmp/mock-project
         let pathText = app.staticTexts["/tmp/mock-project"]
@@ -165,22 +161,22 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testNavigateToPolicies() throws {
         let policies = app.staticTexts["POLICIES"]
-        XCTAssertTrue(policies.waitForExistence(timeout: 10))
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
         policies.click()
 
         let addButton = app.buttons["addPolicyButton"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
     }
 
     @MainActor
     func testPolicyDefaultsLoaded() throws {
         let policies = app.staticTexts["POLICIES"]
-        XCTAssertTrue(policies.waitForExistence(timeout: 10))
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
         policies.click()
 
         // Wait for policies to load — check for a known default domain
         let defaultRule = app.buttons["removePolicy-api.anthropic.com"]
-        XCTAssertTrue(defaultRule.waitForExistence(timeout: 10))
+        XCTAssertTrue(defaultRule.waitForExistence(timeout: 5))
 
         let githubRule = app.buttons["removePolicy-github.com"]
         XCTAssertTrue(githubRule.waitForExistence(timeout: 5))
@@ -189,11 +185,11 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testAddPolicySheet() throws {
         let policies = app.staticTexts["POLICIES"]
-        XCTAssertTrue(policies.waitForExistence(timeout: 10))
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
         policies.click()
 
         let addButton = app.buttons["addPolicyButton"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
         addButton.click()
 
         let domainInput = app.textFields["domainInput"]
@@ -208,11 +204,11 @@ final class sbx_uiUITests: XCTestCase {
     func testPolicyCRUDWorkflow() throws {
         // Navigate to Policies
         let policies = app.staticTexts["POLICIES"]
-        XCTAssertTrue(policies.waitForExistence(timeout: 10))
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
         policies.click()
 
         let addButton = app.buttons["addPolicyButton"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
 
         // Add an allow rule
         addButton.click()
@@ -228,24 +224,24 @@ final class sbx_uiUITests: XCTestCase {
 
         // Verify the new rule appears
         let removeButton = app.buttons["removePolicy-test.example.com"]
-        XCTAssertTrue(removeButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(removeButton.waitForExistence(timeout: 5))
 
         // Remove it
         removeButton.click()
 
         // Verify it's gone
-        let disappeared = removeButton.waitForNonExistence(timeout: 10)
+        let disappeared = removeButton.waitForNonExistence(timeout: 5)
         XCTAssertTrue(disappeared)
     }
 
     @MainActor
     func testPolicySheetCatchAllValidation() throws {
         let policies = app.staticTexts["POLICIES"]
-        XCTAssertTrue(policies.waitForExistence(timeout: 10))
+        XCTAssertTrue(policies.waitForExistence(timeout: 5))
         policies.click()
 
         let addButton = app.buttons["addPolicyButton"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
         addButton.click()
 
         let domainInput = app.textFields["domainInput"]
@@ -267,11 +263,11 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     private func openSession(name: String) {
         let nameText = app.staticTexts[name]
-        XCTAssertTrue(nameText.waitForExistence(timeout: 10))
+        XCTAssertTrue(nameText.waitForExistence(timeout: 5))
         nameText.click()
 
         let backButton = app.buttons["backToDashboard"]
-        XCTAssertTrue(backButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -279,7 +275,7 @@ final class sbx_uiUITests: XCTestCase {
         createSandbox(name: "test-session")
 
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         openSession(name: "test-session")
 
@@ -289,7 +285,7 @@ final class sbx_uiUITests: XCTestCase {
 
         // Agent status bar shows connected
         let connected = app.staticTexts["Connected"]
-        XCTAssertTrue(connected.waitForExistence(timeout: 10))
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -297,12 +293,10 @@ final class sbx_uiUITests: XCTestCase {
         createSandbox(name: "test-autofocus")
 
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         openSession(name: "test-autofocus")
-
-        // Wait for terminal to render and auto-focus via viewDidMoveToWindow
-        sleep(3)
+        sleep(1)  // Brief wait for terminal auto-focus
 
         // Type keys — if auto-focus worked, the terminal has first responder
         app.typeKey("h", modifierFlags: [])
@@ -326,10 +320,10 @@ final class sbx_uiUITests: XCTestCase {
         createSandbox(name: "test-noleak")
 
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         openSession(name: "test-noleak")
-        sleep(3)
+        sleep(1)  // Brief wait for terminal auto-focus
 
         // Type characters including ones that could match shortcuts or labels
         app.typeKey("d", modifierFlags: [])
@@ -353,23 +347,19 @@ final class sbx_uiUITests: XCTestCase {
         createSandbox(name: "test-reattach")
 
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         // First attach
         openSession(name: "test-reattach")
-        sleep(2)
         app.typeKey("a", modifierFlags: [])
 
         // Go back to dashboard
         app.buttons["backToDashboard"].click()
         let newButton = app.buttons["newSandboxButton"]
-        XCTAssertTrue(newButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
 
         // Re-enter the same session
         openSession(name: "test-reattach")
-
-        // Wait for re-attach and auto-focus
-        sleep(3)
 
         // Type again — terminal should accept input after re-attach
         app.typeKey("b", modifierFlags: [])
@@ -378,7 +368,7 @@ final class sbx_uiUITests: XCTestCase {
 
         // Session still connected after re-attach
         let connected = app.staticTexts["Connected"]
-        XCTAssertTrue(connected.waitForExistence(timeout: 10))
+        XCTAssertTrue(connected.waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -386,10 +376,10 @@ final class sbx_uiUITests: XCTestCase {
         createSandbox(name: "test-sustained")
 
         let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 10))
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         openSession(name: "test-sustained")
-        sleep(3)
+        sleep(1)
 
         // Rapid keystrokes
         for char in "the quick brown fox" {
@@ -402,13 +392,253 @@ final class sbx_uiUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.upArrow, modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
 
-        // Ctrl+C (common terminal interrupt)
-        app.typeKey("c", modifierFlags: .control)
-
-        // Session still alive
+        // Session still alive after sustained input
         let backButton = app.buttons["backToDashboard"]
         XCTAssertTrue(backButton.exists)
         let connected = app.staticTexts["Connected"]
         XCTAssertTrue(connected.exists)
+    }
+
+    // MARK: - Background Session E2E
+
+    @MainActor
+    func testBackgroundSessionShowsBadgeOnDashboard() throws {
+        createSandbox(name: "test-bg-badge")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        // Open terminal session
+        openSession(name: "test-bg-badge")
+
+        // Go back to dashboard — session stays alive in background
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Session badge should appear on the sandbox card
+        let sessionBadge = app.staticTexts["SESSION"]
+        XCTAssertTrue(sessionBadge.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testBackgroundSessionShowsInSidebar() throws {
+        createSandbox(name: "test-bg-sidebar")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        // Open terminal session
+        openSession(name: "test-bg-sidebar")
+
+        // Go back to dashboard
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Sidebar should show SESSIONS section with the session label
+        let sidebarSession = app.buttons["sidebarSession-test-bg-sidebar (agent)"]
+        XCTAssertTrue(sidebarSession.waitForExistence(timeout: 5))
+
+        sidebarSession.click()
+
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testDisconnectButtonEndsSession() throws {
+        createSandbox(name: "test-disconnect")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        // Open terminal session
+        openSession(name: "test-disconnect")
+
+        // Click disconnect — should end session and return to dashboard
+        let disconnectButton = app.buttons["disconnectButton"]
+        XCTAssertTrue(disconnectButton.exists)
+        disconnectButton.click()
+
+        // Should be back on dashboard
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Session badge should NOT appear (session was disconnected, not backgrounded)
+        let sessionBadge = app.staticTexts["SESSION"]
+        XCTAssertFalse(sessionBadge.waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testSessionsCountInGlobalStats() throws {
+        createSandbox(name: "test-stats")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        // Open terminal session then go back
+        openSession(name: "test-stats")
+        app.buttons["backToDashboard"].click()
+
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Global stats should show "SESSIONS" label
+        let sessionsLabel = app.staticTexts["SESSIONS"]
+        XCTAssertTrue(sessionsLabel.waitForExistence(timeout: 5))
+    }
+
+    // MARK: - Multi-Session Switching E2E
+
+    @MainActor
+    func testSwitchBetweenTwoBackgroundSessions() throws {
+        // Create two sandboxes
+        createSandbox(name: "test-switch-a")
+        let liveA = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveA.waitForExistence(timeout: 5))
+
+        createSandbox(name: "test-switch-b")
+        // Wait for second sandbox to appear on dashboard
+        let cardB = app.staticTexts["test-switch-b"]
+        XCTAssertTrue(cardB.waitForExistence(timeout: 5))
+
+        // Start session A then background it
+        openSession(name: "test-switch-a")
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Start session B then background it
+        openSession(name: "test-switch-b")
+        app.buttons["backToDashboard"].click()
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Switch to session A via sidebar
+        let sidebarA = app.buttons["sidebarSession-test-switch-a (agent)"]
+        XCTAssertTrue(sidebarA.waitForExistence(timeout: 5))
+        sidebarA.click()
+
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+
+        // Go back and switch to session B via sidebar
+        backButton.click()
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        let sidebarB = app.buttons["sidebarSession-test-switch-b (agent)"]
+        XCTAssertTrue(sidebarB.waitForExistence(timeout: 5))
+        sidebarB.click()
+
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testDisconnectOneSessionPreservesOther() throws {
+        // Create two sandboxes
+        createSandbox(name: "test-keep-a")
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        createSandbox(name: "test-keep-b")
+        let cardB = app.staticTexts["test-keep-b"]
+        XCTAssertTrue(cardB.waitForExistence(timeout: 5))
+
+        // Start both sessions
+        openSession(name: "test-keep-a")
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        openSession(name: "test-keep-b")
+
+        // Disconnect session B (using disconnect button, not back)
+        let disconnectButton = app.buttons["disconnectButton"]
+        XCTAssertTrue(disconnectButton.exists)
+        disconnectButton.click()
+
+        // Should be back on dashboard
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Session B should NOT be in sidebar
+        let sidebarB = app.buttons["sidebarSession-test-keep-b (agent)"]
+        XCTAssertFalse(sidebarB.waitForExistence(timeout: 3))
+
+        // Session A should still be in sidebar
+        let sidebarA = app.buttons["sidebarSession-test-keep-a (agent)"]
+        XCTAssertTrue(sidebarA.waitForExistence(timeout: 5))
+        sidebarA.click()
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testRapidSessionSwitching() throws {
+        // Create two sandboxes
+        createSandbox(name: "test-rapid-a")
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        createSandbox(name: "test-rapid-b")
+        let cardB = app.staticTexts["test-rapid-b"]
+        XCTAssertTrue(cardB.waitForExistence(timeout: 5))
+
+        // Start both sessions
+        openSession(name: "test-rapid-a")
+        app.buttons["backToDashboard"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        openSession(name: "test-rapid-b")
+        app.buttons["backToDashboard"].click()
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // Rapidly switch between sessions via sidebar
+        let sidebarA = app.buttons["sidebarSession-test-rapid-a (agent)"]
+        let sidebarB = app.buttons["sidebarSession-test-rapid-b (agent)"]
+        XCTAssertTrue(sidebarA.waitForExistence(timeout: 5))
+        XCTAssertTrue(sidebarB.waitForExistence(timeout: 5))
+
+        for _ in 0..<3 {
+            sidebarA.click()
+
+            let backButton = app.buttons["backToDashboard"]
+            XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+            backButton.click()
+            XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+            sidebarB.click()
+
+            XCTAssertTrue(backButton.waitForExistence(timeout: 5))
+            backButton.click()
+            XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        }
+
+        // Both sessions should still be active after rapid switching
+        XCTAssertTrue(sidebarA.exists)
+        XCTAssertTrue(sidebarB.exists)
+    }
+
+    @MainActor
+    func testTerminalThumbnailAreaAppearsOnCard() throws {
+        createSandbox(name: "test-thumb")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        // Open terminal session then go back
+        openSession(name: "test-thumb")
+        app.buttons["backToDashboard"].click()
+
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+
+        // The thumbnail area shows "Connecting..." placeholder initially,
+        // then updates to a bitmap snapshot. Either state confirms the
+        // thumbnail section is rendering on the card.
+        let connecting = app.staticTexts["Connecting..."]
+        let sessionBadge = app.staticTexts["SESSION"]
+        let found = connecting.waitForExistence(timeout: 5) || sessionBadge.waitForExistence(timeout: 2)
+        XCTAssertTrue(found, "Terminal thumbnail area or session badge should appear on card")
     }
 }

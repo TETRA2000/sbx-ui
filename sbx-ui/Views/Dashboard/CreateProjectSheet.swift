@@ -80,8 +80,18 @@ struct CreateProjectSheet: View {
 
                 Spacer()
 
-                Button("Deploy") {
+                Button {
                     createSandbox()
+                } label: {
+                    if isCreating {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Deploying\u{2026}")
+                        }
+                    } else {
+                        Text("Deploy")
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.accent)
