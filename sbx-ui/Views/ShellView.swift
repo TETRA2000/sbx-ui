@@ -100,12 +100,23 @@ struct DashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             GlobalStatsView()
-            ScrollView {
-                SandboxGridView(
-                    onSelectSandbox: onSelectSandbox,
-                    onCreateNew: { showCreateSheet = true }
-                )
-                .padding()
+            if sandboxStore.initialLoading {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text("Loading sandboxes\u{2026}")
+                        .font(.ui(13))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    SandboxGridView(
+                        onSelectSandbox: onSelectSandbox,
+                        onCreateNew: { showCreateSheet = true }
+                    )
+                    .padding()
+                }
             }
         }
         .background(Color.surface)

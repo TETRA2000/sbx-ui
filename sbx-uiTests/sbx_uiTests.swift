@@ -596,6 +596,114 @@ struct SandboxStoreTests {
     }
 }
 
+// MARK: - SandboxStore busyOperations Tests
+
+struct SandboxStoreBusyOperationsTests {
+    @Test func busyOperationsClearedAfterStop() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-stop")
+        try await store.stopSandbox(name: "test-busy-stop")
+        let busy = await store.isBusy("test-busy-stop")
+        #expect(!busy)
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterRemove() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-rm")
+        try await store.removeSandbox(name: "test-busy-rm")
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterResume() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-resume")
+        try await store.stopSandbox(name: "test-busy-resume")
+        try await store.resumeSandbox(name: "test-busy-resume")
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterPublishPort() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-port")
+        try await store.publishPort(name: "test-busy-port", hostPort: 9090, sbxPort: 3000)
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func busyOperationsClearedAfterUnpublishPort() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-unport")
+        try await store.publishPort(name: "test-busy-unport", hostPort: 9091, sbxPort: 3000)
+        try await store.unpublishPort(name: "test-busy-unport", hostPort: 9091, sbxPort: 3000)
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func isCreatingClearedAfterCreate() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-create")
+        let creating = await store.isCreating
+        #expect(!creating)
+    }
+
+    @Test func busyOperationsClearedOnError() async throws {
+        let service = FailingSbxService()
+        let store = await SandboxStore(service: service)
+        do {
+            try await store.stopSandbox(name: "nonexistent")
+        } catch {
+            // Expected
+        }
+        let ops = await store.busyOperations
+        #expect(ops.isEmpty)
+    }
+
+    @Test func isCreatingClearedOnError() async throws {
+        let service = FailingSbxService()
+        let store = await SandboxStore(service: service)
+        do {
+            try await store.createSandbox(workspace: "/tmp/project", name: "fail")
+        } catch {
+            // Expected
+        }
+        let creating = await store.isCreating
+        #expect(!creating)
+    }
+
+    @Test func initialLoadingTrueBeforeFetch() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        let loading = await store.initialLoading
+        #expect(loading)
+    }
+
+    @Test func initialLoadingFalseAfterFetch() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        await store.fetchSandboxes()
+        let loading = await store.initialLoading
+        #expect(!loading)
+    }
+
+    @Test func initialLoadingFalseAfterFetchError() async throws {
+        let service = FailingSbxService()
+        let store = await SandboxStore(service: service)
+        await store.fetchSandboxes()
+        let loading = await store.initialLoading
+        #expect(!loading)
+    }
+}
+
 // MARK: - PolicyStore Tests
 
 struct PolicyStoreTests {
@@ -661,6 +769,47 @@ struct PolicyStoreTests {
         let filtered = await store.filteredLog
         #expect(filtered.count == 1)
         #expect(filtered.first?.blocked == true)
+    }
+}
+
+// MARK: - PolicyStore Loading State Tests
+
+struct PolicyStoreLoadingStateTests {
+    @Test func removingResourcesClearedAfterRemove() async throws {
+        let service = StubSbxService()
+        let store = await PolicyStore(service: service)
+        await store.fetchPolicies()
+        try await store.removeRule(resource: "api.anthropic.com")
+        let removing = await store.removingResources
+        #expect(removing.isEmpty)
+    }
+
+    @Test func removingResourcesClearedOnError() async throws {
+        let service = StubSbxService()
+        let store = await PolicyStore(service: service)
+        do {
+            try await store.removeRule(resource: "nonexistent.com")
+        } catch {
+            // Expected
+        }
+        let removing = await store.removingResources
+        #expect(removing.isEmpty)
+    }
+
+    @Test func loadingLogClearedAfterFetch() async throws {
+        let service = StubSbxService()
+        let store = await PolicyStore(service: service)
+        await store.fetchLog()
+        let loading = await store.loadingLog
+        #expect(!loading)
+    }
+
+    @Test func loadingClearedAfterFetchPolicies() async throws {
+        let service = StubSbxService()
+        let store = await PolicyStore(service: service)
+        await store.fetchPolicies()
+        let loading = await store.loading
+        #expect(!loading)
     }
 }
 

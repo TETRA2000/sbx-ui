@@ -11,7 +11,7 @@ struct SandboxCardView: View {
     @State private var showTerminateConfirm = false
 
     private var isTransient: Bool {
-        sandbox.status == .creating || sandbox.status == .removing
+        sandbox.status == .creating || sandbox.status == .removing || sandboxStore.isBusy(sandbox.name)
     }
 
     var body: some View {
@@ -105,8 +105,13 @@ struct SandboxCardView: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "pause.fill")
-                            .font(.system(size: 11))
+                        if sandboxStore.busyOperations[sandbox.name] == .stopping {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "pause.fill")
+                                .font(.system(size: 11))
+                        }
                     }
                     .buttonStyle(.bordered)
                     .disabled(isTransient)
@@ -137,8 +142,17 @@ struct SandboxCardView: View {
                 Button(role: .destructive) {
                     showTerminateConfirm = true
                 } label: {
-                    Text("Terminate")
-                        .font(.ui(11))
+                    if sandboxStore.busyOperations[sandbox.name] == .removing {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Removing\u{2026}")
+                                .font(.ui(11))
+                        }
+                    } else {
+                        Text("Terminate")
+                            .font(.ui(11))
+                    }
                 }
                 .buttonStyle(.bordered)
                 .tint(Color.error)
@@ -155,10 +169,25 @@ struct SandboxCardView: View {
                 isHovered = hovering
             }
         }
+        .overlay {
+            if sandboxStore.busyOperations[sandbox.name] == .resuming {
+                RoundedRectangle(cornerRadius: DesignSystem.cornerRadius)
+                    .fill(Color.surfaceLowest.opacity(0.6))
+                    .overlay {
+                        VStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.regular)
+                            Text("Resuming\u{2026}")
+                                .font(.ui(12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+            }
+        }
         .onTapGesture {
             if sandbox.status == .running {
                 onSelect(sandbox)
-            } else if sandbox.status == .stopped {
+            } else if sandbox.status == .stopped && !sandboxStore.isBusy(sandbox.name) {
                 Task {
                     do {
                         try await sandboxStore.resumeSandbox(name: sandbox.name)

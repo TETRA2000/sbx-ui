@@ -42,7 +42,10 @@ struct PolicyPanelView: View {
             }
 
             // Rules list
-            if policyStore.rules.isEmpty && !policyStore.loading {
+            if policyStore.loading && policyStore.rules.isEmpty {
+                ProgressView("Loading policies\u{2026}")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if policyStore.rules.isEmpty {
                 ContentUnavailableView("No Policies", systemImage: "shield.slash", description: Text("Add network policies to control sandbox access."))
                     .frame(maxHeight: .infinity)
             } else {
@@ -98,11 +101,17 @@ struct PolicyRuleRow: View {
                     }
                 }
             } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.error.opacity(0.7))
+                if policyStore.removingResources.contains(rule.resources) {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.error.opacity(0.7))
+                }
             }
             .buttonStyle(.plain)
+            .disabled(policyStore.removingResources.contains(rule.resources))
             .accessibilityIdentifier("removePolicy-\(rule.resources)")
         }
         .padding(.vertical, 4)
