@@ -9,7 +9,7 @@ enum SessionType: String, Sendable {
     case shell   // sbx exec -it <name> bash
 }
 
-struct Sandbox: Identifiable, Sendable {
+struct Sandbox: Identifiable, Sendable, Equatable {
     let id: String
     let name: String
     let agent: String  // "claude"

@@ -162,9 +162,9 @@
   - Test shortcuts provider is non-empty and within the 10-shortcut limit
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11, 5.12_
 
-- [ ] 7. AppDelegate — Dock Menu and Notification Delegate Wiring
+- [x] 7. AppDelegate — Dock Menu and Notification Delegate Wiring
   - Requires tasks 1, 2, and 5 to be complete
-- [ ] 7.1 Create the app delegate with dock menu and notification delegate
+- [x] 7.1 Create the app delegate with dock menu and notification delegate
   - Add an NSApplicationDelegateAdaptor to the App struct
   - Implement the dock menu callback using the dock menu builder from task 5, passing the current sandbox list from the shared container
   - Wire menu item actions to dispatch stop, resume, and open operations to the stores and navigation coordinator on the main actor
@@ -172,9 +172,9 @@
   - Handle notification click responses by parsing the category identifier and sandbox name from the notification content, then forwarding the appropriate navigation request to the coordinator
   - _Requirements: 2.5, 2.6, 4.1, 4.3, 4.4, 4.5, 4.6, 4.7, 4.10_
 
-- [ ] 8. Integration Wiring and Final Testing
+- [x] 8. Integration Wiring and Final Testing
   - Requires all previous tasks to be complete
-- [ ] 8.1 Wire NavigationCoordinator observation into ShellView
+- [x] 8.1 Wire NavigationCoordinator observation into ShellView
   - Add an onChange observer on the navigation coordinator's pending navigation property
   - When a sandbox request arrives, find or start the agent session and set the selected session ID
   - When a policy-log request arrives, switch sidebar selection to policies (filtered sandbox context can be set if the policy view supports it)
@@ -182,13 +182,13 @@
   - Consume the pending navigation after handling
   - _Requirements: 1.9, 2.5, 2.6, 3.7, 4.7_
 
-- [ ] 8.2 Wire notification state diffing via SwiftUI onChange
+- [x] 8.2 Wire notification state diffing via SwiftUI onChange
   - Add an onChange observer on the sandbox store's sandbox list in ShellView or the App body
   - Capture the previous sandbox list and pass both previous and current lists along with the busy operations map to the notification manager's on-sandboxes-updated method
   - This keeps the sandbox store decoupled from the notification system
   - _Requirements: 2.1, 2.2, 2.10_
 
-- [ ] 8.3 Integration tests
+- [x] 8.3 Integration tests
   - Test the full notification flow: create a sandbox via the store, verify the mock notification center received a creation notification, simulate a notification click response, verify the navigation coordinator received the correct sandbox navigation request
   - Test notification suppression: stop a sandbox via the store (which sets the busy-stopping operation), trigger the sandboxes-updated callback, verify no unexpected-stop notification was posted
   - Test intent-to-store round-trip: create a sandbox, invoke the stop intent perform method, verify the store's sandbox list reflects the stopped status
@@ -197,7 +197,7 @@
   - Test drop handler with existing workspace: create a sandbox with a specific workspace, invoke the drop handler with the same path, verify navigation coordinator received a sandbox navigation request
   - _Requirements: 1.9, 2.1, 2.2, 2.5, 2.10, 3.7, 4.5, 4.10, 5.2, 5.11_
 
-- [ ] 8.4 E2E tests for menu bar and navigation
+- [x] 8.4 E2E tests for menu bar and navigation
   - Verify the menu bar icon exists on launch and shows sandbox list after creation
   - Verify menu bar stop and resume actions update dashboard status
   - Verify "Open in App" from menu bar navigates to the correct session

@@ -10,9 +10,17 @@ struct ShellView: View {
     @State private var selection: SidebarDestination? = .dashboard
     @State private var selectedSessionID: String?
     @State private var showDebugLog = false
+    @State private var showCreateSheet = false
+    @State private var createSheetWorkspace: String?
+    @State private var previousSandboxes: [Sandbox] = []
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
+
+    /// Lightweight hash of sandbox statuses for onChange diffing (avoids compiler type-check timeout)
+    private var sandboxStatusHash: String {
+        sandboxStore.sandboxes.map { "\($0.name):\($0.status.rawValue)" }.joined(separator: ",")
+    }
 
     /// Names of running sandboxes, used to detect status changes for session cleanup.
     private var runningSandboxNames: Set<String> {
@@ -95,6 +103,41 @@ struct ShellView: View {
         .onChange(of: sessionStore.activeSessionIDs) { _, newIDs in
             if let selected = selectedSessionID, !newIDs.contains(selected) {
                 selectedSessionID = nil
+            }
+        }
+        // Task 8.1: NavigationCoordinator observation
+        .onChange(of: ServiceContainer.shared?.navigationCoordinator.pendingNavigation) { _, _ in
+            guard let coordinator = ServiceContainer.shared?.navigationCoordinator,
+                  let request = coordinator.consumeNavigation() else { return }
+            switch request {
+            case .sandbox(let name):
+                if let agentID = sessionStore.agentSessionID(for: name) {
+                    selectedSessionID = agentID
+                } else {
+                    let (id, _) = sessionStore.startSession(sandboxName: name, type: .agent)
+                    selectedSessionID = id
+                }
+            case .policyLog:
+                selection = .policies
+                selectedSessionID = nil
+            case .createSheet:
+                createSheetWorkspace = nil
+                showCreateSheet = true
+            case .createWithWorkspace(let path):
+                createSheetWorkspace = path
+                showCreateSheet = true
+            }
+        }
+        // Task 8.2: Notification state diffing — use sandboxStatusHash to avoid type-check timeout
+        .onChange(of: sandboxStatusHash) { _, _ in
+            let current = sandboxStore.sandboxes
+            Task { @MainActor in
+                await ServiceContainer.shared?.notificationManager.onSandboxesUpdated(
+                    previous: previousSandboxes,
+                    current: current,
+                    busyOperations: sandboxStore.busyOperations
+                )
+                previousSandboxes = current
             }
         }
     }

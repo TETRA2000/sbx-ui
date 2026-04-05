@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct sbx_uiApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var sandboxStore: SandboxStore
     @State private var policyStore: PolicyStore
     @State private var sessionStore: TerminalSessionStore

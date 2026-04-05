@@ -501,3 +501,81 @@ struct SbxShortcutsProviderTests {
         #expect(shortcuts.count <= 10)
     }
 }
+
+// MARK: - Integration Tests (Task 8.3)
+
+struct IntegrationTests {
+
+    private func makeSandbox(name: String, status: SandboxStatus) -> Sandbox {
+        Sandbox(id: UUID().uuidString, name: name, agent: "claude", status: status, workspace: "/tmp/\(name)", ports: [], createdAt: Date())
+    }
+
+    @Test func notificationFlowOnSandboxCreation() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [makeSandbox(name: "flow-test", status: .creating)]
+        let current = [makeSandbox(name: "flow-test", status: .running)]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: [:])
+
+        let requests = await mock.postedRequests
+        #expect(requests.count == 1)
+        #expect(requests.first?.content.userInfo["sandboxName"] as? String == "flow-test")
+    }
+
+    @Test func notificationSuppressesUserInitiatedStop() async {
+        let mock = MockNotificationCenter()
+        let manager = await NotificationManager(center: mock)
+        await manager.requestAuthorization()
+
+        let previous = [makeSandbox(name: "suppress-test", status: .running)]
+        let current = [makeSandbox(name: "suppress-test", status: .stopped)]
+        await manager.onSandboxesUpdated(previous: previous, current: current, busyOperations: ["suppress-test": .stopping])
+
+        let requests = await mock.postedRequests
+        #expect(requests.isEmpty)
+    }
+
+    @Test func dockMenuReflectsStateChange() async throws {
+        let service = StubSbxService()
+        let store = await SandboxStore(service: service)
+        _ = try await store.createSandbox(workspace: "/tmp/dock-test", name: "dock-test")
+
+        let menu1 = DockMenuBuilder.buildMenu(sandboxes: await store.sandboxes)
+        let sandboxItems1 = menu1.items.filter { !$0.isSeparatorItem && $0.title != "New Sandbox…" }
+        #expect(sandboxItems1.first?.submenu?.items.contains { $0.title == "Stop" } == true)
+
+        try await store.stopSandbox(name: "dock-test")
+
+        let menu2 = DockMenuBuilder.buildMenu(sandboxes: await store.sandboxes)
+        let sandboxItems2 = menu2.items.filter { !$0.isSeparatorItem && $0.title != "New Sandbox…" }
+        #expect(sandboxItems2.first?.submenu?.items.contains { $0.title == "Resume" } == true)
+    }
+
+    @Test func navigationCoordinatorWithWindowActivator() async {
+        let activator = await MockWindowActivator()
+        let coordinator = await NavigationCoordinator(windowActivator: activator)
+        await coordinator.navigate(to: .sandbox(name: "nav-test"))
+
+        let pending = await coordinator.pendingNavigation
+        #expect(pending == .sandbox(name: "nav-test"))
+        let count = await activator.activationCount
+        #expect(count == 1)
+    }
+
+    @Test func dropHandlerWithExistingWorkspace() async {
+        let coordinator = await NavigationCoordinator()
+        let sandboxes = [
+            Sandbox(id: "1", name: "existing", agent: "claude", status: .running, workspace: "/tmp/existing", ports: [], createdAt: Date())
+        ]
+        let url = URL(fileURLWithPath: "/tmp/existing", isDirectory: true)
+        var showSheet = false
+        var droppedPath: String?
+        _ = await DropHandler.handleDroppedURL(url, sandboxes: sandboxes, coordinator: coordinator, showCreateSheet: &showSheet, droppedWorkspacePath: &droppedPath)
+
+        let pending = await coordinator.pendingNavigation
+        #expect(pending == .sandbox(name: "existing"))
+        #expect(!showSheet)
+    }
+}
