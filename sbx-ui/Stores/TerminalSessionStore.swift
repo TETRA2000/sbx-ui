@@ -96,7 +96,8 @@ final class TerminalSessionStore {
     }
 
     func disconnectAll() {
-        for name in activeSessions.keys {
+        let names = Array(activeSessions.keys)
+        for name in names {
             disconnect(name: name)
         }
     }
@@ -104,12 +105,11 @@ final class TerminalSessionStore {
     /// Remove sessions whose sandbox is no longer running.
     func cleanupStaleSessions(sandboxes: [Sandbox]) {
         let runningNames = Set(sandboxes.filter { $0.status == .running }.map(\.name))
-        for name in activeSessions.keys {
-            if !runningNames.contains(name) {
-                appLog(.info, "PTY", "Cleaning up stale session: \(name)")
-                activeSessions.removeValue(forKey: name)
-                thumbnails.removeValue(forKey: name)
-            }
+        let staleNames = activeSessions.keys.filter { !runningNames.contains($0) }
+        for name in staleNames {
+            appLog(.info, "PTY", "Cleaning up stale session: \(name)")
+            activeSessions.removeValue(forKey: name)
+            thumbnails.removeValue(forKey: name)
         }
     }
 
