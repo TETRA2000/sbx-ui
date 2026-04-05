@@ -19,6 +19,10 @@ protocol SbxServiceProtocol: Sendable {
     func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping
     func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws
 
+    // Environment variables (per-sandbox, via /etc/sandbox-persistent.sh)
+    func envVarList(name: String) async throws -> [EnvVar]
+    func envVarSync(name: String, vars: [EnvVar]) async throws
+
     // Session messaging
     func sendMessage(name: String, message: String) async throws
 }

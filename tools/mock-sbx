@@ -9,7 +9,7 @@ STATE_DIR="${SBX_MOCK_STATE_DIR:-/tmp/mock-sbx-state}"
 # --- State Management ---
 
 ensure_state_dirs() {
-  mkdir -p "$STATE_DIR/sandboxes" "$STATE_DIR/policies" "$STATE_DIR/ports" "$STATE_DIR/policy-log"
+  mkdir -p "$STATE_DIR/sandboxes" "$STATE_DIR/policies" "$STATE_DIR/ports" "$STATE_DIR/policy-log" "$STATE_DIR/envvars"
   # Seed defaults only once (marker file prevents re-seeding)
   if [[ ! -f "$STATE_DIR/.initialized" ]]; then
     seed_defaults
@@ -247,6 +247,7 @@ cmd_rm() {
 
   rm -f "$STATE_DIR/sandboxes/$name.json"
   rm -f "$STATE_DIR/ports/$name.json"
+  rm -f "$STATE_DIR/envvars/$name.sh"
   echo "Sandbox '$name' removed"
 }
 
@@ -578,10 +579,12 @@ cmd_exec() {
       *)
         if [[ -z "$name" ]]; then
           name="$1"
+          shift
         else
-          cmd_args+=("$1")
+          # Once sandbox name is found, all remaining args are the command
+          cmd_args=("$@")
+          break
         fi
-        shift
         ;;
     esac
   done
@@ -594,6 +597,37 @@ cmd_exec() {
   if [[ "$status" != "running" ]]; then
     echo "Error: sandbox '$name' is not running" >&2
     exit 1
+  fi
+
+  # Intercept /etc/sandbox-persistent.sh operations for env var management
+  local cmd_str="${cmd_args[*]:-}"
+
+  # READ: cat /etc/sandbox-persistent.sh
+  if [[ "${cmd_args[0]:-}" == "cat" && "$cmd_str" == *"/etc/sandbox-persistent.sh"* ]]; then
+    local envfile="$STATE_DIR/envvars/$name.sh"
+    if [[ -f "$envfile" ]]; then
+      cat "$envfile"
+    else
+      echo "cat: /etc/sandbox-persistent.sh: No such file or directory" >&2
+      exit 1
+    fi
+    exit 0
+  fi
+
+  # WRITE or DELETE via bash -c: bash -c '...'
+  if [[ "${cmd_args[0]:-}" == "bash" && "${cmd_args[1]:-}" == "-c" ]]; then
+    local script="${cmd_args[2]:-}"
+    if [[ "$script" == *"/etc/sandbox-persistent.sh"* ]]; then
+      local envfile="$STATE_DIR/envvars/$name.sh"
+      if [[ "$script" == *"rm -f"* ]]; then
+        rm -f "$envfile"
+      else
+        # Extract content between heredoc markers and write to file
+        # The script is: cat > /etc/sandbox-persistent.sh << 'SBXENVEOF'\n...\nSBXENVEOF
+        echo "$script" | sed -n "/^cat.*<<.*SBXENVEOF/,/^SBXENVEOF$/p" | sed '1d;$d' > "$envfile"
+      fi
+      exit 0
+    fi
   fi
 
   # If command is bash/sh, exec it

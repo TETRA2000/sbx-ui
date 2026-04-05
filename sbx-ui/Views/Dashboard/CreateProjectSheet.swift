@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 struct CreateProjectSheet: View {
     @Environment(SandboxStore.self) private var sandboxStore
+    @Environment(EnvVarStore.self) private var envVarStore
     @Environment(ToastManager.self) private var toastManager
     @Environment(\.dismiss) private var dismiss
     @State private var selectedPath: URL?
@@ -10,6 +11,11 @@ struct CreateProjectSheet: View {
     @State private var showFilePicker = false
     @State private var nameError: String?
     @State private var isCreating = false
+    @State private var initialEnvVars: [EnvVar] = []
+    @State private var showEnvVarSection = false
+    @State private var newEnvKey = ""
+    @State private var newEnvValue = ""
+    @State private var envKeyError: String?
 
     // Name validation uses SbxValidation.isValidName()
 
@@ -69,6 +75,73 @@ struct CreateProjectSheet: View {
                 }
             }
 
+            // Environment variables (optional)
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation { showEnvVarSection.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showEnvVarSection ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10))
+                        Text("Environment Variables (optional)")
+                            .font(.label(12))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("envVarSectionToggle")
+
+                if showEnvVarSection {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(initialEnvVars) { envVar in
+                            HStack {
+                                Text(envVar.key)
+                                    .font(.code(11, weight: .bold))
+                                    .foregroundStyle(Color.accent)
+                                Text("=")
+                                    .font(.code(11))
+                                    .foregroundStyle(.secondary)
+                                Text(envVar.value)
+                                    .font(.code(11))
+                                    .lineLimit(1)
+                                Spacer()
+                                Button {
+                                    initialEnvVars.removeAll { $0.key == envVar.key }
+                                } label: {
+                                    Image(systemName: "xmark.circle")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color.error.opacity(0.7))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            TextField("KEY", text: $newEnvKey)
+                                .font(.code(11))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 140)
+                                .onChange(of: newEnvKey) { validateEnvKey() }
+                                .accessibilityIdentifier("createEnvKeyField")
+                            TextField("value", text: $newEnvValue)
+                                .font(.code(11))
+                                .textFieldStyle(.roundedBorder)
+                                .accessibilityIdentifier("createEnvValueField")
+                            Button("Add") { addInitialEnvVar() }
+                                .disabled(newEnvKey.isEmpty || newEnvValue.isEmpty || envKeyError != nil)
+                                .accessibilityIdentifier("createAddEnvVarButton")
+                        }
+
+                        if let error = envKeyError {
+                            Text(error)
+                                .font(.ui(11))
+                                .foregroundStyle(Color.error)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
             Spacer()
 
             // Actions
@@ -101,7 +174,7 @@ struct CreateProjectSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 480, height: 320)
+        .frame(width: 480, height: 440)
         .background(Color.surfaceContainer)
         .onAppear {
             if ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" {
@@ -130,15 +203,41 @@ struct CreateProjectSheet: View {
         }
     }
 
+    private func validateEnvKey() {
+        if newEnvKey.isEmpty {
+            envKeyError = nil
+            return
+        }
+        if !SbxValidation.isValidEnvKey(newEnvKey) {
+            envKeyError = "Letters, digits, and underscores only; must start with letter or underscore"
+        } else {
+            envKeyError = nil
+        }
+    }
+
+    private func addInitialEnvVar() {
+        guard !newEnvKey.isEmpty, !newEnvValue.isEmpty, envKeyError == nil else { return }
+        initialEnvVars.removeAll { $0.key == newEnvKey }  // upsert
+        initialEnvVars.append(EnvVar(key: newEnvKey, value: newEnvValue))
+        newEnvKey = ""
+        newEnvValue = ""
+    }
+
     private func createSandbox() {
         guard let path = selectedPath else { return }
         isCreating = true
         Task {
             do {
-                try await sandboxStore.createSandbox(
+                let sandbox = try await sandboxStore.createSandbox(
                     workspace: path.path(percentEncoded: false),
                     name: customName.isEmpty ? nil : customName
                 )
+                if !initialEnvVars.isEmpty {
+                    try await envVarStore.syncInitialEnvVars(
+                        sandboxName: sandbox.name,
+                        vars: initialEnvVars
+                    )
+                }
                 dismiss()
             } catch {
                 toastManager.show(error.localizedDescription)

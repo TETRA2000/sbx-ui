@@ -150,6 +150,54 @@ actor RealSbxService: SbxServiceProtocol {
         try checkCli(result)
     }
 
+    // MARK: - Environment Variables
+
+    func envVarList(name: String) async throws -> [EnvVar] {
+        let result = try await cli.exec(command: "sbx", args: [
+            "exec", "-d", name, "cat", "/etc/sandbox-persistent.sh"
+        ])
+        if result.exitCode != 0 {
+            if result.stderr.contains("No such file") || result.stdout.contains("No such file") {
+                return []
+            }
+            try checkCli(result)
+        }
+        return SbxOutputParser.parseManagedEnvVars(result.stdout)
+    }
+
+    func envVarSync(name: String, vars: [EnvVar]) async throws {
+        // Read existing file content (empty if doesn't exist)
+        let readResult = try await cli.exec(command: "sbx", args: [
+            "exec", "-d", name, "cat", "/etc/sandbox-persistent.sh"
+        ])
+        let existingContent: String
+        if readResult.exitCode != 0 {
+            existingContent = ""
+        } else {
+            existingContent = readResult.stdout
+        }
+
+        let newContent = SbxOutputParser.rebuildPersistentSh(
+            existingContent: existingContent,
+            managedVars: vars
+        )
+
+        if newContent.isEmpty {
+            // Remove the file if nothing left
+            let rmResult = try await cli.exec(command: "sbx", args: [
+                "exec", "-d", name, "bash", "-c", "rm -f /etc/sandbox-persistent.sh"
+            ])
+            try checkCli(rmResult)
+        } else {
+            // Write the full file atomically via heredoc
+            let script = "cat > /etc/sandbox-persistent.sh << 'SBXENVEOF'\n\(newContent)SBXENVEOF"
+            let writeResult = try await cli.exec(command: "sbx", args: [
+                "exec", "-d", name, "bash", "-c", script
+            ])
+            try checkCli(writeResult)
+        }
+    }
+
     // MARK: - Session
 
     func sendMessage(name: String, message: String) async throws {

@@ -641,4 +641,91 @@ final class sbx_uiUITests: XCTestCase {
         let found = connecting.waitForExistence(timeout: 5) || sessionBadge.waitForExistence(timeout: 2)
         XCTAssertTrue(found, "Terminal thumbnail area or session badge should appear on card")
     }
+
+    // MARK: - Environment Variables
+
+    @MainActor
+    func testEnvVarButtonExistsOnCard() throws {
+        createSandbox(name: "test-envbtn")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        let envButton = app.buttons["envVarButton-test-envbtn"]
+        XCTAssertTrue(envButton.waitForExistence(timeout: 5), "ENV chip should appear on sandbox card")
+    }
+
+    @MainActor
+    func testEnvVarSheetOpens() throws {
+        createSandbox(name: "test-envsheet")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        let envButton = app.buttons["envVarButton-test-envsheet"]
+        XCTAssertTrue(envButton.waitForExistence(timeout: 5))
+        envButton.click()
+
+        let addButton = app.buttons["addEnvVarButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Variable button should appear in env var panel")
+
+        let noVarsText = app.staticTexts["No environment variables"]
+        XCTAssertTrue(noVarsText.waitForExistence(timeout: 5), "Empty state should show")
+    }
+
+    @MainActor
+    func testAddEnvVarSheetValidation() throws {
+        createSandbox(name: "test-envval")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        let envButton = app.buttons["envVarButton-test-envval"]
+        XCTAssertTrue(envButton.waitForExistence(timeout: 5))
+        envButton.click()
+
+        let addButton = app.buttons["addEnvVarButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        addButton.click()
+
+        let keyField = app.textFields["envVarKeyField"]
+        XCTAssertTrue(keyField.waitForExistence(timeout: 5))
+
+        let valueField = app.textFields["envVarValueField"]
+        XCTAssertTrue(valueField.exists)
+
+        let submitButton = app.buttons["submitEnvVarButton"]
+        XCTAssertTrue(submitButton.exists)
+        XCTAssertFalse(submitButton.isEnabled, "Submit should be disabled with empty fields")
+
+        keyField.click()
+        keyField.typeText("1BAD")
+        let errorText = app.staticTexts["Must start with a letter or underscore, then letters, digits, or underscores"]
+        XCTAssertTrue(errorText.waitForExistence(timeout: 3), "Validation error should appear for invalid key")
+    }
+
+    @MainActor
+    func testCreateSheetEnvVarSection() throws {
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        newButton.click()
+
+        let deployButton = app.buttons["deployButton"]
+        XCTAssertTrue(deployButton.waitForExistence(timeout: 5))
+
+        // Click the env var section toggle to expand
+        let toggle = app.buttons["envVarSectionToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Env var section toggle should appear")
+        toggle.click()
+
+        // Verify env var fields appear
+        let keyField = app.textFields["createEnvKeyField"]
+        XCTAssertTrue(keyField.waitForExistence(timeout: 5), "Env key field should appear after expanding")
+
+        let valueField = app.textFields["createEnvValueField"]
+        XCTAssertTrue(valueField.exists, "Env value field should appear")
+
+        let addButton = app.buttons["createAddEnvVarButton"]
+        XCTAssertTrue(addButton.exists, "Add button should appear")
+    }
 }

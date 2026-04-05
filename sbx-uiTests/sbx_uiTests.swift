@@ -21,6 +21,8 @@ actor FailingSbxService: SbxServiceProtocol {
     nonisolated func portsList(name: String) async throws -> [PortMapping] { throw SbxServiceError.cliError("test error") }
     nonisolated func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping { throw SbxServiceError.cliError("test error") }
     nonisolated func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws { throw SbxServiceError.cliError("test error") }
+    nonisolated func envVarList(name: String) async throws -> [EnvVar] { throw SbxServiceError.cliError("test error") }
+    nonisolated func envVarSync(name: String, vars: [EnvVar]) async throws { throw SbxServiceError.cliError("test error") }
     nonisolated func sendMessage(name: String, message: String) async throws { throw SbxServiceError.cliError("test error") }
 }
 
@@ -29,6 +31,7 @@ actor StubSbxService: SbxServiceProtocol {
     private var sandboxes: [String: Sandbox] = [:]
     private var policies: [String: PolicyRule] = [:]
     private var portMappings: [String: [PortMapping]] = [:]
+    private var envVars: [String: [EnvVar]] = [:]
     private var policyLogs: [PolicyLogEntry] = []
 
     init() {
@@ -99,6 +102,7 @@ actor StubSbxService: SbxServiceProtocol {
         guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
         sandboxes.removeValue(forKey: name)
         portMappings.removeValue(forKey: name)
+        envVars.removeValue(forKey: name)
     }
 
     func policyList() async throws -> [PolicyRule] {
@@ -153,6 +157,17 @@ actor StubSbxService: SbxServiceProtocol {
     func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws {
         guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
         portMappings[name]?.removeAll { $0.hostPort == hostPort && $0.sandboxPort == sbxPort }
+    }
+
+    func envVarList(name: String) async throws -> [EnvVar] {
+        guard sandboxes[name] != nil else { throw SbxServiceError.notFound(name) }
+        return envVars[name] ?? []
+    }
+
+    func envVarSync(name: String, vars: [EnvVar]) async throws {
+        guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
+        guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
+        envVars[name] = vars
     }
 
     func sendMessage(name: String, message: String) async throws {
@@ -1220,5 +1235,361 @@ struct TerminalSessionStoreTests {
 
         await store.cleanupStaleSessions(sandboxes: [])
         #expect(await store.activeSessionCount == 0)
+    }
+}
+
+// MARK: - EnvVar Validation Tests
+
+struct EnvVarValidationTests {
+    @Test func validEnvKeys() {
+        #expect(SbxValidation.isValidEnvKey("MY_VAR"))
+        #expect(SbxValidation.isValidEnvKey("API_KEY"))
+        #expect(SbxValidation.isValidEnvKey("_private"))
+        #expect(SbxValidation.isValidEnvKey("a"))
+        #expect(SbxValidation.isValidEnvKey("FOO123"))
+        #expect(SbxValidation.isValidEnvKey("camelCase"))
+    }
+
+    @Test func invalidEnvKeyStartsWithDigit() {
+        #expect(!SbxValidation.isValidEnvKey("1BAD"))
+        #expect(!SbxValidation.isValidEnvKey("123"))
+    }
+
+    @Test func invalidEnvKeyWithSpecialChars() {
+        #expect(!SbxValidation.isValidEnvKey("MY-VAR"))
+        #expect(!SbxValidation.isValidEnvKey("MY VAR"))
+        #expect(!SbxValidation.isValidEnvKey("MY.VAR"))
+        #expect(!SbxValidation.isValidEnvKey("$VAR"))
+    }
+
+    @Test func emptyKeyInvalid() {
+        #expect(!SbxValidation.isValidEnvKey(""))
+    }
+}
+
+// MARK: - StubSbxService EnvVar Tests
+
+struct StubSbxServiceEnvVarTests {
+    @Test func setEnvVarOnRunningSandbox() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        try await service.envVarSync(name: "test", vars: [EnvVar(key: "FOO", value: "bar")])
+        let vars = try await service.envVarList(name: "test")
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "FOO")
+        #expect(vars[0].value == "bar")
+    }
+
+    @Test func setEnvVarOnStoppedThrows() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        try await service.stop(name: "test")
+        do {
+            try await service.envVarSync(name: "test", vars: [EnvVar(key: "FOO", value: "bar")])
+            #expect(Bool(false), "Expected error")
+        } catch let error as SbxServiceError {
+            if case .notRunning = error {} else {
+                #expect(Bool(false), "Expected notRunning error, got \(error)")
+            }
+        }
+    }
+
+    @Test func setEnvVarOnNonExistentThrows() async throws {
+        let service = StubSbxService()
+        do {
+            try await service.envVarSync(name: "ghost", vars: [EnvVar(key: "X", value: "1")])
+            #expect(Bool(false), "Expected error")
+        } catch let error as SbxServiceError {
+            if case .notFound = error {} else {
+                #expect(Bool(false), "Expected notFound error, got \(error)")
+            }
+        }
+    }
+
+    @Test func envVarListReturnsEmpty() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let vars = try await service.envVarList(name: "test")
+        #expect(vars.isEmpty)
+    }
+
+    @Test func envVarSyncOverwritesPrevious() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        try await service.envVarSync(name: "test", vars: [EnvVar(key: "A", value: "1")])
+        try await service.envVarSync(name: "test", vars: [EnvVar(key: "B", value: "2")])
+        let vars = try await service.envVarList(name: "test")
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "B")
+    }
+
+    @Test func envVarListPreservesOrder() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let ordered = [EnvVar(key: "Z", value: "3"), EnvVar(key: "A", value: "1"), EnvVar(key: "M", value: "2")]
+        try await service.envVarSync(name: "test", vars: ordered)
+        let vars = try await service.envVarList(name: "test")
+        #expect(vars.map(\.key) == ["Z", "A", "M"])
+    }
+
+    @Test func envVarsCleanedOnRemove() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        try await service.envVarSync(name: "test", vars: [EnvVar(key: "X", value: "1")])
+        try await service.rm(name: "test")
+        do {
+            _ = try await service.envVarList(name: "test")
+            #expect(Bool(false), "Expected error")
+        } catch let error as SbxServiceError {
+            if case .notFound = error {} else {
+                #expect(Bool(false), "Expected notFound error")
+            }
+        }
+    }
+}
+
+// MARK: - SbxOutputParser EnvVar Tests
+
+struct SbxOutputParserEnvVarTests {
+    @Test func parseManagedSectionOnly() {
+        let content = """
+        export USER_VAR=outside
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        export API_KEY=sk-123
+        export MY_VAR=hello
+        # --- end sbx-ui managed ---
+        export AFTER_VAR=below
+        """
+        let vars = SbxOutputParser.parseManagedEnvVars(content)
+        #expect(vars.count == 2)
+        #expect(vars[0].key == "API_KEY")
+        #expect(vars[0].value == "sk-123")
+        #expect(vars[1].key == "MY_VAR")
+        #expect(vars[1].value == "hello")
+    }
+
+    @Test func parseIgnoresUserContentOutsideMarkers() {
+        let content = """
+        export MANUAL=yes
+        export OTHER=value
+        """
+        let vars = SbxOutputParser.parseManagedEnvVars(content)
+        #expect(vars.isEmpty)
+    }
+
+    @Test func parseEmptyWhenNoMarkers() {
+        let vars = SbxOutputParser.parseManagedEnvVars("")
+        #expect(vars.isEmpty)
+    }
+
+    @Test func parseSkipsCommentsAndBlankLines() {
+        let content = """
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        # This is a comment
+
+        export VALID=yes
+        # --- end sbx-ui managed ---
+        """
+        let vars = SbxOutputParser.parseManagedEnvVars(content)
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "VALID")
+    }
+
+    @Test func parseSkipsInvalidKeys() {
+        let content = """
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        export 1BAD=value
+        export GOOD=value
+        export MY-VAR=bad
+        # --- end sbx-ui managed ---
+        """
+        let vars = SbxOutputParser.parseManagedEnvVars(content)
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "GOOD")
+    }
+
+    @Test func parseWithoutExportPrefix() {
+        let content = """
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        FOO=bar
+        # --- end sbx-ui managed ---
+        """
+        let vars = SbxOutputParser.parseManagedEnvVars(content)
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "FOO")
+        #expect(vars[0].value == "bar")
+    }
+
+    // MARK: - rebuildPersistentSh Tests
+
+    @Test func rebuildInsertsBlockWhenNoMarkers() {
+        let existing = "export USER_VAR=hello\n"
+        let result = SbxOutputParser.rebuildPersistentSh(
+            existingContent: existing,
+            managedVars: [EnvVar(key: "API_KEY", value: "sk-123")]
+        )
+        #expect(result.contains("export USER_VAR=hello"))
+        #expect(result.contains("# --- sbx-ui managed (DO NOT EDIT) ---"))
+        #expect(result.contains("export API_KEY=sk-123"))
+        #expect(result.contains("# --- end sbx-ui managed ---"))
+    }
+
+    @Test func rebuildReplacesExistingManagedBlock() {
+        let existing = """
+        export BEFORE=yes
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        export OLD=value
+        # --- end sbx-ui managed ---
+        export AFTER=yes
+        """
+        let result = SbxOutputParser.rebuildPersistentSh(
+            existingContent: existing,
+            managedVars: [EnvVar(key: "NEW", value: "fresh")]
+        )
+        #expect(result.contains("export BEFORE=yes"))
+        #expect(result.contains("export NEW=fresh"))
+        #expect(result.contains("export AFTER=yes"))
+        #expect(!result.contains("export OLD=value"))
+    }
+
+    @Test func rebuildRemovesManagedBlockWhenEmpty() {
+        let existing = """
+        export KEEP=yes
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        export REMOVE=me
+        # --- end sbx-ui managed ---
+        export ALSO_KEEP=yes
+        """
+        let result = SbxOutputParser.rebuildPersistentSh(
+            existingContent: existing,
+            managedVars: []
+        )
+        #expect(result.contains("export KEEP=yes"))
+        #expect(result.contains("export ALSO_KEEP=yes"))
+        #expect(!result.contains("sbx-ui managed"))
+        #expect(!result.contains("export REMOVE=me"))
+    }
+
+    @Test func rebuildHandlesEmptyExistingFile() {
+        let result = SbxOutputParser.rebuildPersistentSh(
+            existingContent: "",
+            managedVars: [EnvVar(key: "NEW", value: "val")]
+        )
+        #expect(result.contains("# --- sbx-ui managed (DO NOT EDIT) ---"))
+        #expect(result.contains("export NEW=val"))
+        #expect(result.contains("# --- end sbx-ui managed ---"))
+    }
+
+    @Test func rebuildEmptyVarsOnEmptyFileReturnsEmpty() {
+        let result = SbxOutputParser.rebuildPersistentSh(
+            existingContent: "",
+            managedVars: []
+        )
+        #expect(result.isEmpty)
+    }
+
+    @Test func rebuildPreservesUserContentSurroundingMarkers() {
+        let existing = """
+        #!/bin/bash
+        # My custom setup
+        export PATH=$PATH:/custom/bin
+
+        # --- sbx-ui managed (DO NOT EDIT) ---
+        export OLD_KEY=old
+        # --- end sbx-ui managed ---
+
+        # Post-setup
+        echo "loaded"
+        """
+        let result = SbxOutputParser.rebuildPersistentSh(
+            existingContent: existing,
+            managedVars: [EnvVar(key: "A", value: "1"), EnvVar(key: "B", value: "2")]
+        )
+        #expect(result.contains("#!/bin/bash"))
+        #expect(result.contains("export PATH=$PATH:/custom/bin"))
+        #expect(result.contains("export A=1"))
+        #expect(result.contains("export B=2"))
+        #expect(result.contains("echo \"loaded\""))
+        #expect(!result.contains("export OLD_KEY=old"))
+    }
+}
+
+// MARK: - EnvVarStore Tests
+
+struct EnvVarStoreTests {
+    @Test func fetchPopulatesForSandbox() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        try await service.envVarSync(name: "test", vars: [EnvVar(key: "A", value: "1")])
+        let store = await EnvVarStore(service: service)
+        await store.fetchEnvVars(for: "test")
+        let vars = await store.vars(for: "test")
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "A")
+    }
+
+    @Test func addEnvVarSyncsAndUpdatesState() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let store = await EnvVarStore(service: service)
+        try await store.addEnvVar(sandboxName: "test", key: "FOO", value: "bar")
+        let vars = await store.vars(for: "test")
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "FOO")
+        // Verify it was actually synced to the service
+        let serviceVars = try await service.envVarList(name: "test")
+        #expect(serviceVars.count == 1)
+    }
+
+    @Test func removeEnvVarSyncsAndUpdatesState() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let store = await EnvVarStore(service: service)
+        try await store.addEnvVar(sandboxName: "test", key: "A", value: "1")
+        try await store.addEnvVar(sandboxName: "test", key: "B", value: "2")
+        try await store.removeEnvVar(sandboxName: "test", key: "A")
+        let vars = await store.vars(for: "test")
+        #expect(vars.count == 1)
+        #expect(vars[0].key == "B")
+    }
+
+    @Test func addExistingKeyOverwrites() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let store = await EnvVarStore(service: service)
+        try await store.addEnvVar(sandboxName: "test", key: "X", value: "old")
+        try await store.addEnvVar(sandboxName: "test", key: "X", value: "new")
+        let vars = await store.vars(for: "test")
+        #expect(vars.count == 1)
+        #expect(vars[0].value == "new")
+    }
+
+    @Test func syncInitialEnvVarsWritesAll() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let store = await EnvVarStore(service: service)
+        try await store.syncInitialEnvVars(
+            sandboxName: "test",
+            vars: [EnvVar(key: "A", value: "1"), EnvVar(key: "B", value: "2")]
+        )
+        let vars = await store.vars(for: "test")
+        #expect(vars.count == 2)
+    }
+
+    @Test func syncInitialSkipsEmpty() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/proj", opts: RunOptions(name: "test"))
+        let store = await EnvVarStore(service: service)
+        try await store.syncInitialEnvVars(sandboxName: "test", vars: [])
+        let vars = await store.vars(for: "test")
+        #expect(vars.isEmpty)
+    }
+
+    @Test func fetchErrorSetsErrorProperty() async {
+        let service = FailingSbxService()
+        let store = await EnvVarStore(service: service)
+        await store.fetchEnvVars(for: "nonexistent")
+        let error = await store.error
+        #expect(error != nil)
     }
 }
