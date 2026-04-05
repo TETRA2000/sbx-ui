@@ -161,6 +161,9 @@ cmd_run() {
     fi
     if [[ -t 0 ]]; then
       interactive_mode "$_name"
+    else
+      # Block until stdin closes (keeps PTY process alive for in-app terminals)
+      cat > /dev/null 2>&1 || true
     fi
     return
   fi
@@ -187,7 +190,11 @@ cmd_run() {
     local status
     status="$(read_sandbox_field "$name" "status")"
     if [[ "$status" == "running" ]]; then
-      interactive_mode "$name"
+      if [[ -t 0 ]]; then
+        interactive_mode "$name"
+      else
+        cat > /dev/null 2>&1 || true
+      fi
       return
     fi
     # Resume: update status to running
@@ -196,6 +203,8 @@ cmd_run() {
     mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
     if [[ -t 0 ]]; then
       interactive_mode "$name"
+    else
+      cat > /dev/null 2>&1 || true
     fi
     return
   fi
@@ -211,9 +220,11 @@ cmd_run() {
   echo "  Workspace: $workspace (direct mount)"
   echo "  Agent: $agent"
 
-  # If stdin is a TTY, enter interactive mode
+  # If stdin is a TTY, enter interactive mode; otherwise block on stdin
   if [[ -t 0 ]]; then
     interactive_mode "$name"
+  else
+    cat > /dev/null 2>&1 || true
   fi
 }
 
