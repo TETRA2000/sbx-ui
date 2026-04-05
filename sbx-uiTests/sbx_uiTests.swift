@@ -1190,6 +1190,25 @@ struct TerminalSessionStoreTests {
         }
     }
 
+    @Test func agentAndShellHaveDistinctTerminalViews() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+
+        let (agentID, agentView) = await store.startSession(sandboxName: "test", type: .agent)
+        let (shellID, shellView) = await store.startSession(sandboxName: "test", type: .shell)
+
+        // Different session IDs
+        #expect(agentID != shellID)
+        // Different terminal view instances — critical for session switching
+        #expect(agentView !== shellView)
+
+        // Each session lookup returns the correct view
+        let agentSession = await store.session(for: agentID)
+        let shellSession = await store.session(for: shellID)
+        #expect(agentSession?.terminalView === agentView)
+        #expect(shellSession?.terminalView === shellView)
+    }
+
     @Test func cleanupClearsAllSessionTypesForSandbox() async {
         let service = StubSbxService()
         let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())

@@ -54,8 +54,9 @@ struct SessionPanelView: View {
             .padding(.vertical, 8)
             .background(Color.surfaceContainer)
 
-            // Terminal area
+            // Terminal area — .id forces SwiftUI to recreate the NSViewRepresentable when switching sessions
             TerminalViewWrapper(sessionID: sessionID)
+                .id(sessionID)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("terminalView")
 
