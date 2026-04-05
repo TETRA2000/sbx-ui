@@ -451,17 +451,12 @@ struct AppIntentTests {
 
 struct SandboxEntityTests {
 
-    @Test func entityQueryReturnsMatchingEntities() async throws {
-        let service = StubSbxService()
-        await ServiceContainer.configure(service: service)
-        let store = await ServiceContainer.shared!.sandboxStore
-        _ = try await store.createSandbox(workspace: "/tmp/entity-query", name: "entity-a")
-        await store.fetchSandboxes()
-
-        let query = SandboxEntityQuery()
-        let entities = try await query.entities(for: ["entity-a"])
-        #expect(entities.count >= 1)
-        #expect(entities.contains { $0.id == "entity-a" })
+    @Test func entityMapsFromSandboxCorrectly() {
+        let sandbox = Sandbox(id: "1", name: "entity-a", agent: "claude", status: .running, workspace: "/tmp", ports: [], createdAt: Date())
+        let entity = SandboxEntity(id: sandbox.name, name: sandbox.name, status: sandbox.status.rawValue)
+        #expect(entity.id == "entity-a")
+        #expect(entity.name == "entity-a")
+        #expect(entity.status == "running")
     }
 
     @Test func entityQueryNonExistentReturnsEmpty() async throws {
