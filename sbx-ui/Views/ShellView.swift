@@ -82,6 +82,12 @@ struct ShellView: View {
         .onChange(of: runningSandboxNames) { _, _ in
             sessionStore.cleanupStaleSessions(sandboxes: sandboxStore.sandboxes)
         }
+        .onChange(of: sessionStore.activeSessionNames) { _, newNames in
+            // Auto-navigate back to dashboard when the active session's process exits
+            if let selected = selectedSandbox, !newNames.contains(selected.name) {
+                selectedSandbox = nil
+            }
+        }
     }
 }
 

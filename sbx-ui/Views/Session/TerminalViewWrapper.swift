@@ -1,8 +1,17 @@
 import SwiftUI
 @preconcurrency import SwiftTerm
 
-/// LocalProcessTerminalView subclass that auto-focuses when added to a window.
+/// LocalProcessTerminalView subclass that auto-focuses when added to a window
+/// and notifies when the spawned process terminates.
 class FocusableTerminalView: LocalProcessTerminalView {
+    /// Called when the PTY process exits (may fire on a background thread).
+    var onProcessExit: ((_ exitCode: Int32?) -> Void)?
+
+    override func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        super.processTerminated(source, exitCode: exitCode)
+        onProcessExit?(exitCode)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window else { return }

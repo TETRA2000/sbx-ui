@@ -75,6 +75,14 @@ final class TerminalSessionStore {
         }
         env.append("COLORTERM=truecolor")
 
+        terminalView.onProcessExit = { [weak self] exitCode in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                appLog(.info, "PTY", "Process exited for session: \(name) (code: \(exitCode.map(String.init) ?? "nil"))")
+                self.disconnect(name: name)
+            }
+        }
+
         terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
         appLog(.debug, "PTY", "Started process via terminalView.startProcess for: \(name)")
 

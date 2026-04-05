@@ -960,6 +960,59 @@ struct TerminalSessionStoreTests {
         }
     }
 
+    @Test func processExitDisconnectsSession() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        let view = await store.startSession(name: "exit-test")
+        let activeBefore = await store.isActive(name: "exit-test")
+        #expect(activeBefore == true)
+
+        // Simulate process exit by invoking the callback on main queue
+        await view.onProcessExit?(0)
+        // Allow the DispatchQueue.main.async in the callback to execute
+        try await Task.sleep(for: .milliseconds(100))
+
+        let activeAfter = await store.isActive(name: "exit-test")
+        #expect(activeAfter == false)
+        let count = await store.activeSessionCount
+        #expect(count == 0)
+    }
+
+    @Test func processExitClearsThumbnail() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        let view = await store.startSession(name: "exit-thumb")
+        await store.captureSnapshots()
+
+        // Simulate process exit
+        await view.onProcessExit?(0)
+        try await Task.sleep(for: .milliseconds(100))
+
+        let thumb = await store.thumbnails["exit-thumb"]
+        #expect(thumb == nil)
+    }
+
+    @Test func processExitPreservesOtherSessions() async throws {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service)
+
+        let viewA = await store.startSession(name: "alive")
+        let viewB = await store.startSession(name: "exiting")
+
+        // Only the "exiting" session's process exits
+        await viewB.onProcessExit?(0)
+        try await Task.sleep(for: .milliseconds(100))
+
+        let activeAlive = await store.isActive(name: "alive")
+        let activeExiting = await store.isActive(name: "exiting")
+        #expect(activeAlive == true)
+        #expect(activeExiting == false)
+        let count = await store.activeSessionCount
+        #expect(count == 1)
+    }
+
     @Test func sessionMetadataPerSession() async {
         let service = StubSbxService()
         let store = await TerminalSessionStore(service: service)
