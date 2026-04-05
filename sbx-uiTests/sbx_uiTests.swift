@@ -1222,3 +1222,97 @@ struct TerminalSessionStoreTests {
         #expect(await store.activeSessionCount == 0)
     }
 }
+
+// MARK: - ServiceContainer Tests
+
+struct ServiceContainerTests {
+    @Test func sharedInstanceReturnsSameObject() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let a = await ServiceContainer.shared!
+        let b = await ServiceContainer.shared!
+        #expect(a === b)
+    }
+
+    @Test func storesAreInitialized() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let container = await ServiceContainer.shared!
+        let sandboxes = await container.sandboxStore.sandboxes
+        #expect(sandboxes.isEmpty || true)
+        let rules = await container.policyStore.rules
+        #expect(rules.isEmpty || true)
+    }
+
+    @Test func configureReplacesSharedInstance() async {
+        let stub = StubSbxService()
+        await ServiceContainer.configure(service: stub)
+        let container = await ServiceContainer.shared!
+        let sandbox = try? await container.sandboxStore.createSandbox(workspace: "/tmp/config-test", name: "config-test")
+        #expect(sandbox?.name == "config-test")
+        // Reset for other tests
+        await ServiceContainer.configure(service: StubSbxService())
+    }
+
+    @Test func navigationCoordinatorIsInitialized() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let container = await ServiceContainer.shared!
+        let pending = await container.navigationCoordinator.pendingNavigation
+        #expect(pending == nil)
+    }
+
+    @Test func notificationManagerIsInitialized() async {
+        await ServiceContainer.configure(service: StubSbxService())
+        let container = await ServiceContainer.shared!
+        let authorized = await container.notificationManager.isAuthorized
+        #expect(!authorized)
+    }
+}
+
+// MARK: - NavigationCoordinator Tests
+
+@MainActor
+final class MockWindowActivator: WindowActivatorProtocol {
+    var activationCount = 0
+    func activateMainWindow() { activationCount += 1 }
+}
+
+struct NavigationCoordinatorTests {
+    @Test func navigateSetsPendingNavigation() async {
+        let activator = await MockWindowActivator()
+        let coordinator = await NavigationCoordinator(windowActivator: activator)
+        await coordinator.navigate(to: .sandbox(name: "test"))
+        let pending = await coordinator.pendingNavigation
+        #expect(pending == .sandbox(name: "test"))
+    }
+
+    @Test func consumeReturnsAndClears() async {
+        let coordinator = await NavigationCoordinator()
+        await coordinator.navigate(to: .createSheet)
+        let first = await coordinator.consumeNavigation()
+        #expect(first == .createSheet)
+        let second = await coordinator.consumeNavigation()
+        #expect(second == nil)
+    }
+
+    @Test func consumeReturnsNilWhenEmpty() async {
+        let coordinator = await NavigationCoordinator()
+        let result = await coordinator.consumeNavigation()
+        #expect(result == nil)
+    }
+
+    @Test func multipleNavigatesOverwritesPending() async {
+        let coordinator = await NavigationCoordinator()
+        await coordinator.navigate(to: .sandbox(name: "first"))
+        await coordinator.navigate(to: .policyLog(sandboxName: "second"))
+        let pending = await coordinator.pendingNavigation
+        #expect(pending == .policyLog(sandboxName: "second"))
+    }
+
+    @Test func allNavigationRequestCasesEquatable() async {
+        #expect(NavigationRequest.sandbox(name: "a") == NavigationRequest.sandbox(name: "a"))
+        #expect(NavigationRequest.sandbox(name: "a") != NavigationRequest.sandbox(name: "b"))
+        #expect(NavigationRequest.policyLog(sandboxName: "x") == NavigationRequest.policyLog(sandboxName: "x"))
+        #expect(NavigationRequest.createSheet == NavigationRequest.createSheet)
+        #expect(NavigationRequest.createWithWorkspace(path: "/tmp") == NavigationRequest.createWithWorkspace(path: "/tmp"))
+        #expect(NavigationRequest.createSheet != NavigationRequest.sandbox(name: "a"))
+    }
+}

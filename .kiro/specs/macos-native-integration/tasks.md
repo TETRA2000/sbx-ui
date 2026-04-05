@@ -1,26 +1,26 @@
 # Implementation Plan
 
-- [ ] 1. Foundation — ServiceContainer and NavigationCoordinator
-- [ ] 1.1 Create the shared service container with configurable singleton
+- [x] 1. Foundation — ServiceContainer and NavigationCoordinator
+- [x] 1.1 Create the shared service container with configurable singleton
   - Introduce a centralized container that holds the single service instance and all stores (sandbox, policy, session), plus the new navigation coordinator and notification manager
   - Expose a `configure` class method so tests can replace the backing service with a stub
   - The default initializer creates stores using the production service factory
   - _Requirements: 1.12, 2.7, 4.10, 5.11_
 
-- [ ] 1.2 (P) Create the navigation coordinator with window activation abstraction
+- [x] 1.2 (P) Create the navigation coordinator with window activation abstraction
   - Define a navigation request type covering four cases: open sandbox session, open policy log filtered to a sandbox, open the create sheet, and open the create sheet pre-filled with a workspace path
   - Implement a coordinator that accepts navigation requests, stores the latest pending request, and activates the main window via a window activator protocol
   - Provide a consume method that returns and clears the pending request
   - Inject a window activator protocol so that tests can substitute a mock (records activation call count)
   - _Requirements: 1.9, 1.10, 2.5, 2.6, 3.7, 4.7, 4.8_
 
-- [ ] 1.3 Refactor the app entry point to use the service container
+- [x] 1.3 Refactor the app entry point to use the service container
   - Replace the per-store initialization in the App struct with reads from the shared container
   - Keep environment injection unchanged — views still receive stores through SwiftUI environment
   - Ensure the existing app behavior (window group, polling, debug log) is unaffected
   - _Requirements: 1.12_
 
-- [ ] 1.4 Unit tests for service container and navigation coordinator
+- [x] 1.4 Unit tests for service container and navigation coordinator
   - Verify the shared instance returns the same object on repeated access
   - Verify `configure` replaces the shared instance with one backed by a stub service
   - Verify navigate sets the pending request and calls the window activator

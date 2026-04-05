@@ -10,13 +10,11 @@ struct sbx_uiApp: App {
     @State private var logStore = LogStore.shared
 
     init() {
-        let service = ServiceFactory.create()
-        let sandbox = SandboxStore(service: service)
-        let policy = PolicyStore(service: service)
-        let session = TerminalSessionStore(service: service)
-        _sandboxStore = State(initialValue: sandbox)
-        _policyStore = State(initialValue: policy)
-        _sessionStore = State(initialValue: session)
+        ServiceContainer.initialize()
+        let container = ServiceContainer.shared!
+        _sandboxStore = State(initialValue: container.sandboxStore)
+        _policyStore = State(initialValue: container.policyStore)
+        _sessionStore = State(initialValue: container.sessionStore)
     }
 
     var body: some Scene {
