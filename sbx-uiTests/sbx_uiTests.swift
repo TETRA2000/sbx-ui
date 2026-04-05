@@ -644,8 +644,15 @@ struct SandboxStoreBusyOperationsTests {
         _ = try await store.createSandbox(workspace: "/tmp/project", name: "test-busy-resume")
         try await store.stopSandbox(name: "test-busy-resume")
         try await store.resumeSandbox(name: "test-busy-resume")
+        // Resume is non-blocking — busy state is set immediately
         let ops = await store.busyOperations
-        #expect(ops.isEmpty)
+        #expect(ops["test-busy-resume"] == .resuming)
+        // Yield to let background resume Task complete (changes sandbox to running)
+        try await Task.sleep(for: .milliseconds(100))
+        // Polling clears it once sandbox shows as running
+        await store.fetchSandboxes()
+        let opsAfterPoll = await store.busyOperations
+        #expect(opsAfterPoll.isEmpty)
     }
 
     @Test func busyOperationsClearedAfterPublishPort() async throws {

@@ -4,6 +4,7 @@ struct EnvVarPanelView: View {
     let sandbox: Sandbox
     @Environment(EnvVarStore.self) private var envVarStore
     @Environment(ToastManager.self) private var toastManager
+    @Environment(\.dismiss) private var dismiss
     @State private var showAddSheet = false
 
     var body: some View {
@@ -53,6 +54,14 @@ struct EnvVarPanelView: View {
                 ForEach(vars) { envVar in
                     EnvVarRow(sandbox: sandbox, envVar: envVar)
                 }
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
             }
         }
         .padding(20)
