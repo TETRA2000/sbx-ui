@@ -7,9 +7,11 @@ struct SandboxCardView: View {
     var onOpenShellSession: (String) -> Void
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
+    @Environment(EnvVarStore.self) private var envVarStore
     @Environment(ToastManager.self) private var toastManager
     @State private var isHovered = false
     @State private var showTerminateConfirm = false
+    @State private var showEnvVarSheet = false
 
     private var isTransient: Bool {
         sandbox.status == .creating || sandbox.status == .removing || sandboxStore.isBusy(sandbox.name)
@@ -17,84 +19,122 @@ struct SandboxCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(sandbox.name)
-                        .font(.ui(15, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(sandbox.agent)
-                        .font(.code(11))
-                        .foregroundStyle(.secondary)
+            // Tappable content area (click to open session or resume)
+            VStack(alignment: .leading, spacing: 12) {
+                // Header
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(sandbox.name)
+                            .font(.ui(15, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(sandbox.agent)
+                            .font(.code(11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if sessionStore.hasAnySession(sandboxName: sandbox.name) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "terminal.fill")
+                                .font(.system(size: 9))
+                            Text("SESSION")
+                                .font(.label(9))
+                        }
+                        .foregroundStyle(Color.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .accessibilityIdentifier("sessionBadge-\(sandbox.name)")
+                    }
+                    StatusChipView(status: sandbox.status)
                 }
-                Spacer()
-                if sessionStore.hasAnySession(sandboxName: sandbox.name) {
+
+                // Workspace path
+                Text(sandbox.workspace)
+                    .font(.code(11))
+                    .foregroundStyle(Color.surfaceContainerHighest)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                // Terminal thumbnail (show agent session thumbnail)
+                if let agentID = sessionStore.agentSessionID(for: sandbox.name) {
+                    Group {
+                        if let thumbnail = sessionStore.thumbnails[agentID] {
+                            Image(nsImage: thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 120)
+                                .clipped()
+                        } else {
+                            HStack(spacing: 8) {
+                                Image(systemName: "terminal")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(.tertiary)
+                                Text("Connecting...")
+                                    .font(.code(11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 120)
+                        }
+                    }
+                    .background(Color.surfaceLowest)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .accessibilityIdentifier("sessionThumbnail-\(sandbox.name)")
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if sandbox.status == .running {
+                    onSelect(sandbox)
+                } else if sandbox.status == .stopped && !sandboxStore.isBusy(sandbox.name) {
+                    Task {
+                        do {
+                            try await sandboxStore.resumeSandbox(name: sandbox.name)
+                        } catch {
+                            toastManager.show(error.localizedDescription)
+                        }
+                    }
+                }
+            }
+
+            // Port chips + ENV chip (outside tap gesture area)
+            HStack(spacing: 6) {
+                ForEach(sandbox.ports) { port in
+                    Text("\(port.hostPort)\u{2192}\(port.sandboxPort)")
+                        .font(.code(10))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.surfaceContainerHigh)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+
+                Button {
+                    showEnvVarSheet = true
+                } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: "terminal.fill")
+                        Image(systemName: "key.fill")
                             .font(.system(size: 9))
-                        Text("SESSION")
+                        Text("ENV")
                             .font(.label(9))
+                        let count = envVarStore.vars(for: sandbox.name).count
+                        if count > 0 {
+                            Text("\(count)")
+                                .font(.code(9, weight: .bold))
+                        }
                     }
                     .foregroundStyle(Color.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.secondary.opacity(0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .accessibilityIdentifier("sessionBadge-\(sandbox.name)")
                 }
-                StatusChipView(status: sandbox.status)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("envVarButton-\(sandbox.name)")
             }
 
-            // Workspace path
-            Text(sandbox.workspace)
-                .font(.code(11))
-                .foregroundStyle(Color.surfaceContainerHighest)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            // Port chips
-            if !sandbox.ports.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(sandbox.ports) { port in
-                        Text("\(port.hostPort)\u{2192}\(port.sandboxPort)")
-                            .font(.code(10))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.surfaceContainerHigh)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                }
-            }
-
-            // Terminal thumbnail (show agent session thumbnail)
-            if let agentID = sessionStore.agentSessionID(for: sandbox.name) {
-                Group {
-                    if let thumbnail = sessionStore.thumbnails[agentID] {
-                        Image(nsImage: thumbnail)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 120)
-                            .clipped()
-                    } else {
-                        HStack(spacing: 8) {
-                            Image(systemName: "terminal")
-                                .font(.system(size: 16))
-                                .foregroundStyle(.tertiary)
-                            Text("Connecting...")
-                                .font(.code(11))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 120)
-                    }
-                }
-                .background(Color.surfaceLowest)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityIdentifier("sessionThumbnail-\(sandbox.name)")
-            }
-
-            // Actions
+            // Actions (outside tap gesture area)
             HStack(spacing: 8) {
                 if sandbox.status == .running {
                     Button {
@@ -169,7 +209,6 @@ struct SandboxCardView: View {
         .padding(16)
         .background(isHovered ? Color.surfaceContainerHigh : Color.surfaceContainer)
         .clipShape(RoundedRectangle(cornerRadius: DesignSystem.cornerRadius))
-        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
@@ -190,19 +229,6 @@ struct SandboxCardView: View {
                     }
             }
         }
-        .onTapGesture {
-            if sandbox.status == .running {
-                onSelect(sandbox)
-            } else if sandbox.status == .stopped && !sandboxStore.isBusy(sandbox.name) {
-                Task {
-                    do {
-                        try await sandboxStore.resumeSandbox(name: sandbox.name)
-                    } catch {
-                        toastManager.show(error.localizedDescription)
-                    }
-                }
-            }
-        }
         .confirmationDialog("Terminate \(sandbox.name)?", isPresented: $showTerminateConfirm) {
             Button("Terminate Agent", role: .destructive) {
                 Task {
@@ -217,6 +243,10 @@ struct SandboxCardView: View {
         } message: {
             Text("This will permanently remove the sandbox and all its data.")
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sandboxCard-\(sandbox.name)")
+        .sheet(isPresented: $showEnvVarSheet) {
+            EnvVarPanelView(sandbox: sandbox)
+        }
     }
 }

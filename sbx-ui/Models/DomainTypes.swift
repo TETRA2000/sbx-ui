@@ -76,9 +76,19 @@ enum SbxServiceError: Error, Sendable, LocalizedError {
     }
 }
 
+struct EnvVar: Identifiable, Sendable, Equatable {
+    var id: String { key }
+    let key: String
+    let value: String
+}
+
 enum SbxValidation {
     nonisolated static func isValidName(_ name: String) -> Bool {
         name.range(of: #"^[a-z0-9][a-z0-9-]*$"#, options: .regularExpression) != nil
+    }
+
+    nonisolated static func isValidEnvKey(_ key: String) -> Bool {
+        key.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil
     }
 }
 

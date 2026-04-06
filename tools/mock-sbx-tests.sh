@@ -339,6 +339,43 @@ test_interactive_attach_no_crash() {
   assert_contains "$out" '"status":"running"'
 }
 
+# --- Environment Variable Tests ---
+
+test_exec_write_envvars() {
+  sbx run claude /tmp/proj --name env-test < /dev/null
+  local script
+  script="$(printf "cat > /etc/sandbox-persistent.sh << 'SBXENVEOF'\nexport API_KEY=sk-123\nexport MY_VAR=hello\nSBXENVEOF")"
+  sbx exec -d env-test bash -c "$script"
+  local content
+  content="$(cat "$SBX_MOCK_STATE_DIR/envvars/env-test.sh")"
+  assert_contains "$content" "export API_KEY=sk-123"
+  assert_contains "$content" "export MY_VAR=hello"
+}
+
+test_exec_read_envvars() {
+  sbx run claude /tmp/proj --name envread-test < /dev/null
+  printf 'export FOO=bar\n' > "$SBX_MOCK_STATE_DIR/envvars/envread-test.sh"
+  local out
+  out="$(sbx exec -d envread-test cat /etc/sandbox-persistent.sh)"
+  assert_contains "$out" "export FOO=bar"
+}
+
+test_exec_read_missing_envvars() {
+  sbx run claude /tmp/proj --name envmiss-test < /dev/null
+  if sbx exec -d envmiss-test cat /etc/sandbox-persistent.sh 2>/dev/null; then
+    echo "Expected failure reading missing env file" >&2
+    return 1
+  fi
+}
+
+test_envvars_cleaned_on_rm() {
+  sbx run claude /tmp/proj --name envclean-test < /dev/null
+  printf 'export X=1\n' > "$SBX_MOCK_STATE_DIR/envvars/envclean-test.sh"
+  [[ -f "$SBX_MOCK_STATE_DIR/envvars/envclean-test.sh" ]] || return 1
+  sbx rm -f envclean-test
+  [[ ! -f "$SBX_MOCK_STATE_DIR/envvars/envclean-test.sh" ]]
+}
+
 # --- State Tests ---
 
 test_state_persistence() {
@@ -410,6 +447,13 @@ run_test "unknown command"            test_unknown_command
 echo ""
 echo "Interactive:"
 run_test "attach no crash"            test_interactive_attach_no_crash
+
+echo ""
+echo "Environment Variables:"
+run_test "exec write envvars"         test_exec_write_envvars
+run_test "exec read envvars"          test_exec_read_envvars
+run_test "exec read missing envvars"  test_exec_read_missing_envvars
+run_test "envvars cleaned on rm"      test_envvars_cleaned_on_rm
 
 echo ""
 echo "State:"

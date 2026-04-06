@@ -23,7 +23,21 @@ enum SandboxOperation: Sendable {
 
     func fetchSandboxes() async {
         do {
-            sandboxes = try await service.list()
+            var fetched = try await service.list()
+            // Stable sort: running first, then alphabetically by name
+            fetched.sort { a, b in
+                let aRunning = a.status == .running
+                let bRunning = b.status == .running
+                if aRunning != bRunning { return aRunning }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+            sandboxes = fetched
+            // Clear stale busy states (e.g. resume completed while CLI was blocking)
+            for (name, op) in busyOperations {
+                if op == .resuming, let s = fetched.first(where: { $0.name == name }), s.status == .running {
+                    busyOperations.removeValue(forKey: name)
+                }
+            }
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -46,10 +60,17 @@ enum SandboxOperation: Sendable {
 
     func resumeSandbox(name: String) async throws {
         busyOperations[name] = .resuming
-        defer { busyOperations.removeValue(forKey: name) }
         appLog(.info, "SandboxStore", "Resuming sandbox: \(name)")
-        _ = try await service.run(agent: "", workspace: "", opts: RunOptions(name: name))
-        await fetchSandboxes()
+        // sbx run <name> blocks (attaches to agent), so launch it without waiting.
+        // Polling in fetchSandboxes() will detect the running state and clear the busy flag.
+        Task {
+            do {
+                _ = try await service.run(agent: "", workspace: "", opts: RunOptions(name: name))
+            } catch {
+                appLog(.warn, "SandboxStore", "Resume command ended: \(error.localizedDescription)")
+            }
+            await MainActor.run { busyOperations.removeValue(forKey: name) }
+        }
     }
 
     func stopSandbox(name: String) async throws {

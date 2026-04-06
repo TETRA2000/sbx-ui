@@ -148,7 +148,7 @@ final class sbx_uiUITests: XCTestCase {
 - Use `waitForExistence(timeout:)` generously (5-10s) — CLI mock spawns processes, so it's slower than in-memory mocks
 - Find elements: `app.buttons["id"]`, `app.staticTexts["text"]`, `app.textFields["id"]`
 - SwiftUI VStacks with `.accessibilityIdentifier` are NOT reliably found as `app.groups` or `app.otherElements` — use child text/button identifiers instead
-- Buttons inside complex card views (with `.onTapGesture`, `.confirmationDialog`) may not be discoverable by XCUITest — test these via unit tests on the store layer instead
+- Card views use `.accessibilityElement(children: .contain)` to expose child buttons to XCUITest. The tappable content area (header, workspace, thumbnail) has `.onTapGesture`; action buttons and ENV chip sit outside it so they are independently clickable.
 - Use `waitForNonExistence(timeout:)` to verify elements disappear after deletion
 - For button enable state: use `XCTNSPredicateExpectation` with `isEnabled == true`
 
@@ -171,8 +171,9 @@ private func createSandbox(name: String) {
 
 ### Available Accessibility Identifiers
 - **Dashboard**: `newSandboxButton`, `sandboxCard-{name}`, `statusChip-{status}`, `stopButton-{name}`, `terminateButton-{name}`, `openShellButton-{name}`, `copyCommandButton-{name}`, `sessionBadge-{name}`, `sessionThumbnail-{name}`
-- **Create Sheet**: `browseButton`, `sandboxNameField`, `deployButton`
+- **Create Sheet**: `browseButton`, `sandboxNameField`, `deployButton`, `envVarSectionToggle`, `createEnvKeyField`, `createEnvValueField`, `createAddEnvVarButton`
 - **Policies**: `addPolicyButton`, `removePolicy-{resources}`, `domainInput`, `decisionPicker`, `submitPolicyButton`, `logSandboxFilter`, `blockedOnlyToggle`
 - **Ports**: `addPortButton`, `hostPortField`, `sbxPortField`, `publishPortButton`, `unpublishPort-{hostPort}`
+- **EnvVars**: `addEnvVarButton`, `envVarKeyField`, `envVarValueField`, `submitEnvVarButton`, `removeEnvVar-{key}`, `envVarButton-{name}`
 - **Session**: `terminalView`, `agentStatusBar`, `backToDashboard`, `disconnectButton`
 - **Sidebar**: `sidebarSession-{label}` (label format: `"{name} (agent)"` or `"{name} (shell N)"`)

@@ -153,6 +153,120 @@ enum SbxOutputParser {
         }
     }
 
+    // MARK: - Environment Variables (/etc/sandbox-persistent.sh)
+
+    private static let managedStart = "# --- sbx-ui managed (DO NOT EDIT) ---"
+    private static let managedEnd = "# --- end sbx-ui managed ---"
+
+    /// Parse only the sbx-ui managed section from the full file content.
+    nonisolated static func parseManagedEnvVars(_ fileContent: String) -> [EnvVar] {
+        let lines = fileContent.components(separatedBy: "\n")
+        var inManaged = false
+        var result: [EnvVar] = []
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == managedStart {
+                inManaged = true
+                continue
+            }
+            if trimmed == managedEnd {
+                break
+            }
+            if inManaged {
+                if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+                let stripped = trimmed.hasPrefix("export ") ? String(trimmed.dropFirst(7)) : trimmed
+                guard let eqIdx = stripped.firstIndex(of: "=") else { continue }
+                let key = String(stripped[stripped.startIndex..<eqIdx])
+                    .trimmingCharacters(in: .whitespaces)
+                let value = String(stripped[stripped.index(after: eqIdx)...])
+                    .trimmingCharacters(in: .whitespaces)
+                guard SbxValidation.isValidEnvKey(key) else { continue }
+                result.append(EnvVar(key: key, value: value))
+            }
+        }
+        return result
+    }
+
+    /// Rebuild the full file content: preserve user sections, replace managed section.
+    nonisolated static func rebuildPersistentSh(existingContent: String, managedVars: [EnvVar]) -> String {
+        let lines = existingContent.components(separatedBy: "\n")
+        var before: [String] = []
+        var after: [String] = []
+        var inManaged = false
+        var foundMarkers = false
+        var pastManaged = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == managedStart {
+                inManaged = true
+                foundMarkers = true
+                continue
+            }
+            if trimmed == managedEnd {
+                inManaged = false
+                pastManaged = true
+                continue
+            }
+            if inManaged { continue }
+            if pastManaged {
+                after.append(line)
+            } else {
+                before.append(line)
+            }
+        }
+
+        // Build managed block
+        var managedBlock: [String] = []
+        if !managedVars.isEmpty {
+            managedBlock.append(managedStart)
+            for v in managedVars {
+                managedBlock.append("export \(v.key)=\(v.value)")
+            }
+            managedBlock.append(managedEnd)
+        }
+
+        // Assemble final content
+        var parts: [String] = []
+
+        // Before section (trim trailing empty lines if we're adding a managed block)
+        var beforeLines = before
+        if !managedBlock.isEmpty {
+            while let last = beforeLines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+                beforeLines.removeLast()
+            }
+        }
+        parts.append(contentsOf: beforeLines)
+
+        if !managedBlock.isEmpty {
+            // Add separator blank line if there's content before
+            if !parts.isEmpty && !(parts.last?.trimmingCharacters(in: .whitespaces).isEmpty ?? true) {
+                parts.append("")
+            }
+            parts.append(contentsOf: managedBlock)
+        }
+
+        if !after.isEmpty {
+            // Remove leading empty lines from after section
+            var afterLines = after
+            while let first = afterLines.first, first.trimmingCharacters(in: .whitespaces).isEmpty {
+                afterLines.removeFirst()
+            }
+            if !afterLines.isEmpty {
+                if !managedBlock.isEmpty {
+                    parts.append("")
+                }
+                parts.append(contentsOf: afterLines)
+            }
+        }
+
+        // Ensure trailing newline
+        let result = parts.joined(separator: "\n")
+        if result.isEmpty { return "" }
+        return result.hasSuffix("\n") ? result : result + "\n"
+    }
+
     // MARK: - Private Helpers
 
     /// Finds the start position of a column header. Returns (start, end) where end
