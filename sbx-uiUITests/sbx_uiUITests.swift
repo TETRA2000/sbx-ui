@@ -828,3 +828,115 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(countLabel.waitForExistence(timeout: 5), "Plugin count should show 0 installed")
     }
 }
+
+// MARK: - Plugin Execution E2E Tests
+
+final class PluginExecutionUITests: XCTestCase {
+    var app: XCUIApplication!
+    var pluginDir: String!
+
+    private static let projectRoot: String = {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
+    }()
+
+    private static var toolsDir: String {
+        URL(fileURLWithPath: projectRoot).appendingPathComponent("tools").path
+    }
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+
+        // Create a temp plugin directory with mock-plugin installed
+        pluginDir = NSTemporaryDirectory() + "sbx-plugins-\(UUID().uuidString)"
+        let pluginSubDir = pluginDir + "/com.test.e2e"
+        try FileManager.default.createDirectory(atPath: pluginSubDir, withIntermediateDirectories: true)
+
+        // Copy mock-plugin script
+        let mockPluginSrc = Self.toolsDir + "/mock-plugin"
+        let mockPluginDst = pluginSubDir + "/run.sh"
+        try FileManager.default.copyItem(atPath: mockPluginSrc, toPath: mockPluginDst)
+
+        // Write plugin.json
+        let manifest = """
+        {
+            "id": "com.test.e2e",
+            "name": "E2E Test Plugin",
+            "version": "1.0.0",
+            "description": "Plugin for E2E testing",
+            "entry": "run.sh",
+            "runtime": "bash",
+            "permissions": ["sandbox.list", "ui.log"],
+            "triggers": ["manual"]
+        }
+        """
+        try manifest.write(toFile: pluginSubDir + "/plugin.json", atomically: true, encoding: .utf8)
+
+        app = XCUIApplication()
+        app.launchEnvironment["SBX_CLI_MOCK"] = "1"
+        let stateDir = NSTemporaryDirectory() + "mock-sbx-\(UUID().uuidString)"
+        app.launchEnvironment["SBX_MOCK_STATE_DIR"] = stateDir
+        let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["PATH"] = "\(Self.toolsDir):\(existingPath)"
+        app.launchEnvironment["SBX_PLUGIN_DIR"] = pluginDir
+        app.launch()
+    }
+
+    override func tearDownWithError() throws {
+        if let dir = pluginDir {
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+    }
+
+    // MARK: - Plugin Discovery
+
+    func testPluginAppearsInList() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(2)
+
+        // Plugin should appear (not empty state)
+        let pluginCard = app.otherElements["pluginCard-com.test.e2e"]
+            .firstMatch
+        // Fall back to checking for plugin name text
+        let pluginName = app.staticTexts["E2E Test Plugin"]
+        XCTAssertTrue(
+            pluginCard.waitForExistence(timeout: 5) || pluginName.waitForExistence(timeout: 5),
+            "Plugin should appear in the list"
+        )
+
+        // Count should show 1 installed
+        let countLabel = app.staticTexts["1 installed"]
+        XCTAssertTrue(countLabel.waitForExistence(timeout: 5), "Should show 1 installed plugin")
+    }
+
+    func testPluginShowsVersionAndDescription() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(2)
+
+        let version = app.staticTexts["v1.0.0"]
+        XCTAssertTrue(version.waitForExistence(timeout: 5), "Version should be visible")
+
+        let description = app.staticTexts["Plugin for E2E testing"]
+        XCTAssertTrue(description.waitForExistence(timeout: 5), "Description should be visible")
+    }
+
+    // MARK: - Plugin Trigger Badges
+
+    func testPluginShowsTriggerBadge() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(2)
+
+        // The "manual" trigger badge should be visible on the card
+        let badge = app.staticTexts["manual"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5), "Manual trigger badge should appear on card")
+    }
+}
+

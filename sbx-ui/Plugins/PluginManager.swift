@@ -33,6 +33,8 @@ actor PluginManager {
 
         if let dir = pluginsDirectory {
             self.pluginsDirectory = dir
+        } else if let envDir = ProcessInfo.processInfo.environment["SBX_PLUGIN_DIR"] {
+            self.pluginsDirectory = URL(fileURLWithPath: envDir)
         } else {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             self.pluginsDirectory = appSupport.appendingPathComponent("sbx-ui/plugins")

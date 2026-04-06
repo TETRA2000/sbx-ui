@@ -2123,3 +2123,146 @@ struct PluginManagerTests {
         #expect(!running)
     }
 }
+
+// MARK: - Plugin Execution Tests (real process)
+
+@Suite(.timeLimit(.minutes(1)))
+struct PluginExecutionTests {
+    /// Path to the mock-plugin script in tools/
+    private static let mockPluginPath: String = {
+        // Derive from the test file path: sbx-uiTests/ → project root → tools/mock-plugin
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // sbx-uiTests/
+            .deletingLastPathComponent()  // project root
+            .appendingPathComponent("tools/mock-plugin")
+            .path
+    }()
+
+    /// Create a temp plugin directory with plugin.json pointing to mock-plugin.
+    private func createMockPluginDir(
+        id: String = "com.test.exec",
+        permissions: [String] = ["sandbox.list", "ui.log"]
+    ) -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("plugin-exec-\(UUID().uuidString)")
+            .appendingPathComponent(id)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Copy mock-plugin into the plugin directory
+        let destScript = dir.appendingPathComponent("run.sh")
+        try! FileManager.default.copyItem(
+            atPath: Self.mockPluginPath,
+            toPath: destScript.path
+        )
+
+        // Write plugin.json
+        let permsJson = permissions.map { "\"\($0)\"" }.joined(separator: ",")
+        let manifest = """
+        {
+            "id": "\(id)",
+            "name": "Exec Test Plugin",
+            "version": "1.0.0",
+            "description": "Test plugin that exercises the JSON-RPC pipeline",
+            "entry": "run.sh",
+            "runtime": "bash",
+            "permissions": [\(permsJson)],
+            "triggers": ["manual"]
+        }
+        """
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        return dir
+    }
+
+    @Test func pluginHostStartsAndStopsProcess() async throws {
+        let pluginDir = createMockPluginDir()
+        defer { try? FileManager.default.removeItem(at: pluginDir.deletingLastPathComponent()) }
+
+        let manifest = try PluginManifest.load(from: pluginDir)
+        let service = StubSbxService()
+
+        let host = PluginHost(manifest: manifest, pluginDirectory: pluginDir)
+        try await host.start(service: service)
+
+        let running = await host.isRunning
+        #expect(running)
+
+        await host.stop()
+
+        // Allow process termination
+        try await Task.sleep(for: .milliseconds(200))
+
+        let stoppedRunning = await host.isRunning
+        #expect(!stoppedRunning)
+    }
+
+    @Test func pluginManagerStartAndStopPlugin() async throws {
+        let pluginDir = createMockPluginDir()
+        let parentDir = pluginDir.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: parentDir)
+
+        let manifests = await manager.discoverPlugins()
+        #expect(manifests.count == 1)
+
+        let manifest = manifests.first!
+        try await manager.startPlugin(manifest: manifest)
+
+        let running = await manager.isRunning(id: manifest.id)
+        #expect(running)
+
+        let ids = await manager.runningPluginIds()
+        #expect(ids.contains(manifest.id))
+
+        await manager.stopPlugin(id: manifest.id)
+        try await Task.sleep(for: .milliseconds(200))
+
+        let afterStop = await manager.isRunning(id: manifest.id)
+        #expect(!afterStop)
+    }
+
+    @Test func pluginStopAllCleansUp() async throws {
+        let pluginDir = createMockPluginDir()
+        let parentDir = pluginDir.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: parentDir)
+
+        let manifests = await manager.discoverPlugins()
+        try await manager.startPlugin(manifest: manifests.first!)
+
+        let running = await manager.runningPluginIds()
+        #expect(running.count == 1)
+
+        await manager.stopAll()
+        try await Task.sleep(for: .milliseconds(200))
+
+        let afterStopAll = await manager.runningPluginIds()
+        #expect(afterStopAll.isEmpty)
+    }
+
+    @Test func duplicateStartThrows() async throws {
+        let pluginDir = createMockPluginDir()
+        let parentDir = pluginDir.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: parentDir)
+
+        let manifests = await manager.discoverPlugins()
+        try await manager.startPlugin(manifest: manifests.first!)
+
+        // Starting again should throw alreadyRunning
+        do {
+            try await manager.startPlugin(manifest: manifests.first!)
+            Issue.record("Expected alreadyRunning error")
+        } catch is PluginError {
+            // Expected
+        }
+
+        await manager.stopAll()
+        try await Task.sleep(for: .milliseconds(200))
+    }
+}
