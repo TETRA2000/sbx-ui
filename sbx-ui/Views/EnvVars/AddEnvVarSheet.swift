@@ -22,6 +22,7 @@ struct AddEnvVarSheet: View {
                 TextField("API_KEY", text: $key)
                     .font(.code(14))
                     .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
                     .onChange(of: key) { validateKey() }
                     .accessibilityIdentifier("envVarKeyField")
 
@@ -39,6 +40,7 @@ struct AddEnvVarSheet: View {
                 TextField("sk-...", text: $value)
                     .font(.code(14))
                     .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
                     .accessibilityIdentifier("envVarValueField")
             }
 

@@ -120,12 +120,14 @@ struct CreateProjectSheet: View {
                             TextField("KEY", text: $newEnvKey)
                                 .font(.code(11))
                                 .textFieldStyle(.roundedBorder)
+                                .disableAutocorrection(true)
                                 .frame(width: 140)
                                 .onChange(of: newEnvKey) { validateEnvKey() }
                                 .accessibilityIdentifier("createEnvKeyField")
                             TextField("value", text: $newEnvValue)
                                 .font(.code(11))
                                 .textFieldStyle(.roundedBorder)
+                                .disableAutocorrection(true)
                                 .accessibilityIdentifier("createEnvValueField")
                             Button("Add") { addInitialEnvVar() }
                                 .disabled(newEnvKey.isEmpty || newEnvValue.isEmpty || envKeyError != nil)
