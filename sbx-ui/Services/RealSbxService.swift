@@ -154,7 +154,7 @@ actor RealSbxService: SbxServiceProtocol {
 
     func envVarList(name: String) async throws -> [EnvVar] {
         let result = try await cli.exec(command: "sbx", args: [
-            "exec", "-d", name, "cat", "/etc/sandbox-persistent.sh"
+            "exec", name, "cat", "/etc/sandbox-persistent.sh"
         ])
         if result.exitCode != 0 {
             if result.stderr.contains("No such file") || result.stdout.contains("No such file") {
@@ -168,7 +168,7 @@ actor RealSbxService: SbxServiceProtocol {
     func envVarSync(name: String, vars: [EnvVar]) async throws {
         // Read existing file content (empty if doesn't exist)
         let readResult = try await cli.exec(command: "sbx", args: [
-            "exec", "-d", name, "cat", "/etc/sandbox-persistent.sh"
+            "exec", name, "cat", "/etc/sandbox-persistent.sh"
         ])
         let existingContent: String
         if readResult.exitCode != 0 {
