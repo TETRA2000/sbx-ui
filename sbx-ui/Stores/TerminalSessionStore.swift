@@ -11,13 +11,15 @@ protocol TerminalProcessLauncher {
 struct RealTerminalProcessLauncher: TerminalProcessLauncher {
     func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {
         let shellPath = "/bin/zsh"
-        // `exec cat` keeps the PTY process alive if sbx exits unexpectedly
+        // In mock mode, `exec cat` keeps the PTY alive so UI tests can assert on session state.
+        // In real mode, the process exits when sbx finishes, triggering onProcessExit → disconnect.
+        let keepAlive = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" ? "; exec cat" : ""
         let args: [String]
         switch sessionType {
         case .agent:
-            args = ["-c", "sbx run \(sandboxName); exec cat"]
+            args = ["-c", "sbx run \(sandboxName)\(keepAlive)"]
         case .shell:
-            args = ["-c", "sbx exec -it \(sandboxName) bash; exec cat"]
+            args = ["-c", "sbx exec -it \(sandboxName) bash\(keepAlive)"]
         }
         var env: [String] = []
         var hasTerm = false
