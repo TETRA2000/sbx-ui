@@ -790,4 +790,41 @@ final class sbx_uiUITests: XCTestCase {
         let addButton = app.buttons["createAddEnvVarButton"]
         XCTAssertTrue(addButton.exists, "Add button should appear")
     }
+
+    // MARK: - Plugin UI Tests
+
+    func testPluginsSidebarNavigationExists() {
+        // Verify PLUGINS sidebar item exists
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5), "PLUGINS sidebar label should exist")
+    }
+
+    func testPluginsEmptyState() {
+        // Navigate to Plugins
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(1)
+
+        // Verify empty state
+        let emptyTitle = app.staticTexts["No Plugins Installed"]
+        XCTAssertTrue(emptyTitle.waitForExistence(timeout: 5), "Empty state title should appear")
+
+        // Verify Install Plugin button exists
+        let installButton = app.buttons["installPluginButton"]
+        XCTAssertTrue(installButton.waitForExistence(timeout: 5), "Install plugin button should appear")
+    }
+
+    func testPluginsHeaderShows() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(1)
+
+        let header = app.staticTexts["Plugins"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5), "Plugins header should appear")
+
+        let countLabel = app.staticTexts["0 installed"]
+        XCTAssertTrue(countLabel.waitForExistence(timeout: 5), "Plugin count should show 0 installed")
+    }
 }

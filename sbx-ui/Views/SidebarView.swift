@@ -30,6 +30,15 @@ struct SidebarView: View {
                     Image(systemName: "shield.lefthalf.filled")
                 }
                 .tag(SidebarDestination.policies)
+
+                Label {
+                    Text("PLUGINS")
+                        .font(.label(11))
+                        .tracking(1.2)
+                } icon: {
+                    Image(systemName: "puzzlepiece.extension")
+                }
+                .tag(SidebarDestination.plugins)
             }
 
             if !sessionStore.activeSessions.isEmpty {

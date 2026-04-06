@@ -1,0 +1,11 @@
+[project]
+name = "sbx-plugin-sdk"
+version = "0.1.0"
+description = "SDK for building sbx-ui plugins"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+keywords = ["sbx-ui", "plugin", "docker", "sandbox"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

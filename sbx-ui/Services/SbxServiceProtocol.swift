@@ -23,6 +23,9 @@ protocol SbxServiceProtocol: Sendable {
     func envVarList(name: String) async throws -> [EnvVar]
     func envVarSync(name: String, vars: [EnvVar]) async throws
 
+    // Exec (generic command execution in sandbox)
+    func exec(name: String, command: String, args: [String]) async throws -> CliResult
+
     // Session messaging
     func sendMessage(name: String, message: String) async throws
 }

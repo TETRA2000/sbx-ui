@@ -3,6 +3,7 @@ import SwiftUI
 enum SidebarDestination: Hashable {
     case dashboard
     case policies
+    case plugins
 }
 
 struct ShellView: View {
@@ -49,6 +50,8 @@ struct ShellView: View {
                             )
                         case .policies:
                             PolicyPanelView()
+                        case .plugins:
+                            PluginListView()
                         }
                     }
                 }

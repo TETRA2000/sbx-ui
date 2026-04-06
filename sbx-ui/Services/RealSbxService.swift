@@ -198,6 +198,14 @@ actor RealSbxService: SbxServiceProtocol {
         }
     }
 
+    // MARK: - Exec
+
+    func exec(name: String, command: String, args: [String]) async throws -> CliResult {
+        let result = try await cli.exec(command: "sbx", args: ["exec", name, command] + args)
+        try checkCli(result)
+        return result
+    }
+
     // MARK: - Session
 
     func sendMessage(name: String, message: String) async throws {

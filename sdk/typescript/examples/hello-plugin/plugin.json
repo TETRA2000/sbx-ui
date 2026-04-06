@@ -1,0 +1,10 @@
+{
+  "id": "com.example.hello",
+  "name": "Hello Plugin",
+  "version": "1.0.0",
+  "description": "A simple example plugin that lists sandboxes on startup",
+  "entry": "index.js",
+  "runtime": "node",
+  "permissions": ["sandbox.list", "ui.log"],
+  "triggers": ["manual", "onSandboxCreated"]
+}

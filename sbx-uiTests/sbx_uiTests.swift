@@ -23,6 +23,7 @@ actor FailingSbxService: SbxServiceProtocol {
     nonisolated func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws { throw SbxServiceError.cliError("test error") }
     nonisolated func envVarList(name: String) async throws -> [EnvVar] { throw SbxServiceError.cliError("test error") }
     nonisolated func envVarSync(name: String, vars: [EnvVar]) async throws { throw SbxServiceError.cliError("test error") }
+    nonisolated func exec(name: String, command: String, args: [String]) async throws -> CliResult { throw SbxServiceError.cliError("test error") }
     nonisolated func sendMessage(name: String, message: String) async throws { throw SbxServiceError.cliError("test error") }
 }
 
@@ -168,6 +169,13 @@ actor StubSbxService: SbxServiceProtocol {
         guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
         guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
         envVars[name] = vars
+    }
+
+    func exec(name: String, command: String, args: [String]) async throws -> CliResult {
+        guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
+        guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
+        let output = "mock exec: \(command) \(args.joined(separator: " "))"
+        return CliResult(stdout: output, stderr: "", exitCode: 0)
     }
 
     func sendMessage(name: String, message: String) async throws {
@@ -1598,5 +1606,520 @@ struct EnvVarStoreTests {
         await store.fetchEnvVars(for: "nonexistent")
         let error = await store.error
         #expect(error != nil)
+    }
+}
+
+// MARK: - JSON-RPC Protocol Tests
+
+struct JsonRpcProtocolTests {
+    @Test func encodeDecodeRequest() throws {
+        let request = JsonRpcRequest(id: .int(1), method: "sandbox/list", params: ["filter": .string("running")])
+        let data = try JsonRpcCodec.encode(.request(request))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .request(let r) = decoded else {
+            Issue.record("Expected request")
+            return
+        }
+        #expect(r.id == .int(1))
+        #expect(r.method == "sandbox/list")
+        #expect(r.params?["filter"]?.stringValue == "running")
+    }
+
+    @Test func encodeDecodeResponse() throws {
+        let response = JsonRpcResponse.success(id: .int(42), result: .object(["name": .string("test")]))
+        let data = try JsonRpcCodec.encode(.response(response))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .response(let r) = decoded else {
+            Issue.record("Expected response")
+            return
+        }
+        #expect(r.id == .int(42))
+        #expect(r.result?.objectValue?["name"]?.stringValue == "test")
+        #expect(r.error == nil)
+    }
+
+    @Test func encodeDecodeErrorResponse() throws {
+        let response = JsonRpcResponse.error(
+            id: .string("abc"),
+            error: JsonRpcError(code: -32601, message: "Method not found")
+        )
+        let data = try JsonRpcCodec.encode(.response(response))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .response(let r) = decoded else {
+            Issue.record("Expected response")
+            return
+        }
+        #expect(r.id == .string("abc"))
+        #expect(r.error?.code == -32601)
+        #expect(r.error?.message == "Method not found")
+        #expect(r.result == nil)
+    }
+
+    @Test func encodeDecodeNotification() throws {
+        let notification = JsonRpcNotification(method: "initialize", params: ["pluginId": .string("test")])
+        let data = try JsonRpcCodec.encode(.notification(notification))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .notification(let n) = decoded else {
+            Issue.record("Expected notification")
+            return
+        }
+        #expect(n.method == "initialize")
+        #expect(n.params?["pluginId"]?.stringValue == "test")
+    }
+
+    @Test func requestWithStringId() throws {
+        let request = JsonRpcRequest(id: .string("req-1"), method: "test")
+        let data = try JsonRpcCodec.encodeRequest(request)
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .request(let r) = decoded else {
+            Issue.record("Expected request")
+            return
+        }
+        #expect(r.id == .string("req-1"))
+    }
+
+    @Test func anyCodableRoundTrips() throws {
+        let values: [AnyCodable] = [
+            .null, .bool(true), .int(42), .double(3.14), .string("hello"),
+            .array([.int(1), .string("two")]),
+            .object(["key": .bool(false)]),
+        ]
+        for value in values {
+            let data = try JSONEncoder().encode(value)
+            let decoded = try JSONDecoder().decode(AnyCodable.self, from: data)
+            // Verify round-trip produces valid data (no crash)
+            let reEncoded = try JSONEncoder().encode(decoded)
+            #expect(!reEncoded.isEmpty)
+        }
+    }
+
+    @Test func invalidJsonThrows() {
+        let data = "not json".data(using: .utf8)!
+        #expect(throws: (any Error).self) {
+            _ = try JsonRpcCodec.decode(data)
+        }
+    }
+}
+
+// MARK: - Plugin Manifest Tests
+
+struct PluginManifestTests {
+    @Test func loadValidManifest() throws {
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "com.test.plugin",
+            "name": "Test Plugin",
+            "version": "1.0.0",
+            "description": "A test plugin",
+            "entry": "main.sh",
+            "runtime": "bash",
+            "permissions": ["sandbox.list", "ui.log"],
+            "triggers": ["manual"]
+        }
+        """, entryContent: "#!/bin/bash\necho hello")
+
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.id == "com.test.plugin")
+        #expect(manifest.name == "Test Plugin")
+        #expect(manifest.version == "1.0.0")
+        #expect(manifest.permissions.count == 2)
+        #expect(manifest.triggers.contains(.manual))
+        #expect(manifest.directory == dir)
+    }
+
+    @Test func missingFileThrows() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func invalidIdThrows() throws {
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "noDots",
+            "name": "Test",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "main.sh",
+            "permissions": [],
+            "triggers": []
+        }
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func missingEntryFileThrows() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manifest = """
+        {
+            "id": "com.test.no-entry",
+            "name": "Test",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "nonexistent.sh",
+            "permissions": [],
+            "triggers": []
+        }
+        """
+        try manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    private func createTempPluginDir(manifest: String, entryContent: String) -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try! entryContent.write(to: dir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+        return dir
+    }
+}
+
+// MARK: - Plugin Permission Tests
+
+struct PluginPermissionTests {
+    @Test func grantedPermissionPasses() throws {
+        let checker = PluginPermissionChecker(granted: [.sandboxList, .uiLog])
+        try checker.check(.sandboxList)
+        try checker.check(.uiLog)
+    }
+
+    @Test func deniedPermissionThrows() {
+        let checker = PluginPermissionChecker(granted: [.sandboxList])
+        #expect(throws: PluginPermissionError.self) {
+            try checker.check(.sandboxExec)
+        }
+    }
+
+    @Test func methodToPermissionMapping() {
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/list") == .sandboxList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/exec") == .sandboxExec)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/stop") == .sandboxStop)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/run") == .sandboxRun)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/list") == .portsList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/publish") == .portsPublish)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/envVars/list") == .envVarList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/envVars/set") == .envVarSync)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/list") == .policyList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/allow") == .policyAllow)
+        #expect(PluginPermissionChecker.permissionRequired(for: "file/read") == .fileRead)
+        #expect(PluginPermissionChecker.permissionRequired(for: "file/write") == .fileWrite)
+        #expect(PluginPermissionChecker.permissionRequired(for: "ui/notify") == .uiNotify)
+        #expect(PluginPermissionChecker.permissionRequired(for: "ui/log") == .uiLog)
+        #expect(PluginPermissionChecker.permissionRequired(for: "unknown/method") == nil)
+    }
+
+    @Test func emptyGrantDeniesAll() {
+        let checker = PluginPermissionChecker(granted: [])
+        for perm in PluginPermission.allCases {
+            #expect(throws: PluginPermissionError.self) {
+                try checker.check(perm)
+            }
+        }
+    }
+}
+
+// MARK: - Plugin API Handler Tests
+
+struct PluginApiHandlerTests {
+    @Test func sandboxListReturnsResults() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(id: .int(1), method: "sandbox/list")
+        let response = await handler.handle(request: request)
+        #expect(response.error == nil)
+        let sandboxes = response.result?.arrayValue
+        #expect(sandboxes?.count == 1)
+    }
+
+    @Test func sandboxExecReturnsOutput() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(
+            id: .int(2),
+            method: "sandbox/exec",
+            params: ["name": .string("test-sb"), "command": .string("ls"), "args": .array([.string("-la")])]
+        )
+        let response = await handler.handle(request: request)
+        #expect(response.error == nil)
+        let stdout = response.result?.objectValue?["stdout"]?.stringValue
+        #expect(stdout?.contains("mock exec") == true)
+    }
+
+    @Test func permissionDeniedReturnsError() async {
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: [.uiLog])  // only ui.log granted
+        )
+        let request = JsonRpcRequest(id: .int(3), method: "sandbox/list")
+        let response = await handler.handle(request: request)
+        #expect(response.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    @Test func unknownMethodReturnsError() async {
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(id: .int(4), method: "unknown/method")
+        let response = await handler.handle(request: request)
+        #expect(response.error?.code == JsonRpcErrorCode.methodNotFound)
+    }
+
+    @Test func missingParamsReturnsInvalidParams() async {
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(id: .int(5), method: "sandbox/exec")  // missing name, command
+        let response = await handler.handle(request: request)
+        #expect(response.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func sandboxStopWorks() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(id: .int(6), method: "sandbox/stop", params: ["name": .string("test-sb")])
+        let response = await handler.handle(request: request)
+        #expect(response.error == nil)
+        #expect(response.result?.objectValue?["ok"]?.boolValue == true)
+    }
+
+    @Test func portsPublishAndList() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+
+        // Publish
+        let pubRequest = JsonRpcRequest(
+            id: .int(7),
+            method: "sandbox/ports/publish",
+            params: ["name": .string("test-sb"), "hostPort": .int(8080), "sbxPort": .int(3000)]
+        )
+        let pubResponse = await handler.handle(request: pubRequest)
+        #expect(pubResponse.error == nil)
+        #expect(pubResponse.result?.objectValue?["hostPort"]?.intValue == 8080)
+
+        // List
+        let listRequest = JsonRpcRequest(
+            id: .int(8),
+            method: "sandbox/ports/list",
+            params: ["name": .string("test-sb")]
+        )
+        let listResponse = await handler.handle(request: listRequest)
+        #expect(listResponse.error == nil)
+        #expect(listResponse.result?.arrayValue?.count == 1)
+    }
+
+    @Test func policyListReturnsDefaults() async {
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(id: .int(9), method: "policy/list")
+        let response = await handler.handle(request: request)
+        #expect(response.error == nil)
+        #expect((response.result?.arrayValue?.count ?? 0) >= 10)
+    }
+
+    @Test func fileReadAndWrite() async throws {
+        let dir = NSTemporaryDirectory() + "plugin-test-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let filePath = "\(dir)/test.txt"
+
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+
+        // Write
+        let writeRequest = JsonRpcRequest(
+            id: .int(10),
+            method: "file/write",
+            params: ["path": .string(filePath), "content": .string("hello world")]
+        )
+        let writeResponse = await handler.handle(request: writeRequest)
+        #expect(writeResponse.error == nil)
+
+        // Read
+        let readRequest = JsonRpcRequest(
+            id: .int(11),
+            method: "file/read",
+            params: ["path": .string(filePath)]
+        )
+        let readResponse = await handler.handle(request: readRequest)
+        #expect(readResponse.error == nil)
+        #expect(readResponse.result?.objectValue?["content"]?.stringValue == "hello world")
+
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func uiLogWorks() async {
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(
+            id: .int(12),
+            method: "ui/log",
+            params: ["message": .string("test log"), "level": .string("info")]
+        )
+        let response = await handler.handle(request: request)
+        #expect(response.error == nil)
+    }
+
+    @Test func portRangeValidation() async throws {
+        let service = StubSbxService()
+        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+        )
+        let request = JsonRpcRequest(
+            id: .int(13),
+            method: "sandbox/ports/publish",
+            params: ["name": .string("test-sb"), "hostPort": .int(99999), "sbxPort": .int(3000)]
+        )
+        let response = await handler.handle(request: request)
+        #expect(response.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+}
+
+// MARK: - Plugin Store Tests
+
+struct PluginStoreTests {
+    @Test func refreshDiscoversPlugins() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("plugins-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Create a valid plugin
+        let pluginDir = dir.appendingPathComponent("com.test.store-test")
+        try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+        let manifest = """
+        {"id":"com.test.store-test","name":"Store Test","version":"1.0.0","description":"test","entry":"main.sh","runtime":"bash","permissions":[],"triggers":[]}
+        """
+        try manifest.write(to: pluginDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try "#!/bin/bash".write(to: pluginDir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let store = await PluginStore(manager: manager)
+        await store.refresh()
+        let plugins = await store.plugins
+        #expect(plugins.count == 1)
+        #expect(plugins.first?.id == "com.test.store-test")
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func emptyDirectoryReturnsNoPlugins() async {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("plugins-empty-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let store = await PluginStore(manager: manager)
+        await store.refresh()
+        let plugins = await store.plugins
+        #expect(plugins.isEmpty)
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func nonexistentDirectoryReturnsEmpty() async {
+        let dir = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let store = await PluginStore(manager: manager)
+        await store.refresh()
+        let plugins = await store.plugins
+        #expect(plugins.isEmpty)
+    }
+}
+
+// MARK: - Plugin Manager Tests
+
+struct PluginManagerTests {
+    @Test func discoverPluginsFindsValidManifests() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pm-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Create two plugins
+        for i in 1...2 {
+            let pluginDir = dir.appendingPathComponent("com.test.plugin\(i)")
+            try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+            let manifest = """
+            {"id":"com.test.plugin\(i)","name":"Plugin \(i)","version":"1.0.0","description":"test","entry":"main.sh","permissions":[],"triggers":[]}
+            """
+            try manifest.write(to: pluginDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+            try "#!/bin/bash".write(to: pluginDir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+        }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let manifests = await manager.discoverPlugins()
+        #expect(manifests.count == 2)
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func skipsInvalidManifests() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pm-invalid-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Valid plugin
+        let validDir = dir.appendingPathComponent("com.test.valid")
+        try FileManager.default.createDirectory(at: validDir, withIntermediateDirectories: true)
+        try """
+        {"id":"com.test.valid","name":"Valid","version":"1.0.0","description":"test","entry":"main.sh","permissions":[],"triggers":[]}
+        """.write(to: validDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try "#!/bin/bash".write(to: validDir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+
+        // Invalid plugin (bad JSON)
+        let invalidDir = dir.appendingPathComponent("com.test.invalid")
+        try FileManager.default.createDirectory(at: invalidDir, withIntermediateDirectories: true)
+        try "not json".write(to: invalidDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let manifests = await manager.discoverPlugins()
+        #expect(manifests.count == 1)
+        #expect(manifests.first?.id == "com.test.valid")
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func isRunningReturnsFalseByDefault() async {
+        let service = StubSbxService()
+        let manager = PluginManager(service: service)
+        let running = await manager.isRunning(id: "nonexistent")
+        #expect(!running)
     }
 }
