@@ -6,11 +6,13 @@ struct PortPanelView: View {
     @Environment(ToastManager.self) private var toastManager
     @State private var showAddSheet = false
 
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Port Forwarding")
-                    .font(.ui(14, weight: .semibold))
+                    .font(.ui(16, weight: .semibold))
                 Spacer()
                 Button {
                     showAddSheet = true
@@ -40,10 +42,18 @@ struct PortPanelView: View {
                     PortMappingRow(sandbox: sandbox, port: port)
                 }
             }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
         }
-        .padding(16)
+        .padding(20)
+        .frame(width: 480)
         .background(Color.surfaceContainer)
-        .clipShape(RoundedRectangle(cornerRadius: DesignSystem.cornerRadius))
         .sheet(isPresented: $showAddSheet) {
             AddPortSheet(sandboxName: sandbox.name)
         }
@@ -58,13 +68,13 @@ struct PortMappingRow: View {
 
     var body: some View {
         HStack {
-            Text("\(port.hostPort)")
+            Text(String(port.hostPort))
                 .font(.code(13, weight: .bold))
                 .foregroundStyle(Color.accent)
             Image(systemName: "arrow.right")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
-            Text("\(port.sandboxPort)")
+            Text(String(port.sandboxPort))
                 .font(.code(13))
             Text(port.protocolType.uppercased())
                 .font(.label(9))

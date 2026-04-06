@@ -704,6 +704,68 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(errorText.waitForExistence(timeout: 3), "Validation error should appear for invalid key")
     }
 
+    // MARK: - Port Forwarding
+
+    @MainActor
+    func testPortButtonExistsOnCard() throws {
+        createSandbox(name: "test-portbtn")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        let portButton = app.buttons["portButton-test-portbtn"]
+        XCTAssertTrue(portButton.waitForExistence(timeout: 5), "PORTS chip should appear on sandbox card")
+    }
+
+    @MainActor
+    func testPortSheetOpens() throws {
+        createSandbox(name: "test-portsheet")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        let portButton = app.buttons["portButton-test-portsheet"]
+        XCTAssertTrue(portButton.waitForExistence(timeout: 5))
+        portButton.click()
+
+        let addButton = app.buttons["addPortButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Port button should appear in port panel")
+
+        let noPortsText = app.staticTexts["No port mappings"]
+        XCTAssertTrue(noPortsText.waitForExistence(timeout: 5), "Empty state should show")
+    }
+
+    @MainActor
+    func testAddPortSheetValidation() throws {
+        createSandbox(name: "test-portval")
+
+        let liveChip = app.staticTexts["LIVE"]
+        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+
+        let portButton = app.buttons["portButton-test-portval"]
+        XCTAssertTrue(portButton.waitForExistence(timeout: 5))
+        portButton.click()
+
+        let addButton = app.buttons["addPortButton"]
+        XCTAssertTrue(addButton.waitForExistence(timeout: 5))
+        addButton.click()
+
+        let hostField = app.textFields["hostPortField"]
+        XCTAssertTrue(hostField.waitForExistence(timeout: 5))
+
+        let sbxField = app.textFields["sbxPortField"]
+        XCTAssertTrue(sbxField.exists)
+
+        let publishButton = app.buttons["publishPortButton"]
+        XCTAssertTrue(publishButton.exists)
+        XCTAssertFalse(publishButton.isEnabled, "Publish should be disabled with empty fields")
+
+        hostField.click()
+        hostField.typeText("99999")
+        let errorText = app.staticTexts["Host port must be between 1 and 65535"]
+        XCTAssertTrue(errorText.waitForExistence(timeout: 3), "Validation error should appear for invalid port")
+    }
+
     @MainActor
     func testCreateSheetEnvVarSection() throws {
         let newButton = app.buttons["newSandboxButton"]

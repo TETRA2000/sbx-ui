@@ -12,6 +12,7 @@ struct SandboxCardView: View {
     @State private var isHovered = false
     @State private var showTerminateConfirm = false
     @State private var showEnvVarSheet = false
+    @State private var showPortSheet = false
 
     private var isTransient: Bool {
         sandbox.status == .creating || sandbox.status == .removing || sandboxStore.isBusy(sandbox.name)
@@ -99,16 +100,29 @@ struct SandboxCardView: View {
                 }
             }
 
-            // Port chips + ENV chip (outside tap gesture area)
+            // PORTS + ENV chips (outside tap gesture area)
             HStack(spacing: 6) {
-                ForEach(sandbox.ports) { port in
-                    Text("\(port.hostPort)\u{2192}\(port.sandboxPort)")
-                        .font(.code(10))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.surfaceContainerHigh)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                Button {
+                    showPortSheet = true
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "network")
+                            .font(.system(size: 9))
+                        Text("PORTS")
+                            .font(.label(9))
+                        if !sandbox.ports.isEmpty {
+                            Text("\(sandbox.ports.count)")
+                                .font(.code(9, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("portButton-\(sandbox.name)")
 
                 Button {
                     showEnvVarSheet = true
@@ -247,6 +261,9 @@ struct SandboxCardView: View {
         .accessibilityIdentifier("sandboxCard-\(sandbox.name)")
         .sheet(isPresented: $showEnvVarSheet) {
             EnvVarPanelView(sandbox: sandbox)
+        }
+        .sheet(isPresented: $showPortSheet) {
+            PortPanelView(sandbox: sandbox)
         }
     }
 }
