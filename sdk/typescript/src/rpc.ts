@@ -98,8 +98,8 @@ export class RpcTransport {
   }
 
   private handleMessage(message: JsonRpcMessage): void {
-    if ("id" in message && "result" in message) {
-      // Response
+    if ("id" in message && ("result" in message || "error" in message)) {
+      // Response (success or error)
       this.handleResponse(message as JsonRpcResponse);
     } else if ("id" in message && "method" in message) {
       // Request

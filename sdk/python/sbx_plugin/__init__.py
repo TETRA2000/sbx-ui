@@ -1,5 +1,7 @@
 """sbx-ui Plugin SDK for Python."""
 
+from __future__ import annotations
+
 from sbx_plugin.rpc import RpcTransport
 from sbx_plugin.types import Sandbox, PortMapping, PolicyRule, EnvVar, ExecResult
 

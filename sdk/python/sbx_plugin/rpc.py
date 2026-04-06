@@ -1,5 +1,7 @@
 """JSON-RPC 2.0 transport over stdin/stdout."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import sys
