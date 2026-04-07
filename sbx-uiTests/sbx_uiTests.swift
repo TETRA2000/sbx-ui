@@ -2216,7 +2216,7 @@ struct PluginExecutionTests {
         #expect(ids.contains(manifest.id))
 
         await manager.stopPlugin(id: manifest.id)
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(500))
 
         let afterStop = await manager.isRunning(id: manifest.id)
         #expect(!afterStop)
@@ -2264,5 +2264,87 @@ struct PluginExecutionTests {
 
         await manager.stopAll()
         try await Task.sleep(for: .milliseconds(200))
+    }
+}
+
+// MARK: - Sandbox Profile Tests
+
+struct SandboxProfileTests {
+    private func makeManifest(permissions: [PluginPermission]) -> PluginManifest {
+        // Create a minimal manifest with given permissions (no directory/entry validation needed for profile generation)
+        PluginManifest(
+            id: "com.test.sandbox",
+            name: "Test",
+            version: "1.0.0",
+            description: "test",
+            entry: "main.sh",
+            runtime: "bash",
+            permissions: permissions,
+            triggers: [.manual]
+        )
+    }
+
+    @Test func generateBaseProfile() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(profile.contains("(version 1)"))
+        #expect(profile.contains("(deny default)"))
+        #expect(profile.contains("(allow process-exec*)"))
+        #expect(profile.contains("(allow file-read*)"))
+        #expect(profile.contains("(allow file-ioctl)"))
+        #expect(profile.contains("(allow sysctl-read)"))
+        #expect(profile.contains("(allow mach-lookup)"))
+        #expect(profile.contains("(allow process-fork)"))
+        #expect(profile.contains("(allow signal (target self))"))
+    }
+
+    @Test func generateWithFileWritePermission() {
+        let manifest = makeManifest(permissions: [.fileWrite])
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(profile.contains("(allow file-write*)"))
+    }
+
+    @Test func generateWithoutFileWritePermission() {
+        let manifest = makeManifest(permissions: [.sandboxList, .uiLog])
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(!profile.contains("(allow file-write*)"))
+    }
+
+    @Test func generateWithNetworkPermissions() {
+        let manifest = makeManifest(permissions: [.policyAllow])
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(profile.contains("(allow network*)"))
+    }
+
+    @Test func generateWithoutNetworkPermissions() {
+        let manifest = makeManifest(permissions: [.sandboxList, .fileRead])
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(!profile.contains("(allow network*)"))
+    }
+
+    @Test func generateEmptyPermissionsIsBaseOnly() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(!profile.contains("(allow file-write*)"))
+        #expect(!profile.contains("(allow network*)"))
+        // But base rules are present
+        #expect(profile.contains("(deny default)"))
+        #expect(profile.contains("(allow process-exec*)"))
+    }
+
+    @Test func generateWithAllPermissions() {
+        let manifest = makeManifest(permissions: Array(PluginPermission.allCases))
+        let profile = SandboxProfile.generate(for: manifest)
+        #expect(profile.contains("(allow file-write*)"))
+        #expect(profile.contains("(allow network*)"))
+    }
+
+    @Test func generateMultipleNetworkPermsTriggerNetwork() {
+        // Any of the policy permissions should trigger network allow
+        for perm in [PluginPermission.policyAllow, .policyDeny, .policyRemove, .policyList] {
+            let manifest = makeManifest(permissions: [perm])
+            let profile = SandboxProfile.generate(for: manifest)
+            #expect(profile.contains("(allow network*)"), "Network should be allowed for \(perm.rawValue)")
+        }
     }
 }

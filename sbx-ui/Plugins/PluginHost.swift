@@ -10,7 +10,7 @@ actor PluginHost {
 
     private var process: Process?
     private var stdinHandle: FileHandle?
-    private var readTask: Task<Void, Never>?
+    private var stdoutReadHandle: FileHandle?
     private var pendingRequests: [JsonRpcId: CheckedContinuation<JsonRpcResponse, Error>] = [:]
     private var nextRequestId: Int = 1
     private var apiHandler: PluginApiHandler?
@@ -52,14 +52,15 @@ actor PluginHost {
 
         let proc = Process()
         let entryPath = pluginDirectory.appendingPathComponent(manifest.entry).path
+        let sandboxProfile = SandboxProfile.generate(for: manifest)
 
         if let runtime = manifest.runtime, !runtime.isEmpty {
             let resolvedRuntime = resolveCommand(runtime)
-            proc.executableURL = URL(fileURLWithPath: resolvedRuntime)
-            proc.arguments = [entryPath]
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+            proc.arguments = ["-p", sandboxProfile, resolvedRuntime, entryPath]
         } else {
-            proc.executableURL = URL(fileURLWithPath: entryPath)
-            proc.arguments = []
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+            proc.arguments = ["-p", sandboxProfile, entryPath]
         }
 
         proc.currentDirectoryURL = pluginDirectory
@@ -83,6 +84,7 @@ actor PluginHost {
         proc.standardError = stderrPipe
 
         self.stdinHandle = stdinPipe.fileHandleForWriting
+        self.stdoutReadHandle = stdoutPipe.fileHandleForReading
 
         // Capture stderr for logging
         let pluginId = manifest.id
@@ -124,10 +126,8 @@ actor PluginHost {
             throw PluginError.launchFailed(manifest.id, error.localizedDescription)
         }
 
-        // Start reading stdout
-        readTask = Task { [weak self] in
-            await self?.readLoop(stdoutPipe.fileHandleForReading)
-        }
+        // Start reading stdout via readabilityHandler (non-blocking, handles pipe closure)
+        startReadLoop(stdoutPipe.fileHandleForReading)
 
         // Send initialize notification
         let initParams: [String: AnyCodable] = [
@@ -143,23 +143,32 @@ actor PluginHost {
             return
         }
 
-        // Try graceful shutdown
+        // Graceful shutdown: send notification + close stdin (signals EOF to plugin)
         try? sendNotification("shutdown")
+        try? stdinHandle?.close()
+        stdinHandle = nil
 
-        // Wait briefly for graceful exit
-        try? await Task.sleep(for: .seconds(2))
+        // Brief wait for graceful exit
+        try? await Task.sleep(for: .milliseconds(500))
 
+        // Force terminate if still alive
         if proc.isRunning {
             proc.terminate()
         }
+
+        // Close stdout to unblock the readLoop
+        try? stdoutReadHandle?.close()
+        stdoutReadHandle = nil
 
         cleanup()
     }
 
     private func cleanup() {
-        readTask?.cancel()
-        readTask = nil
+        stdoutReadHandle?.readabilityHandler = nil
+        try? stdinHandle?.close()
         stdinHandle = nil
+        try? stdoutReadHandle?.close()
+        stdoutReadHandle = nil
         process = nil
         apiHandler = nil
 
@@ -212,29 +221,32 @@ actor PluginHost {
 
     // MARK: - Inbound (Plugin → Host)
 
-    private func readLoop(_ handle: FileHandle) async {
+    /// Starts reading stdout using readabilityHandler — non-blocking and handles pipe closure reliably.
+    private nonisolated func startReadLoop(_ handle: FileHandle) {
         var buffer = Data()
-
-        while !Task.isCancelled {
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                // EOF — process has closed stdout
-                break
+        let mid = manifest.id
+        handle.readabilityHandler = { [weak self] fileHandle in
+            let data = fileHandle.availableData
+            if data.isEmpty {
+                // EOF — process closed stdout
+                fileHandle.readabilityHandler = nil
+                return
             }
-            buffer.append(chunk)
+            buffer.append(data)
 
             // Process complete lines
             while let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                let lineData = buffer[buffer.startIndex..<newlineIndex]
+                let lineData = Data(buffer[buffer.startIndex..<newlineIndex])
                 buffer = Data(buffer[buffer.index(after: newlineIndex)...])
 
                 if lineData.isEmpty { continue }
 
                 do {
-                    let message = try JsonRpcCodec.decode(Data(lineData))
-                    await handleIncomingMessage(message)
+                    let message = try JsonRpcCodec.decode(lineData)
+                    Task { [weak self] in
+                        await self?.handleIncomingMessage(message)
+                    }
                 } catch {
-                    let mid = self.manifest.id
                     DispatchQueue.main.async { appLog(.warn, "Plugin", "[\(mid)] failed to decode: \(error)") }
                 }
             }

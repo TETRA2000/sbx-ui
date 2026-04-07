@@ -294,11 +294,12 @@ plugin.start()
 ## Security Model
 
 1. **Permission-based**: Plugins declare required permissions in `plugin.json`. Users approve on first run.
-2. **Process isolation**: Each plugin runs in its own OS process. A crash won't affect sbx-ui.
-3. **Filesystem restriction**: `file/read` and `file/write` reject path traversal (`../`).
-4. **Rate limiting**: 100 requests/second per plugin. Exceeding returns error code `-32001`.
-5. **Input validation**: All parameters are validated (sandbox names, port ranges, env var keys).
-6. **Audit logging**: All plugin API calls are logged in the sbx-ui debug log.
+2. **OS-level sandboxing**: Each plugin runs under macOS `sandbox-exec` with a dynamically generated profile based on declared permissions. Plugins without `file.write` permission cannot write to the filesystem; plugins without network policy permissions cannot access the network. This enforces restrictions at the kernel level, not just the API layer.
+3. **Process isolation**: Each plugin runs in its own OS process. A crash won't affect sbx-ui.
+4. **Filesystem restriction**: `file/read` and `file/write` reject path traversal (`../`).
+5. **Rate limiting**: 100 requests/second per plugin. Exceeding returns error code `-32001`.
+6. **Input validation**: All parameters are validated (sandbox names, port ranges, env var keys).
+7. **Audit logging**: All plugin API calls are logged in the sbx-ui debug log.
 
 ---
 
