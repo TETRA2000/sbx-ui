@@ -1772,6 +1772,116 @@ struct PluginManifestTests {
         }
     }
 
+    @Test func allPermissionsRoundTripThroughJson() throws {
+        let allPerms = PluginPermission.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ",")
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "com.test.allperms",
+            "name": "All Perms",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "main.sh",
+            "permissions": [\(allPerms)],
+            "triggers": []
+        }
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(Set(manifest.permissions) == Set(PluginPermission.allCases))
+    }
+
+    @Test func allTriggersRoundTripThroughJson() throws {
+        let allTriggers = ["manual", "onSandboxCreated", "onSandboxStopped", "onSandboxRemoved", "onAppLaunch"]
+            .map { "\"\($0)\"" }.joined(separator: ",")
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "com.test.triggers",
+            "name": "Triggers",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "main.sh",
+            "permissions": [],
+            "triggers": [\(allTriggers)]
+        }
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.triggers.count == 5)
+        #expect(manifest.triggers.contains(.manual))
+        #expect(manifest.triggers.contains(.onSandboxCreated))
+        #expect(manifest.triggers.contains(.onSandboxStopped))
+        #expect(manifest.triggers.contains(.onSandboxRemoved))
+        #expect(manifest.triggers.contains(.onAppLaunch))
+    }
+
+    @Test func missingNameThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func missingVersionThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func emptyIdThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func emptyEntryThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"1.0.0","description":"t","entry":"","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func unknownPermissionInJsonThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":["totally.fake"],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func unknownTriggerInJsonThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":["fakeTrigger"]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func runtimeFieldIsOptional() throws {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.noruntime","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.runtime == nil)
+    }
+
+    @Test func runtimeFieldParsesWhenPresent() throws {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.rt","name":"T","version":"1.0.0","description":"t","entry":"main.sh","runtime":"python3","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.runtime == "python3")
+    }
+
     private func createTempPluginDir(manifest: String, entryContent: String) -> URL {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1804,10 +1914,13 @@ struct PluginPermissionTests {
         #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/run") == .sandboxRun)
         #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/list") == .portsList)
         #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/publish") == .portsPublish)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/unpublish") == .portsUnpublish)
         #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/envVars/list") == .envVarList)
         #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/envVars/set") == .envVarSync)
         #expect(PluginPermissionChecker.permissionRequired(for: "policy/list") == .policyList)
         #expect(PluginPermissionChecker.permissionRequired(for: "policy/allow") == .policyAllow)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/deny") == .policyDeny)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/remove") == .policyRemove)
         #expect(PluginPermissionChecker.permissionRequired(for: "file/read") == .fileRead)
         #expect(PluginPermissionChecker.permissionRequired(for: "file/write") == .fileWrite)
         #expect(PluginPermissionChecker.permissionRequired(for: "ui/notify") == .uiNotify)
@@ -1822,6 +1935,46 @@ struct PluginPermissionTests {
                 try checker.check(perm)
             }
         }
+    }
+
+    // Pin the raw values used in plugin.json — changing these breaks all existing plugins
+    @Test func permissionRawValuesAreStable() {
+        #expect(PluginPermission.sandboxList.rawValue == "sandbox.list")
+        #expect(PluginPermission.sandboxExec.rawValue == "sandbox.exec")
+        #expect(PluginPermission.sandboxStop.rawValue == "sandbox.stop")
+        #expect(PluginPermission.sandboxRun.rawValue == "sandbox.run")
+        #expect(PluginPermission.portsList.rawValue == "ports.list")
+        #expect(PluginPermission.portsPublish.rawValue == "ports.publish")
+        #expect(PluginPermission.portsUnpublish.rawValue == "ports.unpublish")
+        #expect(PluginPermission.envVarList.rawValue == "envVar.list")
+        #expect(PluginPermission.envVarSync.rawValue == "envVar.sync")
+        #expect(PluginPermission.policyList.rawValue == "policy.list")
+        #expect(PluginPermission.policyAllow.rawValue == "policy.allow")
+        #expect(PluginPermission.policyDeny.rawValue == "policy.deny")
+        #expect(PluginPermission.policyRemove.rawValue == "policy.remove")
+        #expect(PluginPermission.fileRead.rawValue == "file.read")
+        #expect(PluginPermission.fileWrite.rawValue == "file.write")
+        #expect(PluginPermission.uiNotify.rawValue == "ui.notify")
+        #expect(PluginPermission.uiLog.rawValue == "ui.log")
+    }
+
+    @Test func permissionCountIsStable() {
+        // Fails if a permission is added/removed without updating tests
+        #expect(PluginPermission.allCases.count == 17)
+    }
+
+    @Test func allPermissionsHaveDisplayName() {
+        for perm in PluginPermission.allCases {
+            #expect(!perm.displayName.isEmpty, "\(perm.rawValue) should have a display name")
+        }
+    }
+
+    @Test func triggerRawValuesAreStable() {
+        #expect(PluginTrigger.manual.rawValue == "manual")
+        #expect(PluginTrigger.onSandboxCreated.rawValue == "onSandboxCreated")
+        #expect(PluginTrigger.onSandboxStopped.rawValue == "onSandboxStopped")
+        #expect(PluginTrigger.onSandboxRemoved.rawValue == "onSandboxRemoved")
+        #expect(PluginTrigger.onAppLaunch.rawValue == "onAppLaunch")
     }
 }
 
