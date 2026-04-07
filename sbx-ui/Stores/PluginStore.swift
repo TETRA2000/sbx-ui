@@ -7,6 +7,8 @@ import Foundation
     var runningPlugins: Set<String> = []
     var pluginOutputs: [String: [String]] = [:]
     var error: String?
+    /// Plugin awaiting user approval before starting.
+    var pendingApproval: PluginManifest?
 
     private let manager: PluginManager
 
@@ -26,16 +28,34 @@ import Foundation
             return
         }
 
-        // Check approval
+        // Require user approval before first run
         if !PluginApprovalStore.isApproved(pluginId: id, permissions: manifest.permissions) {
-            do {
-                try PluginApprovalStore.approve(pluginId: id, permissions: manifest.permissions)
-            } catch {
-                self.error = "Failed to save approval: \(error.localizedDescription)"
-                return
-            }
+            pendingApproval = manifest
+            return
         }
 
+        await launchPlugin(manifest: manifest)
+    }
+
+    /// Called after user confirms the approval dialog.
+    func approveAndStart(id: String) async {
+        guard let manifest = plugins.first(where: { $0.id == id }) else { return }
+        do {
+            try PluginApprovalStore.approve(pluginId: id, permissions: manifest.permissions)
+        } catch {
+            self.error = "Failed to save approval: \(error.localizedDescription)"
+            return
+        }
+        pendingApproval = nil
+        await launchPlugin(manifest: manifest)
+    }
+
+    /// Called when user dismisses the approval dialog.
+    func denyApproval() {
+        pendingApproval = nil
+    }
+
+    private func launchPlugin(manifest: PluginManifest) async {
         do {
             try await manager.startPlugin(manifest: manifest)
             runningPlugins = await manager.runningPluginIds()
@@ -61,7 +81,6 @@ import Foundation
     func appendOutput(pluginId: String, message: String) {
         var outputs = pluginOutputs[pluginId] ?? []
         outputs.append(message)
-        // Keep last 200 lines
         if outputs.count > 200 {
             outputs = Array(outputs.suffix(200))
         }

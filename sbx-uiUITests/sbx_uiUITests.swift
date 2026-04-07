@@ -30,6 +30,11 @@ final class sbx_uiUITests: XCTestCase {
         let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["PATH"] = "\(Self.toolsDir):\(existingPath)"
 
+        // Empty plugin directory to avoid interference from installed plugins
+        let emptyPluginDir = NSTemporaryDirectory() + "empty-plugins-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: emptyPluginDir, withIntermediateDirectories: true)
+        app.launchEnvironment["SBX_PLUGIN_DIR"] = emptyPluginDir
+
         app.launch()
     }
 

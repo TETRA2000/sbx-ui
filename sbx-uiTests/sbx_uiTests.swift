@@ -1833,7 +1833,8 @@ struct PluginApiHandlerTests {
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(id: .int(1), method: "sandbox/list")
         let response = await handler.handle(request: request)
@@ -1847,7 +1848,8 @@ struct PluginApiHandlerTests {
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(
             id: .int(2),
@@ -1864,7 +1866,8 @@ struct PluginApiHandlerTests {
         let service = StubSbxService()
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: [.uiLog])  // only ui.log granted
+            permissionChecker: PluginPermissionChecker(granted: [.uiLog]),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(id: .int(3), method: "sandbox/list")
         let response = await handler.handle(request: request)
@@ -1875,7 +1878,8 @@ struct PluginApiHandlerTests {
         let service = StubSbxService()
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(id: .int(4), method: "unknown/method")
         let response = await handler.handle(request: request)
@@ -1886,7 +1890,8 @@ struct PluginApiHandlerTests {
         let service = StubSbxService()
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(id: .int(5), method: "sandbox/exec")  // missing name, command
         let response = await handler.handle(request: request)
@@ -1898,7 +1903,8 @@ struct PluginApiHandlerTests {
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(id: .int(6), method: "sandbox/stop", params: ["name": .string("test-sb")])
         let response = await handler.handle(request: request)
@@ -1911,7 +1917,8 @@ struct PluginApiHandlerTests {
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
 
         // Publish
@@ -1939,7 +1946,8 @@ struct PluginApiHandlerTests {
         let service = StubSbxService()
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(id: .int(9), method: "policy/list")
         let response = await handler.handle(request: request)
@@ -1955,7 +1963,8 @@ struct PluginApiHandlerTests {
         let service = StubSbxService()
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
 
         // Write
@@ -1980,11 +1989,57 @@ struct PluginApiHandlerTests {
         try? FileManager.default.removeItem(atPath: dir)
     }
 
+    @Test func fileReadOutsidePluginDirDenied() async {
+        let dir = NSTemporaryDirectory() + "plugin-scope-\(UUID().uuidString)"
+        try! FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: dir)
+        )
+
+        // Try to read /etc/passwd — should be denied
+        let request = JsonRpcRequest(
+            id: .int(20),
+            method: "file/read",
+            params: ["path": .string("/etc/passwd")]
+        )
+        let response = await handler.handle(request: request)
+        #expect(response.error?.code == JsonRpcErrorCode.permissionDenied)
+
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func fileWriteOutsidePluginDirDenied() async {
+        let dir = NSTemporaryDirectory() + "plugin-scope-\(UUID().uuidString)"
+        try! FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        let service = StubSbxService()
+        let handler = PluginApiHandler(
+            service: service,
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: dir)
+        )
+
+        let request = JsonRpcRequest(
+            id: .int(21),
+            method: "file/write",
+            params: ["path": .string("/tmp/evil.txt"), "content": .string("bad")]
+        )
+        let response = await handler.handle(request: request)
+        #expect(response.error?.code == JsonRpcErrorCode.permissionDenied)
+
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
     @Test func uiLogWorks() async {
         let service = StubSbxService()
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(
             id: .int(12),
@@ -2000,7 +2055,8 @@ struct PluginApiHandlerTests {
         _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "test-sb"))
         let handler = PluginApiHandler(
             service: service,
-            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases))
+            permissionChecker: PluginPermissionChecker(granted: Set(PluginPermission.allCases)),
+            pluginDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
         )
         let request = JsonRpcRequest(
             id: .int(13),
@@ -2270,8 +2326,10 @@ struct PluginExecutionTests {
 // MARK: - Sandbox Profile Tests
 
 struct SandboxProfileTests {
+    private let testDir = URL(fileURLWithPath: "/tmp/test-plugin")
+    private let testRuntime = "/usr/bin/bash"
+
     private func makeManifest(permissions: [PluginPermission]) -> PluginManifest {
-        // Create a minimal manifest with given permissions (no directory/entry validation needed for profile generation)
         PluginManifest(
             id: "com.test.sandbox",
             name: "Test",
@@ -2286,65 +2344,124 @@ struct SandboxProfileTests {
 
     @Test func generateBaseProfile() {
         let manifest = makeManifest(permissions: [])
-        let profile = SandboxProfile.generate(for: manifest)
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
         #expect(profile.contains("(version 1)"))
         #expect(profile.contains("(deny default)"))
-        #expect(profile.contains("(allow process-exec*)"))
-        #expect(profile.contains("(allow file-read*)"))
         #expect(profile.contains("(allow file-ioctl)"))
         #expect(profile.contains("(allow sysctl-read)"))
-        #expect(profile.contains("(allow mach-lookup)"))
         #expect(profile.contains("(allow process-fork)"))
         #expect(profile.contains("(allow signal (target self))"))
     }
 
-    @Test func generateWithFileWritePermission() {
+    @Test func generateScopesFileReadToPluginDir() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow file-read* (subpath \"/tmp/test-plugin\"))"))
+        // Must NOT contain blanket file-read*
+        #expect(!profile.contains("(allow file-read*)"))  // all file-read* rules are scoped with (subpath ...)
+    }
+
+    @Test func generateScopesExecToRuntime() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow process-exec (literal \"/usr/bin/bash\"))"))
+    }
+
+    @Test func generateScopesMachLookup() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        // Base profile should have scoped mach-lookup, not blanket
+        #expect(profile.contains("(allow mach-lookup (global-name"))
+    }
+
+    @Test func generateWithFileWriteScopedToPluginDir() {
         let manifest = makeManifest(permissions: [.fileWrite])
-        let profile = SandboxProfile.generate(for: manifest)
-        #expect(profile.contains("(allow file-write*)"))
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow file-write* (subpath \"/tmp/test-plugin\"))"))
     }
 
     @Test func generateWithoutFileWritePermission() {
         let manifest = makeManifest(permissions: [.sandboxList, .uiLog])
-        let profile = SandboxProfile.generate(for: manifest)
-        #expect(!profile.contains("(allow file-write*)"))
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(!profile.contains("(allow file-write*"))
     }
 
     @Test func generateWithNetworkPermissions() {
         let manifest = makeManifest(permissions: [.policyAllow])
-        let profile = SandboxProfile.generate(for: manifest)
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
         #expect(profile.contains("(allow network*)"))
     }
 
     @Test func generateWithoutNetworkPermissions() {
         let manifest = makeManifest(permissions: [.sandboxList, .fileRead])
-        let profile = SandboxProfile.generate(for: manifest)
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
         #expect(!profile.contains("(allow network*)"))
     }
 
-    @Test func generateEmptyPermissionsIsBaseOnly() {
+    @Test func generateEmptyPermissionsHasNoWriteOrNetwork() {
         let manifest = makeManifest(permissions: [])
-        let profile = SandboxProfile.generate(for: manifest)
-        #expect(!profile.contains("(allow file-write*)"))
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(!profile.contains("(allow file-write*"))
         #expect(!profile.contains("(allow network*)"))
-        // But base rules are present
         #expect(profile.contains("(deny default)"))
-        #expect(profile.contains("(allow process-exec*)"))
     }
 
     @Test func generateWithAllPermissions() {
         let manifest = makeManifest(permissions: Array(PluginPermission.allCases))
-        let profile = SandboxProfile.generate(for: manifest)
-        #expect(profile.contains("(allow file-write*)"))
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow file-write*"))
         #expect(profile.contains("(allow network*)"))
     }
 
     @Test func generateMultipleNetworkPermsTriggerNetwork() {
-        // Any of the policy permissions should trigger network allow
         for perm in [PluginPermission.policyAllow, .policyDeny, .policyRemove, .policyList] {
             let manifest = makeManifest(permissions: [perm])
-            let profile = SandboxProfile.generate(for: manifest)
+            let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
             #expect(profile.contains("(allow network*)"), "Network should be allowed for \(perm.rawValue)")
         }
+    }
+}
+
+// MARK: - Manifest Path Traversal Tests
+
+struct PluginManifestSecurityTests {
+    @Test func entryWithDotsRejected() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manifest = """
+        {"id":"com.test.traverse","name":"T","version":"1.0.0","description":"t","entry":"../../etc/passwd","permissions":[],"triggers":[]}
+        """
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func entryWithAbsolutePathRejected() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manifest = """
+        {"id":"com.test.abs","name":"T","version":"1.0.0","description":"t","entry":"/usr/bin/osascript","permissions":[],"triggers":[]}
+        """
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func validEntryInSubdirAllowed() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        let subdir = dir.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: subdir, withIntermediateDirectories: true)
+        try "#!/bin/bash".write(to: subdir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+        let manifest = """
+        {"id":"com.test.subdir","name":"T","version":"1.0.0","description":"t","entry":"src/main.sh","permissions":[],"triggers":[]}
+        """
+        try manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        let loaded = try PluginManifest.load(from: dir)
+        #expect(loaded.entry == "src/main.sh")
+        try? FileManager.default.removeItem(at: dir)
     }
 }

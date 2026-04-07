@@ -69,6 +69,26 @@ struct PluginListView: View {
         ) { result in
             handleInstall(result)
         }
+        .alert(
+            "Approve Plugin Permissions",
+            isPresented: Binding(
+                get: { pluginStore.pendingApproval != nil },
+                set: { if !$0 { pluginStore.denyApproval() } }
+            )
+        ) {
+            Button("Deny", role: .cancel) {
+                pluginStore.denyApproval()
+            }
+            Button("Approve & Start") {
+                if let id = pluginStore.pendingApproval?.id {
+                    Task { await pluginStore.approveAndStart(id: id) }
+                }
+            }
+        } message: {
+            if let plugin = pluginStore.pendingApproval {
+                Text("\"\(plugin.name)\" requests these permissions:\n\n\(plugin.permissions.map(\.displayName).joined(separator: "\n"))\n\nAllow this plugin to run?")
+            }
+        }
         .task {
             await pluginStore.refresh()
         }

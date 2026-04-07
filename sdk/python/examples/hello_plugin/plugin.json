@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "A simple example plugin that lists sandboxes on startup",
   "entry": "main.py",
-  "runtime": "python3",
+  "runtime": "/Users/takahiko/.asdf/shims/python3",
   "permissions": ["sandbox.list", "ui.log"],
-  "triggers": ["manual", "onSandboxCreated"]
+  "triggers": ["manual", "onSandboxStopped"]
 }

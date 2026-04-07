@@ -21,9 +21,9 @@ async def on_init(params):
         await plugin.ui.log(f"  - {sb.name} [{sb.status}] workspace: {sb.workspace}")
 
 
-@plugin.on("event/onSandboxCreated")
-async def on_sandbox_created(params):
-    await plugin.ui.log(f"New sandbox created: {params.get('name', 'unknown')}")
+@plugin.on("event/onSandboxStopped")
+async def on_sandbox_stopped(params):
+    await plugin.ui.log(f"Sandbox stopped: {params.get('name', 'unknown')}")
 
 
 plugin.start()

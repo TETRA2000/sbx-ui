@@ -36,6 +36,7 @@ enum PluginManifestError: Error, Sendable, LocalizedError {
     case missingField(String)
     case invalidId(String)
     case entryNotFound(String)
+    case entryPathTraversal(String)
 
     var errorDescription: String? {
         switch self {
@@ -44,6 +45,7 @@ enum PluginManifestError: Error, Sendable, LocalizedError {
         case .missingField(let field): "Missing required field: \(field)"
         case .invalidId(let id): "Invalid plugin id '\(id)'. Must be reverse-domain format (e.g. com.example.my-plugin)."
         case .entryNotFound(let path): "Entry file not found: \(path)"
+        case .entryPathTraversal(let entry): "Entry '\(entry)' escapes plugin directory. Must be a relative path within the plugin folder."
         }
     }
 }
@@ -87,10 +89,19 @@ extension PluginManifest {
             throw PluginManifestError.missingField("entry")
         }
 
+        // Security: reject entry paths that escape the plugin directory
+        guard !manifest.entry.contains("..") && !manifest.entry.hasPrefix("/") else {
+            throw PluginManifestError.entryPathTraversal(manifest.entry)
+        }
+        let entryURL = directory.appendingPathComponent(manifest.entry).standardizedFileURL
+        let dirPrefix = directory.standardizedFileURL.path + "/"
+        guard entryURL.path.hasPrefix(dirPrefix) || entryURL.path == directory.standardizedFileURL.path else {
+            throw PluginManifestError.entryPathTraversal(manifest.entry)
+        }
+
         // Validate entry file exists
-        let entryPath = directory.appendingPathComponent(manifest.entry).path
-        guard FileManager.default.fileExists(atPath: entryPath) else {
-            throw PluginManifestError.entryNotFound(entryPath)
+        guard FileManager.default.fileExists(atPath: entryURL.path) else {
+            throw PluginManifestError.entryNotFound(entryURL.path)
         }
 
         manifest.directory = directory

@@ -6,10 +6,12 @@ import Foundation
 actor PluginApiHandler {
     private let service: any SbxServiceProtocol
     private let permissionChecker: PluginPermissionChecker
+    private let pluginDirectory: String
 
-    init(service: any SbxServiceProtocol, permissionChecker: PluginPermissionChecker) {
+    init(service: any SbxServiceProtocol, permissionChecker: PluginPermissionChecker, pluginDirectory: URL) {
         self.service = service
         self.permissionChecker = permissionChecker
+        self.pluginDirectory = pluginDirectory.standardizedFileURL.path
     }
 
     func handle(request: JsonRpcRequest) async -> JsonRpcResponse {
@@ -254,19 +256,26 @@ actor PluginApiHandler {
 
     // MARK: - File I/O Handlers
 
+    /// Validate that a resolved path is within the plugin directory.
+    private func validatePathScope(_ resolved: String, id: JsonRpcId) -> JsonRpcResponse? {
+        let normalised = URL(fileURLWithPath: resolved).standardizedFileURL.path
+        guard normalised.hasPrefix(pluginDirectory + "/") || normalised == pluginDirectory else {
+            return .error(
+                id: id,
+                error: JsonRpcError(code: JsonRpcErrorCode.permissionDenied, message: "Access denied: path must be within the plugin directory")
+            )
+        }
+        return nil
+    }
+
     private func handleFileRead(id: JsonRpcId, params: [String: AnyCodable]) throws -> JsonRpcResponse {
         guard let path = params["path"]?.stringValue else {
             return invalidParams(id: id, message: "Missing required param: path")
         }
 
-        // Security: validate path (no traversal)
-        let resolved = (path as NSString).standardizingPath
-        guard !resolved.contains("..") else {
-            return JsonRpcResponse.error(
-                id: id,
-                error: JsonRpcError(code: JsonRpcErrorCode.permissionDenied, message: "Path traversal not allowed")
-            )
-        }
+        let resolved = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: pluginDirectory))
+            .standardizedFileURL.path
+        if let denied = validatePathScope(resolved, id: id) { return denied }
 
         guard FileManager.default.fileExists(atPath: resolved) else {
             return JsonRpcResponse.error(
@@ -291,17 +300,13 @@ actor PluginApiHandler {
             return invalidParams(id: id, message: "Missing required param: content")
         }
 
-        // Security: validate path
-        let resolved = (path as NSString).standardizingPath
-        guard !resolved.contains("..") else {
-            return JsonRpcResponse.error(
-                id: id,
-                error: JsonRpcError(code: JsonRpcErrorCode.permissionDenied, message: "Path traversal not allowed")
-            )
-        }
+        let resolved = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: pluginDirectory))
+            .standardizedFileURL.path
+        if let denied = validatePathScope(resolved, id: id) { return denied }
 
-        // Ensure parent directory exists
+        // Ensure parent directory exists (within plugin dir only)
         let parentDir = (resolved as NSString).deletingLastPathComponent
+        if let denied = validatePathScope(parentDir, id: id) { return denied }
         try FileManager.default.createDirectory(atPath: parentDir, withIntermediateDirectories: true)
 
         try content.write(toFile: resolved, atomically: true, encoding: .utf8)

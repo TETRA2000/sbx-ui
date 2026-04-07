@@ -48,16 +48,21 @@ actor PluginHost {
         guard process == nil else { return }
 
         let permissionChecker = PluginPermissionChecker(granted: Set(manifest.permissions))
-        apiHandler = PluginApiHandler(service: service, permissionChecker: permissionChecker)
+        apiHandler = PluginApiHandler(service: service, permissionChecker: permissionChecker, pluginDirectory: pluginDirectory)
 
         let proc = Process()
         let entryPath = pluginDirectory.appendingPathComponent(manifest.entry).path
-        let sandboxProfile = SandboxProfile.generate(for: manifest)
+        let resolvedRuntime: String? = {
+            guard let runtime = manifest.runtime, !runtime.isEmpty else { return nil }
+            return resolveCommand(runtime)
+        }()
+        let sandboxProfile = SandboxProfile.generate(
+            for: manifest, pluginDirectory: pluginDirectory, runtimePath: resolvedRuntime
+        )
 
-        if let runtime = manifest.runtime, !runtime.isEmpty {
-            let resolvedRuntime = resolveCommand(runtime)
+        if let runtime = resolvedRuntime {
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
-            proc.arguments = ["-p", sandboxProfile, resolvedRuntime, entryPath]
+            proc.arguments = ["-p", sandboxProfile, runtime, entryPath]
         } else {
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
             proc.arguments = ["-p", sandboxProfile, entryPath]
