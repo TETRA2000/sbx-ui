@@ -30,6 +30,18 @@ struct PluginListView: View {
             }
             .padding()
 
+            // Experimental warning
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.yellow)
+                Text("Experimental: The plugin system is under active development and may have security issues. Only install plugins from sources you trust.")
+                    .font(.ui(11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color.surfaceContainer)
+
             Divider()
 
             if pluginStore.plugins.isEmpty {

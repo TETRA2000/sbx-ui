@@ -1,5 +1,7 @@
 # Plugin Development Guide
 
+> **Experimental:** The plugin system is under active development and may have security vulnerabilities. Only install and run plugins from sources you trust. Use at your own risk.
+
 Build custom plugins to extend sbx-ui with automation, integrations, and custom commands.
 
 ## Quick Start
