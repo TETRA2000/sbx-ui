@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@preconcurrency import SwiftTerm
 @testable import sbx_ui
 
 // MARK: - Test Helpers
@@ -2933,5 +2934,33 @@ struct PluginManifestSecurityTests {
         let loaded = try PluginManifest.load(from: dir)
         #expect(loaded.entry == "src/main.sh")
         try? FileManager.default.removeItem(at: dir)
+    }
+}
+
+// MARK: - Terminal Feature Tests
+
+struct TerminalFeatureTests {
+    @Test func clearTerminalBufferDoesNotCrash() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "clear-test", type: .agent)
+        await view.clearTerminalBuffer()
+    }
+
+    @Test func newSessionHasHoverLinkHighlightMode() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "link-test", type: .agent)
+        let mode = await view.linkHighlightMode
+        #expect(mode == .hover)
+    }
+
+    @Test func clearTerminalBufferMultipleTimesDoesNotCrash() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "multi-clear", type: .agent)
+        for _ in 0..<5 {
+            await view.clearTerminalBuffer()
+        }
     }
 }

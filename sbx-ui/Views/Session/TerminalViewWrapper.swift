@@ -20,6 +20,23 @@ class FocusableTerminalView: LocalProcessTerminalView {
             window.makeFirstResponder(self)
         }
     }
+
+    // MARK: - Keyboard Shortcuts
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command, event.charactersIgnoringModifiers == "k" {
+            clearTerminalBuffer()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// Clear visible screen and scrollback history (Cmd+K, like iTerm2).
+    func clearTerminalBuffer() {
+        // ESC[H = cursor home, ESC[2J = clear screen, ESC[3J = clear scrollback
+        feed(text: "\u{1b}[H\u{1b}[2J\u{1b}[3J")
+    }
 }
 
 struct TerminalViewWrapper: NSViewRepresentable {
