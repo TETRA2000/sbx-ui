@@ -1,0 +1,17 @@
+[project]
+name = "sbx-plugin-sdk"
+version = "0.1.0"
+description = "SDK for building sbx-ui plugins"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+keywords = ["sbx-ui", "plugin", "docker", "sandbox"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

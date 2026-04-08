@@ -30,6 +30,11 @@ final class sbx_uiUITests: XCTestCase {
         let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["PATH"] = "\(Self.toolsDir):\(existingPath)"
 
+        // Empty plugin directory to avoid interference from installed plugins
+        let emptyPluginDir = NSTemporaryDirectory() + "empty-plugins-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: emptyPluginDir, withIntermediateDirectories: true)
+        app.launchEnvironment["SBX_PLUGIN_DIR"] = emptyPluginDir
+
         app.launch()
     }
 
@@ -91,8 +96,10 @@ final class sbx_uiUITests: XCTestCase {
 
     /// Helper: creates a sandbox with a custom name via the create sheet.
     /// Mock workspace is auto-filled when SBX_CLI_MOCK=1.
+    /// After creation, the app auto-navigates to the terminal session.
+    /// Pass `returnToDashboard: true` to navigate back to the dashboard.
     @MainActor
-    private func createSandbox(name: String) {
+    private func createSandbox(name: String, returnToDashboard: Bool = false) {
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
         newButton.click()
@@ -113,11 +120,27 @@ final class sbx_uiUITests: XCTestCase {
 
         let dismissed = deployButton.waitForNonExistence(timeout: 5)
         XCTAssertTrue(dismissed, "Create sheet should dismiss after deploy")
+
+        if returnToDashboard {
+            // Auto-navigation opens the terminal session — go back to dashboard
+            let backButton = app.buttons["backToDashboard"]
+            if backButton.waitForExistence(timeout: 3) {
+                backButton.click()
+                sleep(1)
+            } else {
+                // Fallback: click DASHBOARD in sidebar
+                let dashboard = app.staticTexts["DASHBOARD"]
+                if dashboard.waitForExistence(timeout: 3) {
+                    dashboard.click()
+                    sleep(1)
+                }
+            }
+        }
     }
 
     @MainActor
     func testCreateSandboxWithCustomName() throws {
-        createSandbox(name: "test-create")
+        createSandbox(name: "test-create", returnToDashboard: true)
 
         // Wait for card to appear with LIVE status
         let liveChip = app.staticTexts["LIVE"]
@@ -130,7 +153,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testCreateSandboxShowsRunningStats() throws {
-        createSandbox(name: "test-stats")
+        createSandbox(name: "test-stats", returnToDashboard: true)
 
         // Wait for LIVE status
         let liveChip = app.staticTexts["LIVE"]
@@ -146,7 +169,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testCreateSandboxShowsWorkspacePath() throws {
-        createSandbox(name: "test-path")
+        createSandbox(name: "test-path", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -274,10 +297,11 @@ final class sbx_uiUITests: XCTestCase {
     func testSessionPanelOpens() throws {
         createSandbox(name: "test-session")
 
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+        // Terminal auto-opens after creation; wait for session panel
+        sleep(2)
 
-        openSession(name: "test-session")
+        // Terminal auto-opens after creation via onCreated callback; no need to openSession()
+        _ = ( "test-session")
 
         // Verify session panel elements
         let backButton = app.buttons["backToDashboard"]
@@ -292,10 +316,11 @@ final class sbx_uiUITests: XCTestCase {
     func testTerminalAutoFocusReceivesKeyboardInput() throws {
         createSandbox(name: "test-autofocus")
 
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+        // Terminal auto-opens after creation; wait for session panel
+        sleep(2)
 
-        openSession(name: "test-autofocus")
+        // Terminal auto-opens after creation via onCreated callback; no need to openSession()
+        _ = ( "test-autofocus")
         sleep(1)  // Brief wait for terminal auto-focus
 
         // Type keys — if auto-focus worked, the terminal has first responder
@@ -319,10 +344,11 @@ final class sbx_uiUITests: XCTestCase {
     func testTerminalInputDoesNotLeakToOtherUI() throws {
         createSandbox(name: "test-noleak")
 
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+        // Terminal auto-opens after creation; wait for session panel
+        sleep(2)
 
-        openSession(name: "test-noleak")
+        // Terminal auto-opens after creation via onCreated callback; no need to openSession()
+        _ = ( "test-noleak")
         sleep(1)  // Brief wait for terminal auto-focus
 
         // Type characters including ones that could match shortcuts or labels
@@ -344,13 +370,9 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testSessionReattachAfterBack() throws {
+        // Terminal auto-opens after creation
         createSandbox(name: "test-reattach")
-
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
-
-        // First attach
-        openSession(name: "test-reattach")
+        sleep(2)
         app.typeKey("a", modifierFlags: [])
 
         // Go back to dashboard
@@ -375,10 +397,11 @@ final class sbx_uiUITests: XCTestCase {
     func testTerminalAcceptsSustainedInput() throws {
         createSandbox(name: "test-sustained")
 
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
+        // Terminal auto-opens after creation; wait for session panel
+        sleep(2)
 
-        openSession(name: "test-sustained")
+        // Terminal auto-opens after creation via onCreated callback; no need to openSession()
+        _ = ( "test-sustained")
         sleep(1)
 
         // Rapid keystrokes
@@ -403,7 +426,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testBackgroundSessionShowsBadgeOnDashboard() throws {
-        createSandbox(name: "test-bg-badge")
+        createSandbox(name: "test-bg-badge", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -423,7 +446,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testBackgroundSessionShowsInSidebar() throws {
-        createSandbox(name: "test-bg-sidebar")
+        createSandbox(name: "test-bg-sidebar", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -448,7 +471,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testDisconnectButtonEndsSession() throws {
-        createSandbox(name: "test-disconnect")
+        createSandbox(name: "test-disconnect", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -472,14 +495,8 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testSessionsCountInGlobalStats() throws {
-        createSandbox(name: "test-stats")
-
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
-
-        // Open terminal session then go back
-        openSession(name: "test-stats")
-        app.buttons["backToDashboard"].click()
+        // Create sandbox — terminal auto-opens, then go back to dashboard
+        createSandbox(name: "test-stats", returnToDashboard: true)
 
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
@@ -494,11 +511,8 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testSwitchBetweenTwoBackgroundSessions() throws {
         // Create two sandboxes
-        createSandbox(name: "test-switch-a")
-        let liveA = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveA.waitForExistence(timeout: 5))
-
-        createSandbox(name: "test-switch-b")
+        createSandbox(name: "test-switch-a", returnToDashboard: true)
+        createSandbox(name: "test-switch-b", returnToDashboard: true)
         // Wait for second sandbox to appear on dashboard
         let cardB = app.staticTexts["test-switch-b"]
         XCTAssertTrue(cardB.waitForExistence(timeout: 5))
@@ -536,13 +550,8 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testDisconnectOneSessionPreservesOther() throws {
         // Create two sandboxes
-        createSandbox(name: "test-keep-a")
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
-
-        createSandbox(name: "test-keep-b")
-        let cardB = app.staticTexts["test-keep-b"]
-        XCTAssertTrue(cardB.waitForExistence(timeout: 5))
+        createSandbox(name: "test-keep-a", returnToDashboard: true)
+        createSandbox(name: "test-keep-b", returnToDashboard: true)
 
         // Start both sessions
         openSession(name: "test-keep-a")
@@ -575,13 +584,8 @@ final class sbx_uiUITests: XCTestCase {
     @MainActor
     func testRapidSessionSwitching() throws {
         // Create two sandboxes
-        createSandbox(name: "test-rapid-a")
-        let liveChip = app.staticTexts["LIVE"]
-        XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
-
-        createSandbox(name: "test-rapid-b")
-        let cardB = app.staticTexts["test-rapid-b"]
-        XCTAssertTrue(cardB.waitForExistence(timeout: 5))
+        createSandbox(name: "test-rapid-a", returnToDashboard: true)
+        createSandbox(name: "test-rapid-b", returnToDashboard: true)
 
         // Start both sessions
         openSession(name: "test-rapid-a")
@@ -621,7 +625,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testTerminalThumbnailAreaAppearsOnCard() throws {
-        createSandbox(name: "test-thumb")
+        createSandbox(name: "test-thumb", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -646,7 +650,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testEnvVarButtonExistsOnCard() throws {
-        createSandbox(name: "test-envbtn")
+        createSandbox(name: "test-envbtn", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -657,14 +661,14 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testEnvVarSheetOpens() throws {
-        createSandbox(name: "test-envsheet")
+        createSandbox(name: "test-envsheet", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         let envButton = app.buttons["envVarButton-test-envsheet"]
         XCTAssertTrue(envButton.waitForExistence(timeout: 5))
-        envButton.click()
+        envButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
 
         let addButton = app.buttons["addEnvVarButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Variable button should appear in env var panel")
@@ -675,14 +679,14 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testAddEnvVarSheetValidation() throws {
-        createSandbox(name: "test-envval")
+        createSandbox(name: "test-envval", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         let envButton = app.buttons["envVarButton-test-envval"]
         XCTAssertTrue(envButton.waitForExistence(timeout: 5))
-        envButton.click()
+        envButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
 
         let addButton = app.buttons["addEnvVarButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5))
@@ -708,7 +712,7 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testPortButtonExistsOnCard() throws {
-        createSandbox(name: "test-portbtn")
+        createSandbox(name: "test-portbtn", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
@@ -719,14 +723,14 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testPortSheetOpens() throws {
-        createSandbox(name: "test-portsheet")
+        createSandbox(name: "test-portsheet", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         let portButton = app.buttons["portButton-test-portsheet"]
         XCTAssertTrue(portButton.waitForExistence(timeout: 5))
-        portButton.click()
+        portButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
 
         let addButton = app.buttons["addPortButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5), "Add Port button should appear in port panel")
@@ -737,14 +741,14 @@ final class sbx_uiUITests: XCTestCase {
 
     @MainActor
     func testAddPortSheetValidation() throws {
-        createSandbox(name: "test-portval")
+        createSandbox(name: "test-portval", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
         let portButton = app.buttons["portButton-test-portval"]
         XCTAssertTrue(portButton.waitForExistence(timeout: 5))
-        portButton.click()
+        portButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
 
         let addButton = app.buttons["addPortButton"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 5))
@@ -790,4 +794,153 @@ final class sbx_uiUITests: XCTestCase {
         let addButton = app.buttons["createAddEnvVarButton"]
         XCTAssertTrue(addButton.exists, "Add button should appear")
     }
+
+    // MARK: - Plugin UI Tests
+
+    func testPluginsSidebarNavigationExists() {
+        // Verify PLUGINS sidebar item exists
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5), "PLUGINS sidebar label should exist")
+    }
+
+    func testPluginsEmptyState() {
+        // Navigate to Plugins
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(1)
+
+        // Verify empty state
+        let emptyTitle = app.staticTexts["No Plugins Installed"]
+        XCTAssertTrue(emptyTitle.waitForExistence(timeout: 5), "Empty state title should appear")
+
+        // Verify Install Plugin button exists
+        let installButton = app.buttons["installPluginButton"]
+        XCTAssertTrue(installButton.waitForExistence(timeout: 5), "Install plugin button should appear")
+    }
+
+    func testPluginsHeaderShows() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(1)
+
+        let header = app.staticTexts["Plugins"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5), "Plugins header should appear")
+
+        let countLabel = app.staticTexts["0 installed"]
+        XCTAssertTrue(countLabel.waitForExistence(timeout: 5), "Plugin count should show 0 installed")
+    }
 }
+
+// MARK: - Plugin Execution E2E Tests
+
+final class PluginExecutionUITests: XCTestCase {
+    var app: XCUIApplication!
+    var pluginDir: String!
+
+    private static let projectRoot: String = {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
+    }()
+
+    private static var toolsDir: String {
+        URL(fileURLWithPath: projectRoot).appendingPathComponent("tools").path
+    }
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+
+        // Create a temp plugin directory with mock-plugin installed
+        pluginDir = NSTemporaryDirectory() + "sbx-plugins-\(UUID().uuidString)"
+        let pluginSubDir = pluginDir + "/com.test.e2e"
+        try FileManager.default.createDirectory(atPath: pluginSubDir, withIntermediateDirectories: true)
+
+        // Copy mock-plugin script
+        let mockPluginSrc = Self.toolsDir + "/mock-plugin"
+        let mockPluginDst = pluginSubDir + "/run.sh"
+        try FileManager.default.copyItem(atPath: mockPluginSrc, toPath: mockPluginDst)
+
+        // Write plugin.json
+        let manifest = """
+        {
+            "id": "com.test.e2e",
+            "name": "E2E Test Plugin",
+            "version": "1.0.0",
+            "description": "Plugin for E2E testing",
+            "entry": "run.sh",
+            "runtime": "bash",
+            "permissions": ["sandbox.list", "ui.log"],
+            "triggers": ["manual"]
+        }
+        """
+        try manifest.write(toFile: pluginSubDir + "/plugin.json", atomically: true, encoding: .utf8)
+
+        app = XCUIApplication()
+        app.launchEnvironment["SBX_CLI_MOCK"] = "1"
+        let stateDir = NSTemporaryDirectory() + "mock-sbx-\(UUID().uuidString)"
+        app.launchEnvironment["SBX_MOCK_STATE_DIR"] = stateDir
+        let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        app.launchEnvironment["PATH"] = "\(Self.toolsDir):\(existingPath)"
+        app.launchEnvironment["SBX_PLUGIN_DIR"] = pluginDir
+        app.launch()
+    }
+
+    override func tearDownWithError() throws {
+        if let dir = pluginDir {
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+    }
+
+    // MARK: - Plugin Discovery
+
+    func testPluginAppearsInList() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(2)
+
+        // Plugin should appear (not empty state)
+        let pluginCard = app.otherElements["pluginCard-com.test.e2e"]
+            .firstMatch
+        // Fall back to checking for plugin name text
+        let pluginName = app.staticTexts["E2E Test Plugin"]
+        XCTAssertTrue(
+            pluginCard.waitForExistence(timeout: 5) || pluginName.waitForExistence(timeout: 5),
+            "Plugin should appear in the list"
+        )
+
+        // Count should show 1 installed
+        let countLabel = app.staticTexts["1 installed"]
+        XCTAssertTrue(countLabel.waitForExistence(timeout: 5), "Should show 1 installed plugin")
+    }
+
+    func testPluginShowsVersionAndDescription() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(2)
+
+        let version = app.staticTexts["v1.0.0"]
+        XCTAssertTrue(version.waitForExistence(timeout: 5), "Version should be visible")
+
+        let description = app.staticTexts["Plugin for E2E testing"]
+        XCTAssertTrue(description.waitForExistence(timeout: 5), "Description should be visible")
+    }
+
+    // MARK: - Plugin Trigger Badges
+
+    func testPluginShowsTriggerBadge() {
+        let pluginsLabel = app.staticTexts["PLUGINS"]
+        XCTAssertTrue(pluginsLabel.waitForExistence(timeout: 5))
+        pluginsLabel.click()
+        sleep(2)
+
+        // The "manual" trigger badge should be visible on the card
+        let badge = app.staticTexts["manual"]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5), "Manual trigger badge should appear on card")
+    }
+}
+

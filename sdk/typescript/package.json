@@ -1,0 +1,21 @@
+{
+  "name": "@sbx-ui/plugin-sdk",
+  "version": "0.1.0",
+  "description": "SDK for building sbx-ui plugins",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["sbx-ui", "plugin", "docker", "sandbox"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0",
+    "vitest": "^3.0.0"
+  }
+}

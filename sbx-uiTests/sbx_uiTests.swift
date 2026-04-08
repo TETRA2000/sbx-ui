@@ -23,6 +23,7 @@ actor FailingSbxService: SbxServiceProtocol {
     nonisolated func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws { throw SbxServiceError.cliError("test error") }
     nonisolated func envVarList(name: String) async throws -> [EnvVar] { throw SbxServiceError.cliError("test error") }
     nonisolated func envVarSync(name: String, vars: [EnvVar]) async throws { throw SbxServiceError.cliError("test error") }
+    nonisolated func exec(name: String, command: String, args: [String]) async throws -> CliResult { throw SbxServiceError.cliError("test error") }
     nonisolated func sendMessage(name: String, message: String) async throws { throw SbxServiceError.cliError("test error") }
 }
 
@@ -168,6 +169,13 @@ actor StubSbxService: SbxServiceProtocol {
         guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
         guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
         envVars[name] = vars
+    }
+
+    func exec(name: String, command: String, args: [String]) async throws -> CliResult {
+        guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
+        guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
+        let output = "mock exec: \(command) \(args.joined(separator: " "))"
+        return CliResult(stdout: output, stderr: "", exitCode: 0)
     }
 
     func sendMessage(name: String, message: String) async throws {
@@ -1598,5 +1606,1332 @@ struct EnvVarStoreTests {
         await store.fetchEnvVars(for: "nonexistent")
         let error = await store.error
         #expect(error != nil)
+    }
+}
+
+// MARK: - JSON-RPC Protocol Tests
+
+struct JsonRpcProtocolTests {
+    @Test func encodeDecodeRequest() throws {
+        let request = JsonRpcRequest(id: .int(1), method: "sandbox/list", params: ["filter": .string("running")])
+        let data = try JsonRpcCodec.encode(.request(request))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .request(let r) = decoded else {
+            Issue.record("Expected request")
+            return
+        }
+        #expect(r.id == .int(1))
+        #expect(r.method == "sandbox/list")
+        #expect(r.params?["filter"]?.stringValue == "running")
+    }
+
+    @Test func encodeDecodeResponse() throws {
+        let response = JsonRpcResponse.success(id: .int(42), result: .object(["name": .string("test")]))
+        let data = try JsonRpcCodec.encode(.response(response))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .response(let r) = decoded else {
+            Issue.record("Expected response")
+            return
+        }
+        #expect(r.id == .int(42))
+        #expect(r.result?.objectValue?["name"]?.stringValue == "test")
+        #expect(r.error == nil)
+    }
+
+    @Test func encodeDecodeErrorResponse() throws {
+        let response = JsonRpcResponse.error(
+            id: .string("abc"),
+            error: JsonRpcError(code: -32601, message: "Method not found")
+        )
+        let data = try JsonRpcCodec.encode(.response(response))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .response(let r) = decoded else {
+            Issue.record("Expected response")
+            return
+        }
+        #expect(r.id == .string("abc"))
+        #expect(r.error?.code == -32601)
+        #expect(r.error?.message == "Method not found")
+        #expect(r.result == nil)
+    }
+
+    @Test func encodeDecodeNotification() throws {
+        let notification = JsonRpcNotification(method: "initialize", params: ["pluginId": .string("test")])
+        let data = try JsonRpcCodec.encode(.notification(notification))
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .notification(let n) = decoded else {
+            Issue.record("Expected notification")
+            return
+        }
+        #expect(n.method == "initialize")
+        #expect(n.params?["pluginId"]?.stringValue == "test")
+    }
+
+    @Test func requestWithStringId() throws {
+        let request = JsonRpcRequest(id: .string("req-1"), method: "test")
+        let data = try JsonRpcCodec.encodeRequest(request)
+        let decoded = try JsonRpcCodec.decode(data)
+        guard case .request(let r) = decoded else {
+            Issue.record("Expected request")
+            return
+        }
+        #expect(r.id == .string("req-1"))
+    }
+
+    @Test func anyCodableRoundTrips() throws {
+        let values: [AnyCodable] = [
+            .null, .bool(true), .int(42), .double(3.14), .string("hello"),
+            .array([.int(1), .string("two")]),
+            .object(["key": .bool(false)]),
+        ]
+        for value in values {
+            let data = try JSONEncoder().encode(value)
+            let decoded = try JSONDecoder().decode(AnyCodable.self, from: data)
+            // Verify round-trip produces valid data (no crash)
+            let reEncoded = try JSONEncoder().encode(decoded)
+            #expect(!reEncoded.isEmpty)
+        }
+    }
+
+    @Test func invalidJsonThrows() {
+        let data = "not json".data(using: .utf8)!
+        #expect(throws: (any Error).self) {
+            _ = try JsonRpcCodec.decode(data)
+        }
+    }
+}
+
+// MARK: - Plugin Manifest Tests
+
+struct PluginManifestTests {
+    @Test func loadValidManifest() throws {
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "com.test.plugin",
+            "name": "Test Plugin",
+            "version": "1.0.0",
+            "description": "A test plugin",
+            "entry": "main.sh",
+            "runtime": "bash",
+            "permissions": ["sandbox.list", "ui.log"],
+            "triggers": ["manual"]
+        }
+        """, entryContent: "#!/bin/bash\necho hello")
+
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.id == "com.test.plugin")
+        #expect(manifest.name == "Test Plugin")
+        #expect(manifest.version == "1.0.0")
+        #expect(manifest.permissions.count == 2)
+        #expect(manifest.triggers.contains(.manual))
+        #expect(manifest.directory == dir)
+    }
+
+    @Test func missingFileThrows() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func invalidIdThrows() throws {
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "noDots",
+            "name": "Test",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "main.sh",
+            "permissions": [],
+            "triggers": []
+        }
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func missingEntryFileThrows() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manifest = """
+        {
+            "id": "com.test.no-entry",
+            "name": "Test",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "nonexistent.sh",
+            "permissions": [],
+            "triggers": []
+        }
+        """
+        try manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func allPermissionsRoundTripThroughJson() throws {
+        let allPerms = PluginPermission.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ",")
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "com.test.allperms",
+            "name": "All Perms",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "main.sh",
+            "permissions": [\(allPerms)],
+            "triggers": []
+        }
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(Set(manifest.permissions) == Set(PluginPermission.allCases))
+    }
+
+    @Test func allTriggersRoundTripThroughJson() throws {
+        let allTriggers = ["manual", "onSandboxCreated", "onSandboxStopped", "onSandboxRemoved", "onAppLaunch"]
+            .map { "\"\($0)\"" }.joined(separator: ",")
+        let dir = createTempPluginDir(manifest: """
+        {
+            "id": "com.test.triggers",
+            "name": "Triggers",
+            "version": "1.0.0",
+            "description": "test",
+            "entry": "main.sh",
+            "permissions": [],
+            "triggers": [\(allTriggers)]
+        }
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.triggers.count == 5)
+        #expect(manifest.triggers.contains(.manual))
+        #expect(manifest.triggers.contains(.onSandboxCreated))
+        #expect(manifest.triggers.contains(.onSandboxStopped))
+        #expect(manifest.triggers.contains(.onSandboxRemoved))
+        #expect(manifest.triggers.contains(.onAppLaunch))
+    }
+
+    @Test func missingNameThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func missingVersionThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func emptyIdThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func emptyEntryThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"1.0.0","description":"t","entry":"","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func unknownPermissionInJsonThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":["totally.fake"],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func unknownTriggerInJsonThrows() {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.x","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":["fakeTrigger"]}
+        """, entryContent: "#!/bin/bash")
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+    }
+
+    @Test func runtimeFieldIsOptional() throws {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.noruntime","name":"T","version":"1.0.0","description":"t","entry":"main.sh","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.runtime == nil)
+    }
+
+    @Test func runtimeFieldParsesWhenPresent() throws {
+        let dir = createTempPluginDir(manifest: """
+        {"id":"com.test.rt","name":"T","version":"1.0.0","description":"t","entry":"main.sh","runtime":"python3","permissions":[],"triggers":[]}
+        """, entryContent: "#!/bin/bash")
+        let manifest = try PluginManifest.load(from: dir)
+        #expect(manifest.runtime == "python3")
+    }
+
+    private func createTempPluginDir(manifest: String, entryContent: String) -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try! entryContent.write(to: dir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+        return dir
+    }
+}
+
+// MARK: - Plugin Permission Tests
+
+struct PluginPermissionTests {
+    @Test func grantedPermissionPasses() throws {
+        let checker = PluginPermissionChecker(granted: [.sandboxList, .uiLog])
+        try checker.check(.sandboxList)
+        try checker.check(.uiLog)
+    }
+
+    @Test func deniedPermissionThrows() {
+        let checker = PluginPermissionChecker(granted: [.sandboxList])
+        #expect(throws: PluginPermissionError.self) {
+            try checker.check(.sandboxExec)
+        }
+    }
+
+    @Test func methodToPermissionMapping() {
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/list") == .sandboxList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/exec") == .sandboxExec)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/stop") == .sandboxStop)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/run") == .sandboxRun)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/list") == .portsList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/publish") == .portsPublish)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/ports/unpublish") == .portsUnpublish)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/envVars/list") == .envVarList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "sandbox/envVars/set") == .envVarSync)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/list") == .policyList)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/allow") == .policyAllow)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/deny") == .policyDeny)
+        #expect(PluginPermissionChecker.permissionRequired(for: "policy/remove") == .policyRemove)
+        #expect(PluginPermissionChecker.permissionRequired(for: "file/read") == .fileRead)
+        #expect(PluginPermissionChecker.permissionRequired(for: "file/write") == .fileWrite)
+        #expect(PluginPermissionChecker.permissionRequired(for: "ui/notify") == .uiNotify)
+        #expect(PluginPermissionChecker.permissionRequired(for: "ui/log") == .uiLog)
+        #expect(PluginPermissionChecker.permissionRequired(for: "unknown/method") == nil)
+    }
+
+    @Test func emptyGrantDeniesAll() {
+        let checker = PluginPermissionChecker(granted: [])
+        for perm in PluginPermission.allCases {
+            #expect(throws: PluginPermissionError.self) {
+                try checker.check(perm)
+            }
+        }
+    }
+
+    // Pin the raw values used in plugin.json — changing these breaks all existing plugins
+    @Test func permissionRawValuesAreStable() {
+        #expect(PluginPermission.sandboxList.rawValue == "sandbox.list")
+        #expect(PluginPermission.sandboxExec.rawValue == "sandbox.exec")
+        #expect(PluginPermission.sandboxStop.rawValue == "sandbox.stop")
+        #expect(PluginPermission.sandboxRun.rawValue == "sandbox.run")
+        #expect(PluginPermission.portsList.rawValue == "ports.list")
+        #expect(PluginPermission.portsPublish.rawValue == "ports.publish")
+        #expect(PluginPermission.portsUnpublish.rawValue == "ports.unpublish")
+        #expect(PluginPermission.envVarList.rawValue == "envVar.list")
+        #expect(PluginPermission.envVarSync.rawValue == "envVar.sync")
+        #expect(PluginPermission.policyList.rawValue == "policy.list")
+        #expect(PluginPermission.policyAllow.rawValue == "policy.allow")
+        #expect(PluginPermission.policyDeny.rawValue == "policy.deny")
+        #expect(PluginPermission.policyRemove.rawValue == "policy.remove")
+        #expect(PluginPermission.fileRead.rawValue == "file.read")
+        #expect(PluginPermission.fileWrite.rawValue == "file.write")
+        #expect(PluginPermission.uiNotify.rawValue == "ui.notify")
+        #expect(PluginPermission.uiLog.rawValue == "ui.log")
+    }
+
+    @Test func permissionCountIsStable() {
+        // Fails if a permission is added/removed without updating tests
+        #expect(PluginPermission.allCases.count == 17)
+    }
+
+    @Test func allPermissionsHaveDisplayName() {
+        for perm in PluginPermission.allCases {
+            #expect(!perm.displayName.isEmpty, "\(perm.rawValue) should have a display name")
+        }
+    }
+
+    @Test func triggerRawValuesAreStable() {
+        #expect(PluginTrigger.manual.rawValue == "manual")
+        #expect(PluginTrigger.onSandboxCreated.rawValue == "onSandboxCreated")
+        #expect(PluginTrigger.onSandboxStopped.rawValue == "onSandboxStopped")
+        #expect(PluginTrigger.onSandboxRemoved.rawValue == "onSandboxRemoved")
+        #expect(PluginTrigger.onAppLaunch.rawValue == "onAppLaunch")
+    }
+}
+
+// MARK: - Plugin API Handler Tests (comprehensive)
+
+struct PluginApiHandlerTests {
+    // Shared helpers
+    private func makeHandler(
+        service: StubSbxService = StubSbxService(),
+        permissions: Set<PluginPermission> = Set(PluginPermission.allCases),
+        pluginDir: URL = URL(fileURLWithPath: NSTemporaryDirectory())
+    ) -> PluginApiHandler {
+        PluginApiHandler(service: service, permissionChecker: PluginPermissionChecker(granted: permissions), pluginDirectory: pluginDir)
+    }
+
+    private func denied(_ perm: PluginPermission) -> Set<PluginPermission> {
+        var all = Set(PluginPermission.allCases)
+        all.remove(perm)
+        return all
+    }
+
+    /// Helper: create a running sandbox in the stub service and return (service, handler).
+    private func withSandbox(name: String = "test-sb") async throws -> (StubSbxService, PluginApiHandler) {
+        let svc = StubSbxService()
+        _ = try await svc.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: name))
+        return (svc, makeHandler(service: svc))
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/list
+    // ──────────────────────────────────────────────────
+
+    @Test func sandboxList_returnsAll() async throws {
+        let (_, handler) = try await withSandbox()
+        let r = await handler.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/list"))
+        #expect(r.error == nil)
+        let arr = r.result?.arrayValue
+        #expect(arr?.count == 1)
+        #expect(arr?.first?.objectValue?["name"]?.stringValue == "test-sb")
+        #expect(arr?.first?.objectValue?["status"]?.stringValue == "running")
+    }
+
+    @Test func sandboxList_empty() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/list"))
+        #expect(r.error == nil)
+        #expect(r.result?.arrayValue?.isEmpty == true)
+    }
+
+    @Test func sandboxList_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.sandboxList))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/list"))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/exec
+    // ──────────────────────────────────────────────────
+
+    @Test func sandboxExec_success() async throws {
+        let (_, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
+            params: ["name": .string("test-sb"), "command": .string("echo"), "args": .array([.string("hi")])]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["stdout"]?.stringValue?.contains("mock exec") == true)
+        #expect(r.result?.objectValue?["exitCode"]?.intValue == 0)
+    }
+
+    @Test func sandboxExec_missingName() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
+            params: ["command": .string("ls")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func sandboxExec_missingCommand() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
+            params: ["name": .string("test-sb")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func sandboxExec_notFound() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
+            params: ["name": .string("nonexistent"), "command": .string("ls")]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+    }
+
+    @Test func sandboxExec_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.sandboxExec))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
+            params: ["name": .string("x"), "command": .string("ls")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/stop
+    // ──────────────────────────────────────────────────
+
+    @Test func sandboxStop_success() async throws {
+        let (_, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/stop",
+            params: ["name": .string("test-sb")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+    }
+
+    @Test func sandboxStop_missingName() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/stop"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func sandboxStop_notFound() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/stop",
+            params: ["name": .string("nonexistent")]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+    }
+
+    @Test func sandboxStop_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.sandboxStop))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/stop",
+            params: ["name": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/run
+    // ──────────────────────────────────────────────────
+
+    @Test func sandboxRun_success() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/run",
+            params: ["agent": .string("claude"), "workspace": .string("/tmp/project"), "name": .string("new-sb")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["name"]?.stringValue == "new-sb")
+        #expect(r.result?.objectValue?["status"]?.stringValue == "running")
+    }
+
+    @Test func sandboxRun_missingAgent() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/run",
+            params: ["workspace": .string("/tmp/p")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func sandboxRun_missingWorkspace() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/run",
+            params: ["agent": .string("claude")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func sandboxRun_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.sandboxRun))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/run",
+            params: ["agent": .string("claude"), "workspace": .string("/tmp/p")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/ports/list
+    // ──────────────────────────────────────────────────
+
+    @Test func portsList_success() async throws {
+        let (svc, h) = try await withSandbox()
+        _ = try await svc.portsPublish(name: "test-sb", hostPort: 8080, sbxPort: 3000)
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/list",
+            params: ["name": .string("test-sb")]))
+        #expect(r.error == nil)
+        #expect(r.result?.arrayValue?.count == 1)
+        #expect(r.result?.arrayValue?.first?.objectValue?["hostPort"]?.intValue == 8080)
+    }
+
+    @Test func portsList_missingName() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/list"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func portsList_notFound() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/list",
+            params: ["name": .string("nonexistent")]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+    }
+
+    @Test func portsList_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.portsList))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/list",
+            params: ["name": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/ports/publish
+    // ──────────────────────────────────────────────────
+
+    @Test func portsPublish_success() async throws {
+        let (_, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/publish",
+            params: ["name": .string("test-sb"), "hostPort": .int(8080), "sbxPort": .int(3000)]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["hostPort"]?.intValue == 8080)
+        #expect(r.result?.objectValue?["sandboxPort"]?.intValue == 3000)
+    }
+
+    @Test func portsPublish_missingName() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/publish",
+            params: ["hostPort": .int(8080), "sbxPort": .int(3000)]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func portsPublish_invalidRange() async throws {
+        let (_, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/publish",
+            params: ["name": .string("test-sb"), "hostPort": .int(99999), "sbxPort": .int(3000)]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func portsPublish_conflict() async throws {
+        let (svc, h) = try await withSandbox()
+        _ = try await svc.portsPublish(name: "test-sb", hostPort: 8080, sbxPort: 3000)
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/publish",
+            params: ["name": .string("test-sb"), "hostPort": .int(8080), "sbxPort": .int(4000)]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+    }
+
+    @Test func portsPublish_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.portsPublish))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/publish",
+            params: ["name": .string("x"), "hostPort": .int(8080), "sbxPort": .int(3000)]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/ports/unpublish
+    // ──────────────────────────────────────────────────
+
+    @Test func portsUnpublish_success() async throws {
+        let (svc, h) = try await withSandbox()
+        _ = try await svc.portsPublish(name: "test-sb", hostPort: 8080, sbxPort: 3000)
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/unpublish",
+            params: ["name": .string("test-sb"), "hostPort": .int(8080), "sbxPort": .int(3000)]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+    }
+
+    @Test func portsUnpublish_missingName() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/unpublish",
+            params: ["hostPort": .int(8080), "sbxPort": .int(3000)]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func portsUnpublish_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.portsUnpublish))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/ports/unpublish",
+            params: ["name": .string("x"), "hostPort": .int(8080), "sbxPort": .int(3000)]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/envVars/list
+    // ──────────────────────────────────────────────────
+
+    @Test func envVarList_success() async throws {
+        let (svc, h) = try await withSandbox()
+        try await svc.envVarSync(name: "test-sb", vars: [EnvVar(key: "FOO", value: "bar")])
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/list",
+            params: ["name": .string("test-sb")]))
+        #expect(r.error == nil)
+        let vars = r.result?.arrayValue
+        #expect(vars?.count == 1)
+        #expect(vars?.first?.objectValue?["key"]?.stringValue == "FOO")
+        #expect(vars?.first?.objectValue?["value"]?.stringValue == "bar")
+    }
+
+    @Test func envVarList_missingName() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/list"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func envVarList_notFound() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/list",
+            params: ["name": .string("nonexistent")]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+    }
+
+    @Test func envVarList_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.envVarList))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/list",
+            params: ["name": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: sandbox/envVars/set
+    // ──────────────────────────────────────────────────
+
+    @Test func envVarSet_success() async throws {
+        let (svc, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/set",
+            params: ["name": .string("test-sb"), "key": .string("MY_KEY"), "value": .string("my_val")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+        // Verify it was persisted
+        let vars = try await svc.envVarList(name: "test-sb")
+        #expect(vars.contains { $0.key == "MY_KEY" && $0.value == "my_val" })
+    }
+
+    @Test func envVarSet_missingKey() async throws {
+        let (_, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/set",
+            params: ["name": .string("test-sb"), "value": .string("v")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func envVarSet_invalidKey() async throws {
+        let (_, h) = try await withSandbox()
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/set",
+            params: ["name": .string("test-sb"), "key": .string("123bad"), "value": .string("v")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func envVarSet_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.envVarSync))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/envVars/set",
+            params: ["name": .string("x"), "key": .string("K"), "value": .string("v")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: policy/list
+    // ──────────────────────────────────────────────────
+
+    @Test func policyList_success() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/list"))
+        #expect(r.error == nil)
+        // StubSbxService seeds 10 default policies
+        #expect((r.result?.arrayValue?.count ?? 0) >= 10)
+        let first = r.result?.arrayValue?.first?.objectValue
+        #expect(first?["decision"]?.stringValue != nil)
+        #expect(first?["resources"]?.stringValue != nil)
+    }
+
+    @Test func policyList_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.policyList))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "policy/list"))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: policy/allow
+    // ──────────────────────────────────────────────────
+
+    @Test func policyAllow_success() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/allow",
+            params: ["resources": .string("new.example.com")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["decision"]?.stringValue == "allow")
+        #expect(r.result?.objectValue?["resources"]?.stringValue == "new.example.com")
+    }
+
+    @Test func policyAllow_missingResources() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/allow"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func policyAllow_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.policyAllow))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "policy/allow",
+            params: ["resources": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: policy/deny
+    // ──────────────────────────────────────────────────
+
+    @Test func policyDeny_success() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/deny",
+            params: ["resources": .string("evil.com")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["decision"]?.stringValue == "deny")
+        #expect(r.result?.objectValue?["resources"]?.stringValue == "evil.com")
+    }
+
+    @Test func policyDeny_missingResources() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/deny"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func policyDeny_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.policyDeny))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "policy/deny",
+            params: ["resources": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: policy/remove
+    // ──────────────────────────────────────────────────
+
+    @Test func policyRemove_success() async {
+        let svc = StubSbxService()  // seeds api.anthropic.com
+        let h = makeHandler(service: svc)
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "policy/remove",
+            params: ["resource": .string("api.anthropic.com")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+    }
+
+    @Test func policyRemove_missingResource() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/remove"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func policyRemove_notFound() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "policy/remove",
+            params: ["resource": .string("nonexistent.domain.xyz")]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+    }
+
+    @Test func policyRemove_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.policyRemove))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "policy/remove",
+            params: ["resource": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: file/read
+    // ──────────────────────────────────────────────────
+
+    @Test func fileRead_success() async throws {
+        let dir = NSTemporaryDirectory() + "plugin-fr-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try "hello".write(toFile: "\(dir)/test.txt", atomically: true, encoding: .utf8)
+
+        let h = makeHandler(pluginDir: URL(fileURLWithPath: dir))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/read",
+            params: ["path": .string("\(dir)/test.txt")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["content"]?.stringValue == "hello")
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func fileRead_missingPath() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "file/read"))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func fileRead_notFound() async {
+        let dir = NSTemporaryDirectory() + "plugin-fr-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let h = makeHandler(pluginDir: URL(fileURLWithPath: dir))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/read",
+            params: ["path": .string("\(dir)/nope.txt")]))
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func fileRead_outsideDir() async {
+        let dir = NSTemporaryDirectory() + "plugin-fr-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let h = makeHandler(pluginDir: URL(fileURLWithPath: dir))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/read",
+            params: ["path": .string("/etc/passwd")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func fileRead_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.fileRead))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/read",
+            params: ["path": .string("/tmp/x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: file/write
+    // ──────────────────────────────────────────────────
+
+    @Test func fileWrite_success() async throws {
+        let dir = NSTemporaryDirectory() + "plugin-fw-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        let h = makeHandler(pluginDir: URL(fileURLWithPath: dir))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/write",
+            params: ["path": .string("\(dir)/out.txt"), "content": .string("written")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+        let content = try String(contentsOfFile: "\(dir)/out.txt", encoding: .utf8)
+        #expect(content == "written")
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func fileWrite_missingContent() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "file/write",
+            params: ["path": .string("/tmp/x.txt")]))
+        #expect(r.error?.code == JsonRpcErrorCode.invalidParams)
+    }
+
+    @Test func fileWrite_outsideDir() async {
+        let dir = NSTemporaryDirectory() + "plugin-fw-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let h = makeHandler(pluginDir: URL(fileURLWithPath: dir))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/write",
+            params: ["path": .string("/tmp/evil.txt"), "content": .string("bad")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
+    @Test func fileWrite_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.fileWrite))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "file/write",
+            params: ["path": .string("/tmp/x"), "content": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: ui/notify
+    // ──────────────────────────────────────────────────
+
+    @Test func uiNotify_success() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "ui/notify",
+            params: ["title": .string("Test"), "message": .string("hello"), "level": .string("info")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+    }
+
+    @Test func uiNotify_defaults() async {
+        // All params optional — should succeed with empty params
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "ui/notify"))
+        #expect(r.error == nil)
+    }
+
+    @Test func uiNotify_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.uiNotify))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "ui/notify",
+            params: ["title": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: ui/log
+    // ──────────────────────────────────────────────────
+
+    @Test func uiLog_success() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "ui/log",
+            params: ["message": .string("test log"), "level": .string("info")]))
+        #expect(r.error == nil)
+        #expect(r.result?.objectValue?["ok"]?.boolValue == true)
+    }
+
+    @Test func uiLog_permissionDenied() async {
+        let h = makeHandler(permissions: denied(.uiLog))
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "ui/log",
+            params: ["message": .string("x")]))
+        #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    // ──────────────────────────────────────────────────
+    // MARK: Cross-cutting
+    // ──────────────────────────────────────────────────
+
+    @Test func unknownMethod_returnsError() async {
+        let r = await makeHandler().handle(request: JsonRpcRequest(id: .int(1), method: "unknown/method"))
+        #expect(r.error?.code == JsonRpcErrorCode.methodNotFound)
+    }
+}
+
+// MARK: - Plugin Store Tests
+
+struct PluginStoreTests {
+    @Test func refreshDiscoversPlugins() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("plugins-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Create a valid plugin
+        let pluginDir = dir.appendingPathComponent("com.test.store-test")
+        try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+        let manifest = """
+        {"id":"com.test.store-test","name":"Store Test","version":"1.0.0","description":"test","entry":"main.sh","runtime":"bash","permissions":[],"triggers":[]}
+        """
+        try manifest.write(to: pluginDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try "#!/bin/bash".write(to: pluginDir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let store = await PluginStore(manager: manager)
+        await store.refresh()
+        let plugins = await store.plugins
+        #expect(plugins.count == 1)
+        #expect(plugins.first?.id == "com.test.store-test")
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func emptyDirectoryReturnsNoPlugins() async {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("plugins-empty-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let store = await PluginStore(manager: manager)
+        await store.refresh()
+        let plugins = await store.plugins
+        #expect(plugins.isEmpty)
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func nonexistentDirectoryReturnsEmpty() async {
+        let dir = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)")
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let store = await PluginStore(manager: manager)
+        await store.refresh()
+        let plugins = await store.plugins
+        #expect(plugins.isEmpty)
+    }
+}
+
+// MARK: - Plugin Manager Tests
+
+struct PluginManagerTests {
+    @Test func discoverPluginsFindsValidManifests() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pm-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Create two plugins
+        for i in 1...2 {
+            let pluginDir = dir.appendingPathComponent("com.test.plugin\(i)")
+            try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
+            let manifest = """
+            {"id":"com.test.plugin\(i)","name":"Plugin \(i)","version":"1.0.0","description":"test","entry":"main.sh","permissions":[],"triggers":[]}
+            """
+            try manifest.write(to: pluginDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+            try "#!/bin/bash".write(to: pluginDir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+        }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let manifests = await manager.discoverPlugins()
+        #expect(manifests.count == 2)
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func skipsInvalidManifests() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("pm-invalid-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Valid plugin
+        let validDir = dir.appendingPathComponent("com.test.valid")
+        try FileManager.default.createDirectory(at: validDir, withIntermediateDirectories: true)
+        try """
+        {"id":"com.test.valid","name":"Valid","version":"1.0.0","description":"test","entry":"main.sh","permissions":[],"triggers":[]}
+        """.write(to: validDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        try "#!/bin/bash".write(to: validDir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+
+        // Invalid plugin (bad JSON)
+        let invalidDir = dir.appendingPathComponent("com.test.invalid")
+        try FileManager.default.createDirectory(at: invalidDir, withIntermediateDirectories: true)
+        try "not json".write(to: invalidDir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: dir)
+        let manifests = await manager.discoverPlugins()
+        #expect(manifests.count == 1)
+        #expect(manifests.first?.id == "com.test.valid")
+
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func isRunningReturnsFalseByDefault() async {
+        let service = StubSbxService()
+        let manager = PluginManager(service: service)
+        let running = await manager.isRunning(id: "nonexistent")
+        #expect(!running)
+    }
+}
+
+// MARK: - Plugin Execution Tests (real process)
+
+@Suite(.timeLimit(.minutes(1)))
+struct PluginExecutionTests {
+    /// Path to the mock-plugin script in tools/
+    private static let mockPluginPath: String = {
+        // Derive from the test file path: sbx-uiTests/ → project root → tools/mock-plugin
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // sbx-uiTests/
+            .deletingLastPathComponent()  // project root
+            .appendingPathComponent("tools/mock-plugin")
+            .path
+    }()
+
+    /// Create a temp plugin directory with plugin.json pointing to mock-plugin.
+    private func createMockPluginDir(
+        id: String = "com.test.exec",
+        permissions: [String] = ["sandbox.list", "ui.log"]
+    ) -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("plugin-exec-\(UUID().uuidString)")
+            .appendingPathComponent(id)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Copy mock-plugin into the plugin directory
+        let destScript = dir.appendingPathComponent("run.sh")
+        try! FileManager.default.copyItem(
+            atPath: Self.mockPluginPath,
+            toPath: destScript.path
+        )
+
+        // Write plugin.json
+        let permsJson = permissions.map { "\"\($0)\"" }.joined(separator: ",")
+        let manifest = """
+        {
+            "id": "\(id)",
+            "name": "Exec Test Plugin",
+            "version": "1.0.0",
+            "description": "Test plugin that exercises the JSON-RPC pipeline",
+            "entry": "run.sh",
+            "runtime": "bash",
+            "permissions": [\(permsJson)],
+            "triggers": ["manual"]
+        }
+        """
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        return dir
+    }
+
+    @Test func pluginHostStartsAndStopsProcess() async throws {
+        let pluginDir = createMockPluginDir()
+        defer { try? FileManager.default.removeItem(at: pluginDir.deletingLastPathComponent()) }
+
+        let manifest = try PluginManifest.load(from: pluginDir)
+        let service = StubSbxService()
+
+        let host = PluginHost(manifest: manifest, pluginDirectory: pluginDir)
+        try await host.start(service: service)
+
+        let running = await host.isRunning
+        #expect(running)
+
+        await host.stop()
+
+        // Allow process termination
+        try await Task.sleep(for: .milliseconds(200))
+
+        let stoppedRunning = await host.isRunning
+        #expect(!stoppedRunning)
+    }
+
+    @Test func pluginManagerStartAndStopPlugin() async throws {
+        let pluginDir = createMockPluginDir()
+        let parentDir = pluginDir.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: parentDir)
+
+        let manifests = await manager.discoverPlugins()
+        #expect(manifests.count == 1)
+
+        let manifest = manifests.first!
+        try await manager.startPlugin(manifest: manifest)
+
+        let running = await manager.isRunning(id: manifest.id)
+        #expect(running)
+
+        let ids = await manager.runningPluginIds()
+        #expect(ids.contains(manifest.id))
+
+        await manager.stopPlugin(id: manifest.id)
+        try await Task.sleep(for: .milliseconds(500))
+
+        let afterStop = await manager.isRunning(id: manifest.id)
+        #expect(!afterStop)
+    }
+
+    @Test func pluginStopAllCleansUp() async throws {
+        let pluginDir = createMockPluginDir()
+        let parentDir = pluginDir.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: parentDir)
+
+        let manifests = await manager.discoverPlugins()
+        try await manager.startPlugin(manifest: manifests.first!)
+
+        let running = await manager.runningPluginIds()
+        #expect(running.count == 1)
+
+        await manager.stopAll()
+        try await Task.sleep(for: .milliseconds(200))
+
+        let afterStopAll = await manager.runningPluginIds()
+        #expect(afterStopAll.isEmpty)
+    }
+
+    @Test func duplicateStartThrows() async throws {
+        let pluginDir = createMockPluginDir()
+        let parentDir = pluginDir.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parentDir) }
+
+        let service = StubSbxService()
+        let manager = PluginManager(service: service, pluginsDirectory: parentDir)
+
+        let manifests = await manager.discoverPlugins()
+        try await manager.startPlugin(manifest: manifests.first!)
+
+        // Starting again should throw alreadyRunning
+        do {
+            try await manager.startPlugin(manifest: manifests.first!)
+            Issue.record("Expected alreadyRunning error")
+        } catch is PluginError {
+            // Expected
+        }
+
+        await manager.stopAll()
+        try await Task.sleep(for: .milliseconds(200))
+    }
+}
+
+// MARK: - Sandbox Profile Tests
+
+struct SandboxProfileTests {
+    private let testDir = URL(fileURLWithPath: "/tmp/test-plugin")
+    private let testRuntime = "/usr/bin/bash"
+
+    private func makeManifest(permissions: [PluginPermission]) -> PluginManifest {
+        PluginManifest(
+            id: "com.test.sandbox",
+            name: "Test",
+            version: "1.0.0",
+            description: "test",
+            entry: "main.sh",
+            runtime: "bash",
+            permissions: permissions,
+            triggers: [.manual]
+        )
+    }
+
+    @Test func generateBaseProfile() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(version 1)"))
+        #expect(profile.contains("(deny default)"))
+        #expect(profile.contains("(allow file-ioctl)"))
+        #expect(profile.contains("(allow sysctl-read)"))
+        #expect(profile.contains("(allow process-fork)"))
+        #expect(profile.contains("(allow signal (target self))"))
+    }
+
+    @Test func generateScopesFileReadToPluginDir() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow file-read* (subpath \"/tmp/test-plugin\"))"))
+        // Must NOT contain blanket file-read*
+        #expect(!profile.contains("(allow file-read*)"))  // all file-read* rules are scoped with (subpath ...)
+    }
+
+    @Test func generateScopesExecToRuntime() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow process-exec (literal \"/usr/bin/bash\"))"))
+    }
+
+    @Test func generateScopesMachLookup() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        // Base profile should have scoped mach-lookup, not blanket
+        #expect(profile.contains("(allow mach-lookup (global-name"))
+    }
+
+    @Test func generateWithFileWriteScopedToPluginDir() {
+        let manifest = makeManifest(permissions: [.fileWrite])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow file-write* (subpath \"/tmp/test-plugin\"))"))
+    }
+
+    @Test func generateWithoutFileWritePermission() {
+        let manifest = makeManifest(permissions: [.sandboxList, .uiLog])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(!profile.contains("(allow file-write*"))
+    }
+
+    @Test func generateWithNetworkPermissions() {
+        let manifest = makeManifest(permissions: [.policyAllow])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow network*)"))
+    }
+
+    @Test func generateWithoutNetworkPermissions() {
+        let manifest = makeManifest(permissions: [.sandboxList, .fileRead])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(!profile.contains("(allow network*)"))
+    }
+
+    @Test func generateEmptyPermissionsHasNoWriteOrNetwork() {
+        let manifest = makeManifest(permissions: [])
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(!profile.contains("(allow file-write*"))
+        #expect(!profile.contains("(allow network*)"))
+        #expect(profile.contains("(deny default)"))
+    }
+
+    @Test func generateWithAllPermissions() {
+        let manifest = makeManifest(permissions: Array(PluginPermission.allCases))
+        let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+        #expect(profile.contains("(allow file-write*"))
+        #expect(profile.contains("(allow network*)"))
+    }
+
+    @Test func generateMultipleNetworkPermsTriggerNetwork() {
+        for perm in [PluginPermission.policyAllow, .policyDeny, .policyRemove, .policyList] {
+            let manifest = makeManifest(permissions: [perm])
+            let profile = SandboxProfile.generate(for: manifest, pluginDirectory: testDir, runtimePath: testRuntime)
+            #expect(profile.contains("(allow network*)"), "Network should be allowed for \(perm.rawValue)")
+        }
+    }
+}
+
+// MARK: - Manifest Path Traversal Tests
+
+struct PluginManifestSecurityTests {
+    @Test func entryWithDotsRejected() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manifest = """
+        {"id":"com.test.traverse","name":"T","version":"1.0.0","description":"t","entry":"../../etc/passwd","permissions":[],"triggers":[]}
+        """
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func entryWithAbsolutePathRejected() {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manifest = """
+        {"id":"com.test.abs","name":"T","version":"1.0.0","description":"t","entry":"/usr/bin/osascript","permissions":[],"triggers":[]}
+        """
+        try! manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        #expect(throws: PluginManifestError.self) {
+            _ = try PluginManifest.load(from: dir)
+        }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @Test func validEntryInSubdirAllowed() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        let subdir = dir.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: subdir, withIntermediateDirectories: true)
+        try "#!/bin/bash".write(to: subdir.appendingPathComponent("main.sh"), atomically: true, encoding: .utf8)
+        let manifest = """
+        {"id":"com.test.subdir","name":"T","version":"1.0.0","description":"t","entry":"src/main.sh","permissions":[],"triggers":[]}
+        """
+        try manifest.write(to: dir.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
+        let loaded = try PluginManifest.load(from: dir)
+        #expect(loaded.entry == "src/main.sh")
+        try? FileManager.default.removeItem(at: dir)
     }
 }

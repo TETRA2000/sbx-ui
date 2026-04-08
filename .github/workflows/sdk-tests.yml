@@ -1,0 +1,62 @@
+name: SDK Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript-sdk:
+    name: TypeScript SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: sdk/typescript
+        run: npm install
+
+      - name: Type check
+        working-directory: sdk/typescript
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        working-directory: sdk/typescript
+        run: npm test
+
+  python-sdk:
+    name: Python SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: sdk/python
+        run: pip install -e ".[test]"
+
+      - name: Run tests
+        working-directory: sdk/python
+        run: pytest tests/ -v

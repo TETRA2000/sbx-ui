@@ -9,7 +9,7 @@ enum SessionType: String, Sendable {
     case shell   // sbx exec -it <name> bash
 }
 
-struct Sandbox: Identifiable, Sendable {
+struct Sandbox: Identifiable, Sendable, Encodable {
     let id: String
     let name: String
     let agent: String  // "claude"
@@ -19,7 +19,7 @@ struct Sandbox: Identifiable, Sendable {
     let createdAt: Date
 }
 
-struct PolicyRule: Identifiable, Sendable {
+struct PolicyRule: Identifiable, Sendable, Encodable {
     let id: String
     let type: String  // "network"
     let decision: PolicyDecision
@@ -42,7 +42,7 @@ struct PolicyLogEntry: Sendable, Identifiable {
     let blocked: Bool
 }
 
-struct PortMapping: Sendable, Identifiable, Equatable {
+struct PortMapping: Sendable, Identifiable, Equatable, Encodable {
     var id: String { "\(hostPort)-\(sandboxPort)" }
     let hostPort: Int
     let sandboxPort: Int
@@ -76,7 +76,7 @@ enum SbxServiceError: Error, Sendable, LocalizedError {
     }
 }
 
-struct EnvVar: Identifiable, Sendable, Equatable {
+struct EnvVar: Identifiable, Sendable, Equatable, Encodable {
     var id: String { key }
     let key: String
     let value: String

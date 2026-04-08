@@ -35,6 +35,10 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 
 ## Development Rules
 - **ALWAYS write and run tests after ANY code change** — this is non-negotiable. Write both unit tests and UI/E2E tests as appropriate, then run the full test suite to confirm no regressions before considering work done.
+- **When encountering flaky tests, always find and fix the root cause** — never delete or skip flaky tests without understanding why they fail. Common root causes in this project:
+  - `FileHandle.availableData` blocks the Swift cooperative thread pool and cannot be reliably unblocked by closing the handle from another thread. Use `readabilityHandler` instead.
+  - Storing `@Observable` class references (even `weak var`) inside other `@Observable` classes can break SwiftUI rendering. Use closures for cross-store communication.
+  - Plugin process tests require proper pipe cleanup: close stdin first (signals EOF to plugin), then terminate, then close stdout.
 - 3-phase approval workflow: Requirements → Design → Tasks → Implementation
 - Human review required each phase; use `-y` only for intentional fast-track
 - Keep steering current and verify alignment with `/kiro:spec-status`

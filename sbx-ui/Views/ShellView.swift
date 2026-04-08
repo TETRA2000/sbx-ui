@@ -3,6 +3,7 @@ import SwiftUI
 enum SidebarDestination: Hashable {
     case dashboard
     case policies
+    case plugins
 }
 
 struct ShellView: View {
@@ -23,6 +24,9 @@ struct ShellView: View {
             NavigationSplitView {
                 SidebarView(selection: $selection, onSelectSession: { sessionID in
                     selectedSessionID = sessionID
+                }, onCreatedSandbox: { sandbox in
+                    let (id, _) = sessionStore.startSession(sandboxName: sandbox.name, type: .agent)
+                    selectedSessionID = id
                 })
             } detail: {
                 Group {
@@ -49,6 +53,8 @@ struct ShellView: View {
                             )
                         case .policies:
                             PolicyPanelView()
+                        case .plugins:
+                            PluginListView()
                         }
                     }
                 }
@@ -131,7 +137,9 @@ struct DashboardView: View {
         }
         .background(Color.surface)
         .sheet(isPresented: $showCreateSheet) {
-            CreateProjectSheet()
+            CreateProjectSheet(onCreated: { sandbox in
+                onSelectSandbox(sandbox)
+            })
         }
         .task {
             while !Task.isCancelled {

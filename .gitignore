@@ -63,3 +63,9 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
+# SDK
+node_modules/
+sdk/typescript/dist/
+__pycache__/
+*.egg-info/
+.pytest_cache/

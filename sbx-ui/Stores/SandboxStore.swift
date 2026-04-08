@@ -16,6 +16,7 @@ enum SandboxOperation: Sendable {
 
     private let service: any SbxServiceProtocol
     private var pollingTask: Task<Void, Never>?
+    nonisolated(unsafe) var onPluginEvent: ((PluginEvent) async -> Void)?
 
     init(service: any SbxServiceProtocol) {
         self.service = service
@@ -55,6 +56,7 @@ enum SandboxOperation: Sendable {
         let sandbox = try await service.run(agent: "claude", workspace: workspace, opts: opts)
         appLog(.info, "SandboxStore", "Sandbox created: \(sandbox.name) [\(sandbox.status.rawValue)]")
         await fetchSandboxes()
+        await onPluginEvent?(.sandboxCreated(sandbox))
         return sandbox
     }
 
@@ -79,6 +81,7 @@ enum SandboxOperation: Sendable {
         appLog(.info, "SandboxStore", "Stopping sandbox: \(name)")
         try await service.stop(name: name)
         await fetchSandboxes()
+        await onPluginEvent?(.sandboxStopped(name))
     }
 
     func removeSandbox(name: String) async throws {
@@ -87,6 +90,7 @@ enum SandboxOperation: Sendable {
         appLog(.info, "SandboxStore", "Removing sandbox: \(name)")
         try await service.rm(name: name)
         await fetchSandboxes()
+        await onPluginEvent?(.sandboxRemoved(name))
     }
 
     func publishPort(name: String, hostPort: Int, sbxPort: Int) async throws {

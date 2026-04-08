@@ -1,0 +1,45 @@
+#!/bin/bash
+# mock-plugin — A minimal JSON-RPC plugin for testing.
+#
+# Responds to:
+#   initialize  → sends sandbox/list request
+#   shutdown    → exits cleanly
+#   response    → sends ui/log confirmation
+#
+# Safety: auto-exits after 10 seconds to prevent hanging in tests.
+
+set -uo pipefail
+trap 'exit 0' PIPE TERM
+
+# Auto-exit after 10 seconds
+(sleep 10; exit 0) &
+WATCHDOG_PID=$!
+trap 'kill $WATCHDOG_PID 2>/dev/null; exit 0' EXIT
+
+REQUEST_ID=1
+
+send_request() {
+    local method="$1"
+    local params="${2:-{}}"
+    printf '{"jsonrpc":"2.0","id":%d,"method":"%s","params":%s}\n' "$REQUEST_ID" "$method" "$params"
+    REQUEST_ID=$((REQUEST_ID + 1))
+}
+
+while IFS= read -r line || exit 0; do
+    [ -z "$line" ] && continue
+
+    if echo "$line" | grep -q '"method"' 2>/dev/null; then
+        if echo "$line" | grep -q '"shutdown"' 2>/dev/null; then
+            exit 0
+        fi
+        if echo "$line" | grep -q '"initialize"' 2>/dev/null; then
+            send_request "sandbox/list"
+            continue
+        fi
+    fi
+
+    if echo "$line" | grep -q '"result"' 2>/dev/null; then
+        send_request "ui/log" '{"message":"mock-plugin-executed","level":"info"}'
+        continue
+    fi
+done

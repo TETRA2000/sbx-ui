@@ -1,0 +1,10 @@
+{
+  "id": "com.example.hello-python",
+  "name": "Hello Plugin (Python)",
+  "version": "1.0.0",
+  "description": "A simple example plugin that lists sandboxes on startup",
+  "entry": "main.py",
+  "runtime": "/Users/takahiko/.asdf/shims/python3",
+  "permissions": ["sandbox.list", "ui.log"],
+  "triggers": ["manual", "onSandboxStopped"]
+}
