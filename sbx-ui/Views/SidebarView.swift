@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @Binding var selection: SidebarDestination?
     var onSelectSession: (String) -> Void
+    var onCreatedSandbox: ((Sandbox) -> Void)?
     @Environment(TerminalSessionStore.self) private var sessionStore
     @State private var showCreateSheet = false
 
@@ -90,7 +91,7 @@ struct SidebarView: View {
             .tint(Color.accent)
             .padding()
             .sheet(isPresented: $showCreateSheet) {
-                CreateProjectSheet()
+                CreateProjectSheet(onCreated: onCreatedSandbox)
             }
         }
     }

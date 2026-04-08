@@ -33,11 +33,13 @@ actor RealSbxService: SbxServiceProtocol {
         var args: [String]
 
         if agent.isEmpty, let name = opts?.name, !name.isEmpty {
-            // Resume mode: sbx run <name>
+            // Resume mode: sbx run <name> (attaches to agent interactively)
             args = ["run", name]
         } else {
-            // Create mode: sbx run <agent> <workspace> [--name <name>]
-            args = ["run", agent, workspace]
+            // Create mode: sbx create <agent> <workspace> [--name <name>]
+            // Uses `create` (non-blocking) instead of `run` (which attaches interactively).
+            // The terminal session is started separately by TerminalSessionStore.
+            args = ["create", agent, workspace]
             if let name = opts?.name, !name.isEmpty {
                 guard SbxValidation.isValidName(name) else {
                     throw SbxServiceError.invalidName(name)

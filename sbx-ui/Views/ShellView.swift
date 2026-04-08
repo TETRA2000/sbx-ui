@@ -24,6 +24,9 @@ struct ShellView: View {
             NavigationSplitView {
                 SidebarView(selection: $selection, onSelectSession: { sessionID in
                     selectedSessionID = sessionID
+                }, onCreatedSandbox: { sandbox in
+                    let (id, _) = sessionStore.startSession(sandboxName: sandbox.name, type: .agent)
+                    selectedSessionID = id
                 })
             } detail: {
                 Group {
@@ -134,7 +137,9 @@ struct DashboardView: View {
         }
         .background(Color.surface)
         .sheet(isPresented: $showCreateSheet) {
-            CreateProjectSheet()
+            CreateProjectSheet(onCreated: { sandbox in
+                onSelectSandbox(sandbox)
+            })
         }
         .task {
             while !Task.isCancelled {

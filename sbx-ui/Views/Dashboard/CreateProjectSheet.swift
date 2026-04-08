@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CreateProjectSheet: View {
+    var onCreated: ((Sandbox) -> Void)?
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(EnvVarStore.self) private var envVarStore
     @Environment(ToastManager.self) private var toastManager
@@ -241,6 +242,7 @@ struct CreateProjectSheet: View {
                     )
                 }
                 dismiss()
+                onCreated?(sandbox)
             } catch {
                 toastManager.show(error.localizedDescription)
                 isCreating = false
