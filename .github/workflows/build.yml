@@ -10,8 +10,25 @@ concurrency:
 
 jobs:
   build:
-    name: Build Installable App
+    name: Build Installable Apps
     runs-on: macos-26
+
+    strategy:
+      matrix:
+        channel: [canary, beta, stable]
+        include:
+          - channel: canary
+            scheme: sbx-ui Canary
+            config: Release (Canary)
+            app_name: sbx-ui Canary
+          - channel: beta
+            scheme: sbx-ui Beta
+            config: Release (Beta)
+            app_name: sbx-ui Beta
+          - channel: stable
+            scheme: sbx-ui
+            config: Release (Stable)
+            app_name: sbx-ui
 
     steps:
       - name: Checkout
@@ -24,19 +41,23 @@ jobs:
           sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
           xcodebuild -version
 
+      - name: Download Metal Toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
       - name: Resolve Swift packages
         run: |
           xcodebuild -resolvePackageDependencies \
             -project sbx-ui.xcodeproj \
-            -scheme sbx-ui
+            -scheme "${{ matrix.scheme }}"
 
       - name: Build release archive
         run: |
           xcodebuild archive \
             -project sbx-ui.xcodeproj \
-            -scheme sbx-ui \
+            -scheme "${{ matrix.scheme }}" \
+            -configuration "${{ matrix.config }}" \
             -destination 'generic/platform=macOS' \
-            -archivePath ${{ runner.temp }}/sbx-ui.xcarchive \
+            -archivePath "${{ runner.temp }}/${{ matrix.app_name }}.xcarchive" \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=NO \
@@ -44,25 +65,25 @@ jobs:
 
       - name: Export app from archive
         run: |
-          mkdir -p ${{ runner.temp }}/export
-          cp -R "${{ runner.temp }}/sbx-ui.xcarchive/Products/Applications/sbx-ui.app" \
+          mkdir -p "${{ runner.temp }}/export"
+          cp -R "${{ runner.temp }}/${{ matrix.app_name }}.xcarchive/Products/Applications/${{ matrix.app_name }}.app" \
             "${{ runner.temp }}/export/"
 
       - name: Create DMG
         run: |
-          hdiutil create -volname "sbx-ui" \
+          hdiutil create -volname "${{ matrix.app_name }}" \
             -srcfolder "${{ runner.temp }}/export" \
             -ov -format UDZO \
-            "${{ runner.temp }}/sbx-ui.dmg"
+            "${{ runner.temp }}/${{ matrix.app_name }}.dmg"
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: sbx-ui.dmg
-          path: ${{ runner.temp }}/sbx-ui.dmg
+          name: ${{ matrix.app_name }}.dmg
+          path: ${{ runner.temp }}/${{ matrix.app_name }}.dmg
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: sbx-ui.app
-          path: ${{ runner.temp }}/export/sbx-ui.app
+          name: ${{ matrix.app_name }}.app
+          path: ${{ runner.temp }}/export/${{ matrix.app_name }}.app
