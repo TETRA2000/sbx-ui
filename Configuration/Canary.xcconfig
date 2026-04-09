@@ -1,0 +1,9 @@
+// Canary release channel configuration
+// This is the bleeding-edge channel, built from main branch.
+
+SBX_CHANNEL = canary
+SBX_BUNDLE_ID_SUFFIX = .canary
+SBX_APP_NAME = sbx-ui Canary
+
+PRODUCT_BUNDLE_IDENTIFIER = dev.tetra2000.sbx-ui$(SBX_BUNDLE_ID_SUFFIX)
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) CANARY

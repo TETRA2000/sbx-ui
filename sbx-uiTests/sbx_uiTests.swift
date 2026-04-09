@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@preconcurrency import SwiftTerm
 @testable import sbx_ui
 
 // MARK: - Test Helpers
@@ -2933,5 +2934,85 @@ struct PluginManifestSecurityTests {
         let loaded = try PluginManifest.load(from: dir)
         #expect(loaded.entry == "src/main.sh")
         try? FileManager.default.removeItem(at: dir)
+    }
+}
+
+// MARK: - Terminal Feature Tests
+
+struct TerminalFeatureTests {
+    @Test func clearTerminalBufferDoesNotCrash() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "clear-test", type: .agent)
+        await view.clearTerminalBuffer()
+    }
+
+    @Test func newSessionHasHoverLinkHighlightMode() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "link-test", type: .agent)
+        let mode = await view.linkHighlightMode
+        #expect(mode == .hover)
+    }
+
+    @Test func clearTerminalBufferMultipleTimesDoesNotCrash() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "multi-clear", type: .agent)
+        for _ in 0..<5 {
+            await view.clearTerminalBuffer()
+        }
+    }
+
+    @Test func linkDelegateIsInstalled() async {
+        let service = StubSbxService()
+        let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
+        let (_, view) = await store.startSession(sandboxName: "link-delegate", type: .agent)
+        // After startSession, the delegate proxy should be installed (not self)
+        let delegate = await view.terminalDelegate
+        #expect(delegate !== view, "terminalDelegate should be the proxy, not self")
+        #expect(delegate != nil, "terminalDelegate should not be nil")
+    }
+
+    @Test func urlWhitespaceStripping() {
+        // Verify the cleaning logic that the delegate proxy uses
+        let wrappedLink = "  https://example.com/path?foo=bar  \n  &baz=qux  "
+        let cleaned = wrappedLink.components(separatedBy: .whitespacesAndNewlines).joined()
+        #expect(cleaned == "https://example.com/path?foo=bar&baz=qux")
+
+        let multiLineOAuth = "https://claude.com/oauth?redirect_uri  \n  =https%3A%2F%2Fexample.com  \n  &state=abc"
+        let cleanedOAuth = multiLineOAuth.components(separatedBy: .whitespacesAndNewlines).joined()
+        #expect(cleanedOAuth == "https://claude.com/oauth?redirect_uri=https%3A%2F%2Fexample.com&state=abc")
+    }
+
+    @Test func reconstructURLExtendsPartial() {
+        let buffer = """
+        Browser didn't open? Use the url below
+        https://claude.com/oauth?code=true&redirect_uri
+        =https%3A%2F%2Fexample.com&scope=org
+        &state=abc123
+        Paste code here >
+        """
+        let partial = "https://claude.com/oauth?code=true&redirect_uri"
+        let result = TerminalDelegateProxy.reconstructURL(from: partial, inBuffer: buffer)
+        #expect(result == "https://claude.com/oauth?code=true&redirect_uri=https%3A%2F%2Fexample.com&scope=org&state=abc123")
+    }
+
+    @Test func reconstructURLWithLeadingText() {
+        let buffer = """
+        Visit: https://example.com/path?key=val
+        &more=params%20here
+        Done.
+        """
+        let partial = "https://example.com/path?key=val"
+        let result = TerminalDelegateProxy.reconstructURL(from: partial, inBuffer: buffer)
+        #expect(result == "https://example.com/path?key=val&more=params%20here")
+    }
+
+    @Test func reconstructURLSingleLine() {
+        let buffer = "https://example.com/simple\nOther text\n"
+        let partial = "https://example.com/simple"
+        let result = TerminalDelegateProxy.reconstructURL(from: partial, inBuffer: buffer)
+        #expect(result == partial)
     }
 }
