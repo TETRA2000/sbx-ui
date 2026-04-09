@@ -1,0 +1,9 @@
+// Stable release channel configuration
+// Production release with the original bundle identifier.
+
+SBX_CHANNEL = stable
+SBX_BUNDLE_ID_SUFFIX =
+SBX_APP_NAME = sbx-ui
+
+PRODUCT_BUNDLE_IDENTIFIER = dev.tetra2000.sbx-ui
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) STABLE

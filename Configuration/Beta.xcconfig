@@ -1,0 +1,9 @@
+// Beta release channel configuration
+// More stable than Canary, used for pre-release testing.
+
+SBX_CHANNEL = beta
+SBX_BUNDLE_ID_SUFFIX = .beta
+SBX_APP_NAME = sbx-ui Beta
+
+PRODUCT_BUNDLE_IDENTIFIER = dev.tetra2000.sbx-ui$(SBX_BUNDLE_ID_SUFFIX)
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) BETA

@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A96F2D9B2F80FFE4007495EA"
-               BuildableName = "sbx-ui.app"
+               BuildableName = "sbx-ui Canary.app"
                BlueprintName = "sbx-ui"
                ReferencedContainer = "container:sbx-ui.xcodeproj">
             </BuildableReference>
@@ -24,7 +24,7 @@
       </BuildActionEntries>
    </BuildAction>
    <TestAction
-      buildConfiguration = "Debug (Stable)"
+      buildConfiguration = "Debug (Canary)"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
@@ -55,7 +55,7 @@
       </Testables>
    </TestAction>
    <LaunchAction
-      buildConfiguration = "Debug (Stable)"
+      buildConfiguration = "Debug (Canary)"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       launchStyle = "0"
@@ -70,14 +70,14 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A96F2D9B2F80FFE4007495EA"
-            BuildableName = "sbx-ui.app"
+            BuildableName = "sbx-ui Canary.app"
             BlueprintName = "sbx-ui"
             ReferencedContainer = "container:sbx-ui.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
    <ProfileAction
-      buildConfiguration = "Release (Stable)"
+      buildConfiguration = "Release (Canary)"
       shouldUseLaunchSchemeArgsEnv = "YES"
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
@@ -87,17 +87,17 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A96F2D9B2F80FFE4007495EA"
-            BuildableName = "sbx-ui.app"
+            BuildableName = "sbx-ui Canary.app"
             BlueprintName = "sbx-ui"
             ReferencedContainer = "container:sbx-ui.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
    <AnalyzeAction
-      buildConfiguration = "Debug (Stable)">
+      buildConfiguration = "Debug (Canary)">
    </AnalyzeAction>
    <ArchiveAction
-      buildConfiguration = "Release (Stable)"
+      buildConfiguration = "Release (Canary)"
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
 </Scheme>
