@@ -131,6 +131,7 @@ final class TerminalSessionStore {
         terminalView.nativeForegroundColor = .white
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminalView.linkHighlightMode = .hover
+        terminalView.installLinkDelegate()
 
         terminalView.onProcessExit = { [weak self] exitCode in
             DispatchQueue.main.async {
