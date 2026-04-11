@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A96F2D9B2F80FFE4007495EA"
-               BuildableName = "sbx-ui.app"
+               BuildableName = "sbx-ui Canary.app"
                BlueprintName = "sbx-ui"
                ReferencedContainer = "container:sbx-ui.xcodeproj">
             </BuildableReference>
@@ -70,7 +70,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A96F2D9B2F80FFE4007495EA"
-            BuildableName = "sbx-ui.app"
+            BuildableName = "sbx-ui Canary.app"
             BlueprintName = "sbx-ui"
             ReferencedContainer = "container:sbx-ui.xcodeproj">
          </BuildableReference>
@@ -87,7 +87,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A96F2D9B2F80FFE4007495EA"
-            BuildableName = "sbx-ui.app"
+            BuildableName = "sbx-ui Canary.app"
             BlueprintName = "sbx-ui"
             ReferencedContainer = "container:sbx-ui.xcodeproj">
          </BuildableReference>
