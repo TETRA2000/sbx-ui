@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct KanbanTaskCardView: View {
     let task: KanbanTask

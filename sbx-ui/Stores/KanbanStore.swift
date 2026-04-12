@@ -8,14 +8,16 @@ import SwiftUI
     var executingTaskIDs: Set<String> = []
 
     private let service: any SbxServiceProtocol
+    private let persistence: KanbanPersistence
 
     var selectedBoard: KanbanBoard? {
         guard let id = selectedBoardID else { return boards.first }
         return boards.first { $0.id == id }
     }
 
-    init(service: any SbxServiceProtocol) {
+    init(service: any SbxServiceProtocol, persistenceDirectory: URL? = nil) {
         self.service = service
+        self.persistence = KanbanPersistence(directory: persistenceDirectory)
         loadBoards()
     }
 
@@ -23,7 +25,7 @@ import SwiftUI
 
     func loadBoards() {
         do {
-            boards = try KanbanPersistence.loadBoards()
+            boards = try persistence.loadBoards()
             if let first = boards.first, selectedBoardID == nil {
                 selectedBoardID = first.id
             }
@@ -49,7 +51,7 @@ import SwiftUI
             selectedBoardID = boards.first?.id
         }
         do {
-            try KanbanPersistence.deleteBoard(id: id)
+            try persistence.deleteBoard(id: id)
         } catch {
             appLog(.error, "KanbanStore", "Failed to delete board", detail: error.localizedDescription)
         }
@@ -314,7 +316,7 @@ import SwiftUI
 
     private func save(_ board: KanbanBoard) {
         do {
-            try KanbanPersistence.saveBoard(board)
+            try persistence.saveBoard(board)
         } catch {
             appLog(.error, "KanbanStore", "Failed to save board", detail: error.localizedDescription)
         }

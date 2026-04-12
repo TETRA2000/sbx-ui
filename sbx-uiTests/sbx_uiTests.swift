@@ -3019,10 +3019,16 @@ struct TerminalFeatureTests {
 
 // MARK: - Kanban Store Tests
 
+private func makeKanbanStore(service: any SbxServiceProtocol) async -> KanbanStore {
+    let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("kanban-test-\(UUID().uuidString)", isDirectory: true)
+    return await KanbanStore(service: service, persistenceDirectory: tempDir)
+}
+
 struct KanbanStoreTests {
     @Test func createBoardWithDefaultColumns() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test Board")
         #expect(board.name == "Test Board")
         #expect(board.columns.count == 3)
@@ -3035,7 +3041,7 @@ struct KanbanStoreTests {
 
     @Test func addTaskToBoard() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         let task = await store.addTask(boardID: board.id, columnID: colID, title: "My Task", prompt: "Do something")
@@ -3050,7 +3056,7 @@ struct KanbanStoreTests {
 
     @Test func removeTaskClearsDependencies() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         let task1 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 1")!
@@ -3064,7 +3070,7 @@ struct KanbanStoreTests {
 
     @Test func moveTaskBetweenColumns() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let backlogID = board.columns.first { $0.title == "Backlog" }!.id
         let inProgressID = board.columns.first { $0.title == "In Progress" }!.id
@@ -3077,7 +3083,7 @@ struct KanbanStoreTests {
 
     @Test func dependencyCycleDetected() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         let task1 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 1")!
@@ -3090,7 +3096,7 @@ struct KanbanStoreTests {
 
     @Test func selfDependencyRejected() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         let task = await store.addTask(boardID: board.id, columnID: colID, title: "Self")!
@@ -3100,7 +3106,7 @@ struct KanbanStoreTests {
 
     @Test func addAndRemoveColumn() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         await store.addColumn(boardID: board.id, title: "Review")
         var boards = await store.boards
@@ -3115,7 +3121,7 @@ struct KanbanStoreTests {
 
     @Test func cannotRemoveDefaultColumn() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let backlogID = board.columns.first { $0.title == "Backlog" }!.id
         await store.removeColumn(boardID: board.id, columnID: backlogID)
@@ -3126,7 +3132,7 @@ struct KanbanStoreTests {
 
     @Test func deleteBoard() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         await store.deleteBoard(id: board.id)
         let boards = await store.boards
@@ -3135,7 +3141,7 @@ struct KanbanStoreTests {
 
     @Test func syncSandboxStatusCompletesTask() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first { $0.title == "In Progress" }!.id
         var task = await store.addTask(boardID: board.id, columnID: colID, title: "Running task")!
@@ -3154,7 +3160,7 @@ struct KanbanStoreTests {
 
     @Test func taskExecutionCreatesSandbox() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first { $0.title == "Backlog" }!.id
         let task = await store.addTask(boardID: board.id, columnID: colID, title: "exec-test",
@@ -3168,7 +3174,7 @@ struct KanbanStoreTests {
 
     @Test func executeBlockedTaskIsRejected() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         let dep = await store.addTask(boardID: board.id, columnID: colID, title: "Dep")!
@@ -3183,7 +3189,7 @@ struct KanbanStoreTests {
 
     @Test func updateTask() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         var task = await store.addTask(boardID: board.id, columnID: colID, title: "Original")!
@@ -3198,7 +3204,7 @@ struct KanbanStoreTests {
 
     @Test func renameBoard() async throws {
         let service = StubSbxService()
-        let store = await KanbanStore(service: service)
+        let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Old Name")
         await store.renameBoard(id: board.id, name: "New Name")
         let boards = await store.boards
