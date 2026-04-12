@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 @MainActor @Observable final class KanbanStore {
     var boards: [KanbanBoard] = []
