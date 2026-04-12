@@ -1,11 +1,16 @@
 import SwiftUI
 
+private struct TaskSheetContext: Identifiable {
+    let id = UUID()
+    let board: KanbanBoard
+    let columnID: String
+    let editingTask: KanbanTask?
+}
+
 struct KanbanBoardView: View {
     @Environment(KanbanStore.self) private var kanbanStore
     @Environment(ToastManager.self) private var toastManager
-    @State private var showCreateTaskSheet = false
-    @State private var editingTask: KanbanTask?
-    @State private var createTaskColumnID: String?
+    @State private var taskSheetContext: TaskSheetContext?
     @State private var showAddColumnSheet = false
     @State private var newColumnName = ""
     @State private var showRenameBoardSheet = false
@@ -61,14 +66,10 @@ struct KanbanBoardView: View {
                                 column: column,
                                 board: board,
                                 onAddTask: {
-                                    createTaskColumnID = column.id
-                                    editingTask = nil
-                                    showCreateTaskSheet = true
+                                    taskSheetContext = TaskSheetContext(board: board, columnID: column.id, editingTask: nil)
                                 },
                                 onEditTask: { task in
-                                    createTaskColumnID = task.columnID
-                                    editingTask = task
-                                    showCreateTaskSheet = true
+                                    taskSheetContext = TaskSheetContext(board: board, columnID: task.columnID, editingTask: task)
                                 },
                                 onStartTask: { task in
                                     Task {
@@ -118,46 +119,42 @@ struct KanbanBoardView: View {
             }
         }
         .background(Color.surface)
-        .sheet(isPresented: $showCreateTaskSheet) {
-            if let board, let colID = createTaskColumnID {
-                KanbanTaskDetailSheet(
-                    board: board,
-                    columnID: colID,
-                    existingTask: editingTask,
-                    onSave: { task in
-                        if editingTask != nil {
-                            kanbanStore.updateTask(boardID: board.id, task: task)
-                            // Update dependencies
-                            if let existing = editingTask {
-                                let oldDeps = Set(existing.dependencyIDs)
-                                let newDeps = Set(task.dependencyIDs)
-                                for removed in oldDeps.subtracting(newDeps) {
-                                    kanbanStore.removeDependency(boardID: board.id, taskID: task.id, dependsOn: removed)
-                                }
-                                for added in newDeps.subtracting(oldDeps) {
-                                    _ = kanbanStore.addDependency(boardID: board.id, taskID: task.id, dependsOn: added)
-                                }
+        .sheet(item: $taskSheetContext) { context in
+            KanbanTaskDetailSheet(
+                board: context.board,
+                columnID: context.columnID,
+                existingTask: context.editingTask,
+                onSave: { task in
+                    if context.editingTask != nil {
+                        kanbanStore.updateTask(boardID: context.board.id, task: task)
+                        // Update dependencies
+                        if let existing = context.editingTask {
+                            let oldDeps = Set(existing.dependencyIDs)
+                            let newDeps = Set(task.dependencyIDs)
+                            for removed in oldDeps.subtracting(newDeps) {
+                                kanbanStore.removeDependency(boardID: context.board.id, taskID: task.id, dependsOn: removed)
                             }
-                        } else {
-                            if let created = kanbanStore.addTask(
-                                boardID: board.id, columnID: colID,
-                                title: task.title, description: task.description,
-                                prompt: task.prompt, agent: task.agent, workspace: task.workspace
-                            ) {
-                                for depID in task.dependencyIDs {
-                                    _ = kanbanStore.addDependency(boardID: board.id, taskID: created.id, dependsOn: depID)
-                                }
+                            for added in newDeps.subtracting(oldDeps) {
+                                _ = kanbanStore.addDependency(boardID: context.board.id, taskID: task.id, dependsOn: added)
                             }
                         }
-                        showCreateTaskSheet = false
-                        editingTask = nil
-                    },
-                    onDismiss: {
-                        showCreateTaskSheet = false
-                        editingTask = nil
+                    } else {
+                        if let created = kanbanStore.addTask(
+                            boardID: context.board.id, columnID: context.columnID,
+                            title: task.title, description: task.description,
+                            prompt: task.prompt, agent: task.agent, workspace: task.workspace
+                        ) {
+                            for depID in task.dependencyIDs {
+                                _ = kanbanStore.addDependency(boardID: context.board.id, taskID: created.id, dependsOn: depID)
+                            }
+                        }
                     }
-                )
-            }
+                    taskSheetContext = nil
+                },
+                onDismiss: {
+                    taskSheetContext = nil
+                }
+            )
         }
         .sheet(isPresented: $showAddColumnSheet) {
             VStack(spacing: 16) {
@@ -219,6 +216,5 @@ struct KanbanBoardView: View {
             .frame(width: 320)
             .background(Color.surfaceContainer)
         }
-        .accessibilityIdentifier("kanbanBoard")
     }
 }

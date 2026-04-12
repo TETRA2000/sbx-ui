@@ -23,7 +23,9 @@ struct sbx_uiApp: App {
         sandbox.onPluginEvent = { event in
             await pluginSt.dispatchEvent(event)
         }
-        let kanban = KanbanStore(service: service)
+        let kanbanDir: URL? = ProcessInfo.processInfo.environment["SBX_KANBAN_DIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let kanban = KanbanStore(service: service, persistenceDirectory: kanbanDir)
         _sandboxStore = State(initialValue: sandbox)
         _policyStore = State(initialValue: policy)
         _sessionStore = State(initialValue: session)

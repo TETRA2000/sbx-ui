@@ -195,7 +195,7 @@ struct KanbanTaskDetailSheet: View {
             }
             .padding()
         }
-        .frame(width: 480, minHeight: 500)
+        .frame(minWidth: 480, maxWidth: 480, minHeight: 500)
         .background(Color.surfaceContainer)
         .onAppear {
             if let task = existingTask {

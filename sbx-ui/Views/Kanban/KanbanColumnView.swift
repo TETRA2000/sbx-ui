@@ -84,7 +84,6 @@ struct KanbanColumnView: View {
                 isTargeted = targeted
             }
         }
-        .accessibilityIdentifier("kanbanColumn-\(column.id)")
     }
 
     private func calculateInsertIndex(from location: CGPoint) -> Int {

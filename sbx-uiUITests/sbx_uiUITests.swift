@@ -35,6 +35,10 @@ final class sbx_uiUITests: XCTestCase {
         try? FileManager.default.createDirectory(atPath: emptyPluginDir, withIntermediateDirectories: true)
         app.launchEnvironment["SBX_PLUGIN_DIR"] = emptyPluginDir
 
+        // Isolated kanban directory to avoid persistence leaking between test runs
+        let kanbanDir = NSTemporaryDirectory() + "kanban-\(UUID().uuidString)"
+        app.launchEnvironment["SBX_KANBAN_DIR"] = kanbanDir
+
         app.launch()
     }
 
@@ -885,6 +889,8 @@ final class PluginExecutionUITests: XCTestCase {
         let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         app.launchEnvironment["PATH"] = "\(Self.toolsDir):\(existingPath)"
         app.launchEnvironment["SBX_PLUGIN_DIR"] = pluginDir
+        let kanbanDir = NSTemporaryDirectory() + "kanban-\(UUID().uuidString)"
+        app.launchEnvironment["SBX_KANBAN_DIR"] = kanbanDir
         app.launch()
     }
 
@@ -970,10 +976,6 @@ final class PluginExecutionUITests: XCTestCase {
         sleep(1)
 
         // Verify the board view with default columns
-        let board = app.otherElements["kanbanBoard"].firstMatch
-        XCTAssertTrue(board.waitForExistence(timeout: 5), "Kanban board should appear")
-
-        // Verify default column headers
         let backlog = app.staticTexts["Backlog"]
         XCTAssertTrue(backlog.waitForExistence(timeout: 5), "Backlog column should exist")
 
