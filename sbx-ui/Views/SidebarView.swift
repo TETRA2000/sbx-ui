@@ -24,6 +24,15 @@ struct SidebarView: View {
                 .tag(SidebarDestination.dashboard)
 
                 Label {
+                    Text("KANBAN")
+                        .font(.label(11))
+                        .tracking(1.2)
+                } icon: {
+                    Image(systemName: "rectangle.split.3x1")
+                }
+                .tag(SidebarDestination.kanban)
+
+                Label {
                     Text("POLICIES")
                         .font(.label(11))
                         .tracking(1.2)

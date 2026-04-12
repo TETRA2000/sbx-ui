@@ -942,5 +942,83 @@ final class PluginExecutionUITests: XCTestCase {
         let badge = app.staticTexts["manual"]
         XCTAssertTrue(badge.waitForExistence(timeout: 5), "Manual trigger badge should appear on card")
     }
+
+    // MARK: - Kanban Board
+
+    @MainActor
+    func testKanbanSidebarNavigation() throws {
+        let kanbanLabel = app.staticTexts["KANBAN"]
+        XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5), "KANBAN sidebar entry should exist")
+        kanbanLabel.click()
+        sleep(1)
+
+        // Should show create board button (no board exists yet)
+        let createBoardButton = app.buttons["createBoardButton"]
+        XCTAssertTrue(createBoardButton.waitForExistence(timeout: 5), "Create Board button should appear")
+    }
+
+    @MainActor
+    func testKanbanCreateBoardAndDefaultColumns() throws {
+        let kanbanLabel = app.staticTexts["KANBAN"]
+        XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5))
+        kanbanLabel.click()
+        sleep(1)
+
+        let createBoardButton = app.buttons["createBoardButton"]
+        XCTAssertTrue(createBoardButton.waitForExistence(timeout: 5))
+        createBoardButton.click()
+        sleep(1)
+
+        // Verify the board view with default columns
+        let board = app.otherElements["kanbanBoard"].firstMatch
+        XCTAssertTrue(board.waitForExistence(timeout: 5), "Kanban board should appear")
+
+        // Verify default column headers
+        let backlog = app.staticTexts["Backlog"]
+        XCTAssertTrue(backlog.waitForExistence(timeout: 5), "Backlog column should exist")
+
+        let inProgress = app.staticTexts["In Progress"]
+        XCTAssertTrue(inProgress.exists, "In Progress column should exist")
+
+        let done = app.staticTexts["Done"]
+        XCTAssertTrue(done.exists, "Done column should exist")
+    }
+
+    @MainActor
+    func testKanbanCreateTask() throws {
+        // Navigate to kanban and create a board
+        let kanbanLabel = app.staticTexts["KANBAN"]
+        XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5))
+        kanbanLabel.click()
+        sleep(1)
+
+        let createBoardButton = app.buttons["createBoardButton"]
+        XCTAssertTrue(createBoardButton.waitForExistence(timeout: 5))
+        createBoardButton.click()
+        sleep(1)
+
+        // Click add task on any column
+        // Find the first add task button
+        let addTaskButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'addTaskButton-'"))
+        XCTAssertTrue(addTaskButtons.firstMatch.waitForExistence(timeout: 5), "Add task button should exist")
+        addTaskButtons.firstMatch.click()
+        sleep(1)
+
+        // Fill in task details
+        let titleField = app.textFields["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 5), "Task title field should appear")
+        titleField.click()
+        titleField.typeText("My Test Task")
+
+        // Save the task
+        let saveButton = app.buttons["saveTaskButton"]
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
+        saveButton.click()
+        sleep(1)
+
+        // Verify the task card appears
+        let taskTitle = app.staticTexts["My Test Task"]
+        XCTAssertTrue(taskTitle.waitForExistence(timeout: 5), "Task card should appear with title")
+    }
 }
 

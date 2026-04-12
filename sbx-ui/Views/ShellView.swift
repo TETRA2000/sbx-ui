@@ -2,6 +2,7 @@ import SwiftUI
 
 enum SidebarDestination: Hashable {
     case dashboard
+    case kanban
     case policies
     case plugins
 }
@@ -12,6 +13,7 @@ struct ShellView: View {
     @State private var showDebugLog = false
     @Environment(SandboxStore.self) private var sandboxStore
     @Environment(TerminalSessionStore.self) private var sessionStore
+    @Environment(KanbanStore.self) private var kanbanStore
     @Environment(ToastManager.self) private var toastManager
 
     /// Names of running sandboxes, used to detect status changes for session cleanup.
@@ -51,6 +53,8 @@ struct ShellView: View {
                                     selectedSessionID = sessionID
                                 }
                             )
+                        case .kanban:
+                            KanbanBoardView()
                         case .policies:
                             PolicyPanelView()
                         case .plugins:
@@ -96,6 +100,7 @@ struct ShellView: View {
         }
         .onChange(of: runningSandboxNames) { _, _ in
             sessionStore.cleanupStaleSessions(sandboxes: sandboxStore.sandboxes)
+            kanbanStore.syncSandboxStatus(sandboxes: sandboxStore.sandboxes)
         }
         .onChange(of: sessionStore.activeSessionIDs) { _, newIDs in
             if let selected = selectedSessionID, !newIDs.contains(selected) {
