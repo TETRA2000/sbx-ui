@@ -25,7 +25,7 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
     var createdAt: Date
     var completedAt: Date?
 
-    init(
+    nonisolated init(
         id: String = UUID().uuidString,
         title: String,
         description: String = "",
@@ -62,7 +62,7 @@ struct KanbanColumn: Identifiable, Sendable, Codable, Equatable {
     var sortOrder: Int
     var isDefault: Bool
 
-    init(
+    nonisolated init(
         id: String = UUID().uuidString,
         title: String,
         sortOrder: Int,
@@ -83,7 +83,7 @@ struct KanbanBoard: Identifiable, Sendable, Codable {
     var createdAt: Date
     var updatedAt: Date
 
-    init(
+    nonisolated init(
         id: String = UUID().uuidString,
         name: String,
         columns: [KanbanColumn]? = nil,
@@ -99,7 +99,7 @@ struct KanbanBoard: Identifiable, Sendable, Codable {
         self.updatedAt = updatedAt
     }
 
-    static func defaultColumns() -> [KanbanColumn] {
+    nonisolated static func defaultColumns() -> [KanbanColumn] {
         [
             KanbanColumn(title: "Backlog", sortOrder: 0, isDefault: true),
             KanbanColumn(title: "In Progress", sortOrder: 1, isDefault: true),
@@ -107,11 +107,11 @@ struct KanbanBoard: Identifiable, Sendable, Codable {
         ]
     }
 
-    func tasks(inColumn columnID: String) -> [KanbanTask] {
+    nonisolated func tasks(inColumn columnID: String) -> [KanbanTask] {
         tasks.filter { $0.columnID == columnID }.sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    var sortedColumns: [KanbanColumn] {
+    nonisolated var sortedColumns: [KanbanColumn] {
         columns.sorted { $0.sortOrder < $1.sortOrder }
     }
 }
