@@ -6,6 +6,7 @@ A native macOS desktop GUI built with SwiftUI and Swift that wraps the Docker Sa
 
 - Sandbox Dashboard with live status grid and global statistics
 - Sandbox Lifecycle management (create, resume, stop, terminate)
+- Kanban Board for orchestrating multiple agent tasks with drag-and-drop, dependency chaining, and auto-execution
 - Network Policies with global allow/deny rules and activity log
 - Port Forwarding with per-sandbox host-to-sandbox mappings
 - Environment Variables with per-sandbox persistent vars (via `/etc/sandbox-persistent.sh`, with managed section markers to preserve user edits)
@@ -68,6 +69,7 @@ SwiftUI Views
 - `PolicyStore` -- network policy rules and activity log
 - `EnvVarStore` -- per-sandbox environment variables
 - `TerminalSessionStore` -- agent and shell terminal sessions
+- `KanbanStore` -- kanban board, task CRUD, dependency engine, execution
 - `SettingsStore` -- user preferences
 
 ### View Layer (`sbx-ui/Views/`)
@@ -75,6 +77,7 @@ SwiftUI Views
 SwiftUI views organized by feature:
 
 - **Dashboard** -- sandbox grid, creation sheet, status chips, global stats
+- **Kanban** -- task board, columns, task cards, drag-and-drop, dependency management
 - **Policies** -- policy list, add policy sheet, policy log
 - **Ports** -- port mappings, add port sheet
 - **EnvVars** -- environment variable management, add variable sheet
@@ -93,23 +96,27 @@ sbx-ui/
     sbx_uiApp.swift              # App entry point
     Models/
       DomainTypes.swift           # Sandbox, PolicyRule, PortMapping, EnvVar, etc.
+      KanbanTypes.swift           # KanbanTask, KanbanColumn, KanbanBoard
     Services/
       SbxServiceProtocol.swift    # Service protocol + JSON response types
       RealSbxService.swift        # CLI-backed implementation
       CliExecutor.swift           # Process spawning and output capture
       SbxOutputParser.swift       # CLI output parsing
       ServiceFactory.swift        # Service creation based on environment
+      KanbanPersistence.swift     # Kanban JSON file persistence
     Stores/
       SandboxStore.swift          # Sandbox lifecycle store
       PolicyStore.swift           # Network policy store
       EnvVarStore.swift           # Environment variable store
       TerminalSessionStore.swift  # Terminal session store
+      KanbanStore.swift           # Kanban board and task store
       SettingsStore.swift         # User preferences store
       LogStore.swift              # Debug log store
     Views/
       ShellView.swift             # Main shell with NavigationSplitView
       SidebarView.swift           # Sidebar navigation
       Dashboard/                  # Sandbox grid, creation, status
+      Kanban/                     # Kanban board, columns, task cards
       Policies/                   # Policy management views
       Ports/                      # Port forwarding views
       EnvVars/                    # Environment variable views
@@ -129,6 +136,7 @@ sbx-ui/
   docs/
     sbx-cli-reference.md         # sbx CLI v0.23.0 reference
     mock-sbx.md                  # CLI mock documentation
+    kanban-design.md             # Kanban feature design document
 ```
 
 ## Usage
@@ -150,6 +158,20 @@ Each sandbox card shows an "ENV" chip when environment variables are configured.
 3. Remove variables individually.
 
 Variables are persisted inside the sandbox via `/etc/sandbox-persistent.sh`. The service uses managed section markers (`# --- sbx-ui managed ---` / `# --- end sbx-ui managed ---`) so user edits outside the managed section are preserved across syncs.
+
+### Kanban Board
+
+1. Select "KANBAN" in the sidebar.
+2. Click "Create Board" to create your first board (with default Backlog, In Progress, Done columns).
+3. Click the "+" button on any column header to add a task.
+4. Fill in the task title, agent prompt, agent type, and workspace directory.
+5. Optionally select dependency tasks that must complete before this task can start.
+6. Drag task cards between columns to reorganize. Cards can be reordered within columns.
+7. Click "Start" on a task card to create a sandbox and run the agent with the configured prompt.
+8. Running tasks show live terminal thumbnails. When the sandbox stops, the task auto-moves to "Done".
+9. Tasks with dependencies are marked "BLOCKED" until all upstream tasks complete, then auto-execute.
+
+See `docs/kanban-design.md` for the full design document.
 
 ### Network Policies
 
