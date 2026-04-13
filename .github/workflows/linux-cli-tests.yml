@@ -1,0 +1,65 @@
+name: Linux CLI Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Package.swift"
+      - "Package.resolved"
+      - "Sources/**"
+      - "Tests/**"
+      - "sbx-ui/Models/**"
+      - "sbx-ui/Services/**"
+      - "tools/mock-sbx"
+      - "tools/mock-sbx-tests.sh"
+      - ".github/workflows/linux-cli-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Package.swift"
+      - "Package.resolved"
+      - "Sources/**"
+      - "Tests/**"
+      - "sbx-ui/Models/**"
+      - "sbx-ui/Services/**"
+      - "tools/mock-sbx"
+      - "tools/mock-sbx-tests.sh"
+      - ".github/workflows/linux-cli-tests.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Swift Build & Test (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1"
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Setup mock-sbx
+        run: |
+          chmod +x tools/mock-sbx
+          ls -la tools/sbx
+
+      - name: Test mock-sbx script
+        run: bash tools/mock-sbx-tests.sh
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Build release
+        run: swift build -c release
