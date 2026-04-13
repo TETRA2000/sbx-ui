@@ -1,6 +1,6 @@
 import Foundation
 
-protocol SbxServiceProtocol: Sendable {
+public protocol SbxServiceProtocol: Sendable {
     // Lifecycle
     func list() async throws -> [Sandbox]
     func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox
@@ -30,15 +30,19 @@ protocol SbxServiceProtocol: Sendable {
     func sendMessage(name: String, message: String) async throws
 }
 
-protocol CliExecutorProtocol: Sendable {
+public protocol CliExecutorProtocol: Sendable {
     func exec(command: String, args: [String]) async throws -> CliResult
     func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T
 }
 
-struct CliResult: Sendable {
-    let stdout: String
-    let stderr: String
-    let exitCode: Int32
+public struct CliResult: Sendable {
+    public let stdout: String
+    public let stderr: String
+    public let exitCode: Int32
+
+    public init(stdout: String, stderr: String, exitCode: Int32) {
+        self.stdout = stdout; self.stderr = stderr; self.exitCode = exitCode
+    }
 }
 
 // MARK: - JSON Response Types (matching real sbx CLI --json output)

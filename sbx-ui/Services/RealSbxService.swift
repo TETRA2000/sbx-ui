@@ -1,15 +1,15 @@
 import Foundation
 
-actor RealSbxService: SbxServiceProtocol {
+public actor RealSbxService: SbxServiceProtocol {
     private let cli: CliExecutorProtocol
 
-    init(cli: CliExecutorProtocol = CliExecutor()) {
+    public init(cli: CliExecutorProtocol = CliExecutor()) {
         self.cli = cli
     }
 
     // MARK: - Lifecycle
 
-    func list() async throws -> [Sandbox] {
+    public func list() async throws -> [Sandbox] {
         let result = try await cli.exec(command: "sbx", args: ["ls", "--json"])
         try checkCli(result)
         guard let data = result.stdout.data(using: .utf8) else { return [] }
@@ -29,7 +29,7 @@ actor RealSbxService: SbxServiceProtocol {
         }
     }
 
-    func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox {
+    public func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox {
         var args: [String]
 
         if agent.isEmpty, let name = opts?.name, !name.isEmpty {
@@ -58,25 +58,25 @@ actor RealSbxService: SbxServiceProtocol {
         return sandbox
     }
 
-    func stop(name: String) async throws {
+    public func stop(name: String) async throws {
         let result = try await cli.exec(command: "sbx", args: ["stop", name])
         try checkCli(result)
     }
 
-    func rm(name: String) async throws {
+    public func rm(name: String) async throws {
         let result = try await cli.exec(command: "sbx", args: ["rm", "-f", name])
         try checkCli(result)
     }
 
     // MARK: - Network Policies
 
-    func policyList() async throws -> [PolicyRule] {
+    public func policyList() async throws -> [PolicyRule] {
         let result = try await cli.exec(command: "sbx", args: ["policy", "ls"])
         try checkCli(result)
         return SbxOutputParser.parsePolicyList(result.stdout)
     }
 
-    func policyAllow(resources: String) async throws -> PolicyRule {
+    public func policyAllow(resources: String) async throws -> PolicyRule {
         let result = try await cli.exec(command: "sbx", args: ["policy", "allow", "network", resources])
         try checkCli(result)
         let rules = try await policyList()
@@ -84,7 +84,7 @@ actor RealSbxService: SbxServiceProtocol {
             ?? PolicyRule(id: UUID().uuidString, type: "network", decision: .allow, resources: resources)
     }
 
-    func policyDeny(resources: String) async throws -> PolicyRule {
+    public func policyDeny(resources: String) async throws -> PolicyRule {
         let result = try await cli.exec(command: "sbx", args: ["policy", "deny", "network", resources])
         try checkCli(result)
         let rules = try await policyList()
@@ -92,12 +92,12 @@ actor RealSbxService: SbxServiceProtocol {
             ?? PolicyRule(id: UUID().uuidString, type: "network", decision: .deny, resources: resources)
     }
 
-    func policyRemove(resource: String) async throws {
+    public func policyRemove(resource: String) async throws {
         let result = try await cli.exec(command: "sbx", args: ["policy", "rm", "network", "--resource", resource])
         try checkCli(result)
     }
 
-    func policyLog(sandboxName: String?) async throws -> [PolicyLogEntry] {
+    public func policyLog(sandboxName: String?) async throws -> [PolicyLogEntry] {
         var args = ["policy", "log", "--json"]
         if let name = sandboxName {
             args.insert(name, at: 2) // sbx policy log <sandbox> --json
@@ -131,7 +131,7 @@ actor RealSbxService: SbxServiceProtocol {
 
     // MARK: - Port Forwarding
 
-    func portsList(name: String) async throws -> [PortMapping] {
+    public func portsList(name: String) async throws -> [PortMapping] {
         let result = try await cli.exec(command: "sbx", args: ["ports", name, "--json"])
         try checkCli(result)
         guard let data = result.stdout.data(using: .utf8),
@@ -141,20 +141,20 @@ actor RealSbxService: SbxServiceProtocol {
         return ports.map { PortMapping(hostPort: $0.hostPort, sandboxPort: $0.sandboxPort, protocolType: $0.protocol) }
     }
 
-    func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping {
+    public func portsPublish(name: String, hostPort: Int, sbxPort: Int) async throws -> PortMapping {
         let result = try await cli.exec(command: "sbx", args: ["ports", name, "--publish", "\(hostPort):\(sbxPort)"])
         try checkCli(result)
         return PortMapping(hostPort: hostPort, sandboxPort: sbxPort, protocolType: "tcp")
     }
 
-    func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws {
+    public func portsUnpublish(name: String, hostPort: Int, sbxPort: Int) async throws {
         let result = try await cli.exec(command: "sbx", args: ["ports", name, "--unpublish", "\(hostPort):\(sbxPort)"])
         try checkCli(result)
     }
 
     // MARK: - Environment Variables
 
-    func envVarList(name: String) async throws -> [EnvVar] {
+    public func envVarList(name: String) async throws -> [EnvVar] {
         let result = try await cli.exec(command: "sbx", args: [
             "exec", name, "cat", "/etc/sandbox-persistent.sh"
         ])
@@ -167,7 +167,7 @@ actor RealSbxService: SbxServiceProtocol {
         return SbxOutputParser.parseManagedEnvVars(result.stdout)
     }
 
-    func envVarSync(name: String, vars: [EnvVar]) async throws {
+    public func envVarSync(name: String, vars: [EnvVar]) async throws {
         // Read existing file content (empty if doesn't exist)
         let readResult = try await cli.exec(command: "sbx", args: [
             "exec", name, "cat", "/etc/sandbox-persistent.sh"
@@ -202,7 +202,7 @@ actor RealSbxService: SbxServiceProtocol {
 
     // MARK: - Exec
 
-    func exec(name: String, command: String, args: [String]) async throws -> CliResult {
+    public func exec(name: String, command: String, args: [String]) async throws -> CliResult {
         let result = try await cli.exec(command: "sbx", args: ["exec", name, command] + args)
         try checkCli(result)
         return result
@@ -210,7 +210,7 @@ actor RealSbxService: SbxServiceProtocol {
 
     // MARK: - Session
 
-    func sendMessage(name: String, message: String) async throws {
+    public func sendMessage(name: String, message: String) async throws {
         // Delegated to TerminalSessionStore in practice
     }
 

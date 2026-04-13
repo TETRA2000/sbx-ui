@@ -1,60 +1,82 @@
 import Foundation
 
-enum SandboxStatus: String, Sendable, Codable {
+public enum SandboxStatus: String, Sendable, Codable {
     case running, stopped, creating, removing
 }
 
-enum SessionType: String, Sendable {
+public enum SessionType: String, Sendable {
     case agent   // sbx run <name>
     case shell   // sbx exec -it <name> bash
 }
 
-struct Sandbox: Identifiable, Sendable, Encodable {
-    let id: String
-    let name: String
-    let agent: String  // "claude"
-    var status: SandboxStatus
-    let workspace: String
-    var ports: [PortMapping]
-    let createdAt: Date
+public struct Sandbox: Identifiable, Sendable, Encodable {
+    public let id: String
+    public let name: String
+    public let agent: String  // "claude"
+    public var status: SandboxStatus
+    public let workspace: String
+    public var ports: [PortMapping]
+    public let createdAt: Date
+
+    public init(id: String, name: String, agent: String, status: SandboxStatus, workspace: String, ports: [PortMapping], createdAt: Date) {
+        self.id = id; self.name = name; self.agent = agent; self.status = status
+        self.workspace = workspace; self.ports = ports; self.createdAt = createdAt
+    }
 }
 
-struct PolicyRule: Identifiable, Sendable, Encodable {
-    let id: String
-    let type: String  // "network"
-    let decision: PolicyDecision
-    let resources: String
+public struct PolicyRule: Identifiable, Sendable, Encodable {
+    public let id: String
+    public let type: String  // "network"
+    public let decision: PolicyDecision
+    public let resources: String
+
+    public init(id: String, type: String, decision: PolicyDecision, resources: String) {
+        self.id = id; self.type = type; self.decision = decision; self.resources = resources
+    }
 }
 
-enum PolicyDecision: String, Sendable, Codable {
+public enum PolicyDecision: String, Sendable, Codable {
     case allow, deny
 }
 
-struct PolicyLogEntry: Sendable, Identifiable {
-    var id: String { "\(sandbox)-\(host)-\(proxy)" }
-    let sandbox: String
-    let type: String  // "network"
-    let host: String
-    let proxy: String  // "forward", "transparent", "network"
-    let rule: String
-    let lastSeen: Date
-    let count: Int
-    let blocked: Bool
+public struct PolicyLogEntry: Sendable, Identifiable {
+    public var id: String { "\(sandbox)-\(host)-\(proxy)" }
+    public let sandbox: String
+    public let type: String  // "network"
+    public let host: String
+    public let proxy: String  // "forward", "transparent", "network"
+    public let rule: String
+    public let lastSeen: Date
+    public let count: Int
+    public let blocked: Bool
+
+    public init(sandbox: String, type: String, host: String, proxy: String, rule: String, lastSeen: Date, count: Int, blocked: Bool) {
+        self.sandbox = sandbox; self.type = type; self.host = host; self.proxy = proxy
+        self.rule = rule; self.lastSeen = lastSeen; self.count = count; self.blocked = blocked
+    }
 }
 
-struct PortMapping: Sendable, Identifiable, Equatable, Encodable {
-    var id: String { "\(hostPort)-\(sandboxPort)" }
-    let hostPort: Int
-    let sandboxPort: Int
-    let protocolType: String  // "tcp"
+public struct PortMapping: Sendable, Identifiable, Equatable, Encodable {
+    public var id: String { "\(hostPort)-\(sandboxPort)" }
+    public let hostPort: Int
+    public let sandboxPort: Int
+    public let protocolType: String  // "tcp"
+
+    public init(hostPort: Int, sandboxPort: Int, protocolType: String) {
+        self.hostPort = hostPort; self.sandboxPort = sandboxPort; self.protocolType = protocolType
+    }
 }
 
-struct RunOptions: Sendable {
-    var name: String?
-    var prompt: String?
+public struct RunOptions: Sendable {
+    public var name: String?
+    public var prompt: String?
+
+    public init(name: String? = nil, prompt: String? = nil) {
+        self.name = name; self.prompt = prompt
+    }
 }
 
-enum SbxServiceError: Error, Sendable, LocalizedError {
+public enum SbxServiceError: Error, Sendable, LocalizedError {
     case notFound(String)
     case alreadyExists(String)
     case portConflict(Int)
@@ -63,7 +85,7 @@ enum SbxServiceError: Error, Sendable, LocalizedError {
     case dockerNotRunning
     case invalidName(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .notFound(let name): "Sandbox '\(name)' not found"
         case .alreadyExists(let name): "Sandbox '\(name)' already exists"
@@ -76,18 +98,22 @@ enum SbxServiceError: Error, Sendable, LocalizedError {
     }
 }
 
-struct EnvVar: Identifiable, Sendable, Equatable, Encodable {
-    var id: String { key }
-    let key: String
-    let value: String
+public struct EnvVar: Identifiable, Sendable, Equatable, Encodable {
+    public var id: String { key }
+    public let key: String
+    public let value: String
+
+    public init(key: String, value: String) {
+        self.key = key; self.value = value
+    }
 }
 
-enum SbxValidation {
-    nonisolated static func isValidName(_ name: String) -> Bool {
+public enum SbxValidation {
+    nonisolated public static func isValidName(_ name: String) -> Bool {
         name.range(of: #"^[a-z0-9][a-z0-9-]*$"#, options: .regularExpression) != nil
     }
 
-    nonisolated static func isValidEnvKey(_ key: String) -> Bool {
+    nonisolated public static func isValidEnvKey(_ key: String) -> Bool {
         key.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil
     }
 }
