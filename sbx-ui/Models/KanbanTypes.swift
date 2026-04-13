@@ -10,11 +10,13 @@ enum KanbanTaskStatus: String, Sendable, Codable {
     case cancelled
 }
 
-struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
+struct KanbanTask: Identifiable, Sendable, Equatable {
     let id: String
     var title: String
     var description: String
     var prompt: String
+    var agent: String
+    var workspace: String
     var columnID: String
     var sortOrder: Int
     var sandboxName: String?
@@ -28,6 +30,8 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
         title: String,
         description: String = "",
         prompt: String = "",
+        agent: String = "claude",
+        workspace: String = "",
         columnID: String,
         sortOrder: Int = 0,
         sandboxName: String? = nil,
@@ -40,6 +44,8 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
         self.title = title
         self.description = description
         self.prompt = prompt
+        self.agent = agent
+        self.workspace = workspace
         self.columnID = columnID
         self.sortOrder = sortOrder
         self.sandboxName = sandboxName
@@ -47,6 +53,31 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
         self.status = status
         self.createdAt = createdAt
         self.completedAt = completedAt
+    }
+}
+
+// Backward-compatible Codable: agent/workspace may be absent in older JSON
+extension KanbanTask: Codable {
+    enum CodingKeys: String, CodingKey {
+        case id, title, description, prompt, agent, workspace, columnID, sortOrder
+        case sandboxName, dependencyIDs, status, createdAt, completedAt
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        description = try c.decode(String.self, forKey: .description)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? "claude"
+        workspace = try c.decodeIfPresent(String.self, forKey: .workspace) ?? ""
+        columnID = try c.decode(String.self, forKey: .columnID)
+        sortOrder = try c.decode(Int.self, forKey: .sortOrder)
+        sandboxName = try c.decodeIfPresent(String.self, forKey: .sandboxName)
+        dependencyIDs = try c.decode([String].self, forKey: .dependencyIDs)
+        status = try c.decode(KanbanTaskStatus.self, forKey: .status)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
     }
 }
 

@@ -10,7 +10,10 @@ private struct TaskSheetContext: Identifiable {
 struct KanbanBoardView: View {
     @Environment(KanbanStore.self) private var kanbanStore
     @Environment(SandboxStore.self) private var sandboxStore
+    @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(ToastManager.self) private var toastManager
+    var onViewSession: ((String) -> Void)?
+
     @State private var taskSheetContext: TaskSheetContext?
     @State private var showAddColumnSheet = false
     @State private var newColumnName = ""
@@ -73,10 +76,12 @@ struct KanbanBoardView: View {
                                     taskSheetContext = TaskSheetContext(board: board, columnID: task.columnID, editingTask: task)
                                 },
                                 onStartTask: { task in
-                                    kanbanStore.executeTask(boardID: board.id, taskID: task.id)
-                                    if let err = kanbanStore.error {
-                                        toastManager.show(err)
-                                        kanbanStore.error = nil
+                                    Task {
+                                        await kanbanStore.executeTask(boardID: board.id, taskID: task.id)
+                                        if let err = kanbanStore.error {
+                                            toastManager.show(err)
+                                            kanbanStore.error = nil
+                                        }
                                     }
                                 },
                                 onCancelTask: { task in
@@ -89,6 +94,12 @@ struct KanbanBoardView: View {
                                 },
                                 onDropTask: { taskID, index in
                                     kanbanStore.moveTask(boardID: board.id, taskID: taskID, toColumnID: column.id, atIndex: index)
+                                },
+                                onViewSession: { task in
+                                    if let sbxName = task.sandboxName,
+                                       let sessionID = sessionStore.agentSessionID(for: sbxName) {
+                                        onViewSession?(sessionID)
+                                    }
                                 }
                             )
                         }
@@ -127,7 +138,6 @@ struct KanbanBoardView: View {
                 onSave: { task in
                     if context.editingTask != nil {
                         kanbanStore.updateTask(boardID: context.board.id, task: task)
-                        // Update dependencies
                         if let existing = context.editingTask {
                             let oldDeps = Set(existing.dependencyIDs)
                             let newDeps = Set(task.dependencyIDs)
@@ -142,7 +152,8 @@ struct KanbanBoardView: View {
                         if let created = kanbanStore.addTask(
                             boardID: context.board.id, columnID: context.columnID,
                             title: task.title, description: task.description,
-                            prompt: task.prompt, sandboxName: task.sandboxName ?? ""
+                            prompt: task.prompt, agent: task.agent, workspace: task.workspace,
+                            sandboxName: task.sandboxName
                         ) {
                             for depID in task.dependencyIDs {
                                 _ = kanbanStore.addDependency(boardID: context.board.id, taskID: created.id, dependsOn: depID)
@@ -215,6 +226,13 @@ struct KanbanBoardView: View {
             .padding(24)
             .frame(width: 320)
             .background(Color.surfaceContainer)
+        }
+        .task {
+            // Capture terminal snapshots for task card thumbnails
+            while !Task.isCancelled {
+                sessionStore.captureSnapshots()
+                try? await Task.sleep(for: .seconds(3))
+            }
         }
     }
 }

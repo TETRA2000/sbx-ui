@@ -26,8 +26,13 @@ struct sbx_uiApp: App {
         let kanbanDir: URL? = ProcessInfo.processInfo.environment["SBX_KANBAN_DIR"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let kanban = KanbanStore(service: service, persistenceDirectory: kanbanDir)
-        kanban.onSendPrompt = { sandboxName, message in
-            session.sendMessage(message, to: sandboxName)
+        kanban.onExecuteTask = { sandboxName, prompt in
+            // Start terminal session if not already running
+            _ = session.startSession(sandboxName: sandboxName, type: .agent)
+            // Wait for terminal to be ready
+            try await Task.sleep(for: .seconds(3))
+            // Send prompt
+            session.sendMessage(prompt, to: sandboxName)
         }
         _sandboxStore = State(initialValue: sandbox)
         _policyStore = State(initialValue: policy)

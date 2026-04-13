@@ -54,7 +54,9 @@ struct ShellView: View {
                                 }
                             )
                         case .kanban:
-                            KanbanBoardView()
+                            KanbanBoardView(onViewSession: { sessionID in
+                                selectedSessionID = sessionID
+                            })
                         case .policies:
                             PolicyPanelView()
                         case .plugins:

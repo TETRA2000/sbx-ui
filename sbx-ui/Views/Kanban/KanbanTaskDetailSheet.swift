@@ -162,11 +162,14 @@ struct KanbanTaskDetailSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button(isEditing ? "Save" : "Create Task") {
+                    let selectedSandbox = runningSandboxes.first { $0.name == selectedSandboxName }
                     let task = KanbanTask(
                         id: existingTask?.id ?? UUID().uuidString,
                         title: title.trimmingCharacters(in: .whitespaces),
                         description: description,
                         prompt: prompt,
+                        agent: selectedSandbox?.agent ?? "claude",
+                        workspace: selectedSandbox?.workspace ?? "",
                         columnID: existingTask?.columnID ?? columnID,
                         sortOrder: existingTask?.sortOrder ?? 0,
                         sandboxName: selectedSandboxName.isEmpty ? nil : selectedSandboxName,

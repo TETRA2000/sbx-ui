@@ -9,6 +9,7 @@ struct KanbanColumnView: View {
     var onCancelTask: (KanbanTask) -> Void
     var onDeleteTask: (KanbanTask) -> Void
     var onDropTask: (String, Int) -> Void
+    var onViewSession: (KanbanTask) -> Void
 
     @State private var isTargeted = false
 
@@ -60,7 +61,8 @@ struct KanbanColumnView: View {
                             onEdit: { onEditTask(task) },
                             onStart: { onStartTask(task) },
                             onCancel: { onCancelTask(task) },
-                            onDelete: { onDeleteTask(task) }
+                            onDelete: { onDeleteTask(task) },
+                            onViewSession: { onViewSession(task) }
                         )
                         .draggable(task.id)
                     }

@@ -48,12 +48,12 @@ enum SandboxOperation: Sendable {
     }
 
     @discardableResult
-    func createSandbox(workspace: String, name: String?) async throws -> Sandbox {
+    func createSandbox(workspace: String, name: String?, agent: String = "claude") async throws -> Sandbox {
         isCreating = true
         defer { isCreating = false }
-        appLog(.info, "SandboxStore", "Creating sandbox", detail: "workspace=\(workspace) name=\(name ?? "<auto>")")
+        appLog(.info, "SandboxStore", "Creating sandbox", detail: "workspace=\(workspace) name=\(name ?? "<auto>") agent=\(agent)")
         let opts = RunOptions(name: name)
-        let sandbox = try await service.run(agent: "claude", workspace: workspace, opts: opts)
+        let sandbox = try await service.run(agent: agent, workspace: workspace, opts: opts)
         appLog(.info, "SandboxStore", "Sandbox created: \(sandbox.name) [\(sandbox.status.rawValue)]")
         await fetchSandboxes()
         await onPluginEvent?(.sandboxCreated(sandbox))

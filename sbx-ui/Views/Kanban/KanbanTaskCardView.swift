@@ -8,6 +8,7 @@ struct KanbanTaskCardView: View {
     var onStart: () -> Void
     var onCancel: () -> Void
     var onDelete: () -> Void
+    var onViewSession: () -> Void
 
     @Environment(TerminalSessionStore.self) private var sessionStore
     @State private var isHovered = false
@@ -49,15 +50,25 @@ struct KanbanTaskCardView: View {
                 statusChip
             }
 
-            // Sandbox
-            if let sbxName = task.sandboxName {
+            // Agent + sandbox
+            HStack(spacing: 8) {
                 HStack(spacing: 3) {
-                    Image(systemName: "shippingbox")
+                    Image(systemName: "cpu")
                         .font(.system(size: 9))
-                    Text(sbxName)
+                    Text(task.agent)
                         .font(.code(10))
                 }
                 .foregroundStyle(.secondary)
+
+                if let sbxName = task.sandboxName {
+                    HStack(spacing: 3) {
+                        Image(systemName: "shippingbox")
+                            .font(.system(size: 9))
+                        Text(sbxName)
+                            .font(.code(10))
+                    }
+                    .foregroundStyle(Color.surfaceContainerHighest)
+                }
             }
 
             // Prompt preview
@@ -69,18 +80,31 @@ struct KanbanTaskCardView: View {
                     .truncationMode(.tail)
             }
 
-            // Terminal thumbnail (if sandbox is running)
+            // Terminal thumbnail (if sandbox is running) — tap to view session
             if let sbxName = task.sandboxName,
                let agentID = sessionStore.agentSessionID(for: sbxName),
                let thumbnail = sessionStore.thumbnails[agentID] {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 80)
-                    .clipped()
-                    .background(Color.surfaceLowest)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Button { onViewSession() } label: {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 80)
+                        .clipped()
+                        .background(Color.surfaceLowest)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: "arrow.up.forward.square")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white)
+                                .padding(4)
+                                .background(.black.opacity(0.5))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .padding(4)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("sessionThumbnail-\(task.id)")
             }
 
             // Bottom: dependency badge + actions

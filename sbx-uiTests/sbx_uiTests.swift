@@ -3046,7 +3046,7 @@ struct KanbanStoreTests {
         let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
-        let task = await store.addTask(boardID: board.id, columnID: colID, title: "My Task", prompt: "Do something", sandboxName: "test-sbx")
+        let task = await store.addTask(boardID: board.id, columnID: colID, title: "My Task", prompt: "Do something")
         #expect(task != nil)
         #expect(task!.title == "My Task")
         #expect(task!.prompt == "Do something")
@@ -3061,8 +3061,8 @@ struct KanbanStoreTests {
         let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
-        let task1 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 1", sandboxName: "sbx-1")!
-        let task2 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 2", sandboxName: "sbx-2")!
+        let task1 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 1")!
+        let task2 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 2")!
         _ = await store.addDependency(boardID: board.id, taskID: task2.id, dependsOn: task1.id)
         await store.removeTask(boardID: board.id, taskID: task1.id)
         let boards = await store.boards
@@ -3076,7 +3076,7 @@ struct KanbanStoreTests {
         let board = await store.createBoard(name: "Test")
         let backlogID = board.columns.first { $0.title == "Backlog" }!.id
         let inProgressID = board.columns.first { $0.title == "In Progress" }!.id
-        let task = await store.addTask(boardID: board.id, columnID: backlogID, title: "Move me", sandboxName: "sbx-move")!
+        let task = await store.addTask(boardID: board.id, columnID: backlogID, title: "Move me")!
         await store.moveTask(boardID: board.id, taskID: task.id, toColumnID: inProgressID, atIndex: 0)
         let boards = await store.boards
         let moved = boards.first { $0.id == board.id }!.tasks.first { $0.id == task.id }!
@@ -3088,8 +3088,8 @@ struct KanbanStoreTests {
         let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
-        let task1 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 1", sandboxName: "sbx-1")!
-        let task2 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 2", sandboxName: "sbx-2")!
+        let task1 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 1")!
+        let task2 = await store.addTask(boardID: board.id, columnID: colID, title: "Task 2")!
         let ok = await store.addDependency(boardID: board.id, taskID: task2.id, dependsOn: task1.id)
         #expect(ok == true)
         let cyclic = await store.addDependency(boardID: board.id, taskID: task1.id, dependsOn: task2.id)
@@ -3101,7 +3101,7 @@ struct KanbanStoreTests {
         let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
-        let task = await store.addTask(boardID: board.id, columnID: colID, title: "Self", sandboxName: "sbx-self")!
+        let task = await store.addTask(boardID: board.id, columnID: colID, title: "Self")!
         let result = await store.addDependency(boardID: board.id, taskID: task.id, dependsOn: task.id)
         #expect(result == false)
     }
@@ -3146,7 +3146,7 @@ struct KanbanStoreTests {
         let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first { $0.title == "In Progress" }!.id
-        var task = await store.addTask(boardID: board.id, columnID: colID, title: "Running task", sandboxName: "sbx-run")!
+        var task = await store.addTask(boardID: board.id, columnID: colID, title: "Running task")!
         // Manually set to running with sandbox name
         task.status = .running
         task.sandboxName = "test-sandbox"
@@ -3160,13 +3160,13 @@ struct KanbanStoreTests {
         #expect(updated.completedAt != nil)
     }
 
-    @Test func taskExecutionSendsPrompt() async throws {
+    @Test func taskExecutionStartsSessionAndSendsPrompt() async throws {
         let service = StubSbxService()
         let store = await makeKanbanStore(service: service)
-        var sentPrompt: (sandbox: String, message: String)?
+        var received: (sandbox: String, prompt: String)?
         await MainActor.run {
-            store.onSendPrompt = { sandbox, message in
-                sentPrompt = (sandbox, message)
+            store.onExecuteTask = { sandboxName, prompt in
+                received = (sandboxName, prompt)
             }
         }
         let board = await store.createBoard(name: "Test")
@@ -3177,8 +3177,9 @@ struct KanbanStoreTests {
         let boards = await store.boards
         let updated = boards.first { $0.id == board.id }!.tasks.first { $0.id == task.id }!
         #expect(updated.status == .running)
-        #expect(sentPrompt?.sandbox == "my-sbx")
-        #expect(sentPrompt?.message == "hello")
+        #expect(updated.sandboxName == "my-sbx")
+        #expect(received?.sandbox == "my-sbx")
+        #expect(received?.prompt == "hello")
     }
 
     @Test func executeBlockedTaskIsRejected() async throws {
@@ -3187,7 +3188,7 @@ struct KanbanStoreTests {
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
         let dep = await store.addTask(boardID: board.id, columnID: colID, title: "Dep", sandboxName: "sbx-dep")!
-        let task = await store.addTask(boardID: board.id, columnID: colID, title: "Blocked", sandboxName: "sbx-blocked")!
+        let task = await store.addTask(boardID: board.id, columnID: colID, title: "Blocked", prompt: "go", sandboxName: "sbx-blocked")!
         _ = await store.addDependency(boardID: board.id, taskID: task.id, dependsOn: dep.id)
         await store.executeTask(boardID: board.id, taskID: task.id)
         let boards = await store.boards
@@ -3201,7 +3202,7 @@ struct KanbanStoreTests {
         let store = await makeKanbanStore(service: service)
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first!.id
-        var task = await store.addTask(boardID: board.id, columnID: colID, title: "Original", sandboxName: "sbx-orig")!
+        var task = await store.addTask(boardID: board.id, columnID: colID, title: "Original")!
         task.title = "Updated"
         task.prompt = "New prompt"
         await store.updateTask(boardID: board.id, task: task)
@@ -3217,7 +3218,7 @@ struct KanbanStoreTests {
         // Write a board with a task stuck in .running directly to persistence
         let persistence = KanbanPersistence(directory: tempDir)
         var board = KanbanBoard(name: "Test")
-        var task = KanbanTask(title: "Stuck", columnID: board.columns.first!.id, sandboxName: "my-sbx", status: .running)
+        let task = KanbanTask(title: "Stuck", columnID: board.columns.first!.id, sandboxName: "old-sbx", status: .running)
         board.tasks.append(task)
         try persistence.saveBoard(board)
         // Create a store from that directory — should recover stuck tasks
@@ -3226,7 +3227,7 @@ struct KanbanStoreTests {
         let boards = await store.boards
         let recovered = boards.first!.tasks.first { $0.id == task.id }!
         #expect(recovered.status == .pending)
-        #expect(recovered.sandboxName == "my-sbx")
+        #expect(recovered.sandboxName == "old-sbx")
     }
 
     @Test func renameBoard() async throws {

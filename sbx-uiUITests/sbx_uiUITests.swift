@@ -988,7 +988,7 @@ final class PluginExecutionUITests: XCTestCase {
 
     @MainActor
     func testKanbanCreateTask() throws {
-        // First, create a sandbox from the dashboard so it's available to pick
+        // First, deploy a sandbox so it appears in the sandbox picker
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
         newButton.click()
@@ -1003,7 +1003,7 @@ final class PluginExecutionUITests: XCTestCase {
         deployButton.click()
         sleep(3)
 
-        // Go back from the auto-opened session to allow sidebar navigation
+        // Go back from auto-opened session
         let backButton = app.buttons["backToDashboard"]
         if backButton.waitForExistence(timeout: 3) {
             backButton.click()
@@ -1027,13 +1027,13 @@ final class PluginExecutionUITests: XCTestCase {
         addTaskButtons.firstMatch.click()
         sleep(1)
 
-        // Fill in task details
+        // Fill in task details (sandbox auto-selected since there's only one)
         let titleField = app.textFields["taskTitleField"]
         XCTAssertTrue(titleField.waitForExistence(timeout: 5), "Task title field should appear")
         titleField.click()
         titleField.typeText("My Test Task")
 
-        // Save the task (sandbox is auto-selected since there's only one)
+        // Save the task
         let saveButton = app.buttons["saveTaskButton"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
         saveButton.click()

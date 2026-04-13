@@ -6,8 +6,8 @@ import SwiftUI
     var selectedBoardID: String?
     var error: String?
     var executingTaskIDs: Set<String> = []
-    /// Closure to send a prompt to a sandbox's agent terminal session.
-    var onSendPrompt: ((_ sandboxName: String, _ message: String) -> Void)?
+    /// Starts a terminal session on the sandbox, waits for ready, then sends the prompt.
+    var onExecuteTask: ((_ sandboxName: String, _ prompt: String) async throws -> Void)?
 
     private let service: any SbxServiceProtocol
     private let persistence: KanbanPersistence
@@ -28,12 +28,11 @@ import SwiftUI
     func loadBoards() {
         do {
             boards = try persistence.loadBoards()
-            // Recover tasks stuck in transient status from a previous session
+            // Recover tasks stuck in .running from a previous session
             for bIndex in boards.indices {
                 var changed = false
                 for tIndex in boards[bIndex].tasks.indices {
-                    let status = boards[bIndex].tasks[tIndex].status
-                    if status == .running {
+                    if boards[bIndex].tasks[tIndex].status == .running {
                         boards[bIndex].tasks[tIndex].status = .pending
                         changed = true
                     }
@@ -92,7 +91,6 @@ import SwiftUI
     func removeColumn(boardID: String, columnID: String) {
         guard let index = boardIndex(boardID) else { return }
         guard let col = boards[index].columns.first(where: { $0.id == columnID }), !col.isDefault else { return }
-        // Move tasks from removed column to first default column
         let fallbackID = boards[index].columns.first { $0.isDefault }?.id ?? ""
         for i in boards[index].tasks.indices where boards[index].tasks[i].columnID == columnID {
             boards[index].tasks[i].columnID = fallbackID
@@ -114,12 +112,14 @@ import SwiftUI
 
     @discardableResult
     func addTask(boardID: String, columnID: String, title: String, description: String = "",
-                 prompt: String = "", sandboxName: String) -> KanbanTask? {
+                 prompt: String = "", agent: String = "claude", workspace: String = "",
+                 sandboxName: String? = nil) -> KanbanTask? {
         guard let index = boardIndex(boardID) else { return nil }
         let existingInColumn = boards[index].tasks(inColumn: columnID)
         let maxOrder = existingInColumn.map(\.sortOrder).max() ?? -1
         let task = KanbanTask(
             title: title, description: description, prompt: prompt,
+            agent: agent, workspace: workspace,
             columnID: columnID, sortOrder: maxOrder + 1,
             sandboxName: sandboxName
         )
@@ -140,7 +140,6 @@ import SwiftUI
 
     func removeTask(boardID: String, taskID: String) {
         guard let index = boardIndex(boardID) else { return }
-        // Also remove this task from any dependency lists
         for i in boards[index].tasks.indices {
             boards[index].tasks[i].dependencyIDs.removeAll { $0 == taskID }
         }
@@ -157,7 +156,6 @@ import SwiftUI
 
         boards[bIndex].tasks[tIndex].columnID = toColumnID
 
-        // Recalculate sort orders for the target column
         var columnTasks = boards[bIndex].tasks(inColumn: toColumnID).filter { $0.id != taskID }
         let clampedIndex = min(atIndex, columnTasks.count)
         columnTasks.insert(boards[bIndex].tasks[tIndex], at: clampedIndex)
@@ -209,7 +207,7 @@ import SwiftUI
 
     // MARK: - Execution
 
-    func executeTask(boardID: String, taskID: String) {
+    func executeTask(boardID: String, taskID: String) async {
         guard let bIndex = boardIndex(boardID),
               let tIndex = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) else { return }
 
@@ -234,14 +232,22 @@ import SwiftUI
 
         executingTaskIDs.insert(taskID)
         boards[bIndex].tasks[tIndex].status = .running
-        // Move to In Progress column
         if let inProgressCol = boards[bIndex].columns.first(where: { $0.title == "In Progress" }) {
             boards[bIndex].tasks[tIndex].columnID = inProgressCol.id
         }
         save(boards[bIndex])
 
-        onSendPrompt?(sandboxName, task.prompt)
-        appLog(.info, "KanbanStore", "Task '\(task.title)' sent to sandbox '\(sandboxName)'")
+        do {
+            try await onExecuteTask?(sandboxName, task.prompt)
+            appLog(.info, "KanbanStore", "Task '\(task.title)' sent to sandbox '\(sandboxName)'")
+        } catch {
+            if let tIdx = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) {
+                boards[bIndex].tasks[tIdx].status = .failed
+                save(boards[bIndex])
+            }
+            self.error = error.localizedDescription
+            appLog(.error, "KanbanStore", "Task execution failed: \(task.title)", detail: error.localizedDescription)
+        }
 
         executingTaskIDs.remove(taskID)
     }
@@ -286,7 +292,6 @@ import SwiftUI
                         break
                     }
                 } else if task.status == .running {
-                    // Sandbox was removed
                     boards[bIndex].tasks[tIndex].status = .completed
                     boards[bIndex].tasks[tIndex].completedAt = Date()
                     if let doneCol = boards[bIndex].columns.first(where: { $0.title == "Done" }) {
@@ -298,8 +303,9 @@ import SwiftUI
             if changed {
                 boards[bIndex].updatedAt = Date()
                 save(boards[bIndex])
-                // Check if newly completed tasks unblock dependents
-                checkAndExecuteDependents(boardID: boards[bIndex].id)
+                Task {
+                    await checkAndExecuteDependents(boardID: boards[bIndex].id)
+                }
             }
         }
     }
@@ -343,7 +349,7 @@ import SwiftUI
         }
     }
 
-    private func checkAndExecuteDependents(boardID: String) {
+    private func checkAndExecuteDependents(boardID: String) async {
         guard let bIndex = boardIndex(boardID) else { return }
         let readyTasks = boards[bIndex].tasks.filter { task in
             task.status == .blocked &&
@@ -355,7 +361,7 @@ import SwiftUI
             if let tIndex = boards[bIndex].tasks.firstIndex(where: { $0.id == task.id }) {
                 boards[bIndex].tasks[tIndex].status = .pending
             }
-            executeTask(boardID: boardID, taskID: task.id)
+            await executeTask(boardID: boardID, taskID: task.id)
         }
     }
 }
