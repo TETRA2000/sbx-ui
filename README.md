@@ -2,6 +2,8 @@
 
 A native macOS desktop GUI built with SwiftUI and Swift that wraps the Docker Sandbox (`sbx`) CLI. sbx-ui enables developers to manage sandbox lifecycles, network policies, port forwarding, environment variables, and Claude Code agent sessions without terminal interaction.
 
+A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager is also available, providing the same sandbox management operations from the command line.
+
 ## Features
 
 - Sandbox Dashboard with live status grid and global statistics
@@ -14,16 +16,25 @@ A native macOS desktop GUI built with SwiftUI and Swift that wraps the Docker Sa
 - Multi-Session support with sidebar switching and dashboard thumbnails
 - Dark theme design system ("The Technical Monolith")
 - Debug log panel for CLI interaction tracing
+- **Linux CLI** with colored table output, JSON mode, and all sandbox management operations
 
 ## Requirements
+
+### macOS GUI
 
 - macOS 14.0+
 - Docker Desktop with `sbx` CLI (v0.23.0+)
 - Xcode 16+ (for building from source)
 
+### Linux CLI
+
+- Linux (Ubuntu 22.04+)
+- Swift 6.0+
+- Docker with `sbx` CLI (v0.23.0+)
+
 ## Getting Started
 
-### Build from source
+### macOS GUI — Build from source
 
 ```bash
 git clone https://github.com/TETRA2000/sbx-ui.git
@@ -33,7 +44,7 @@ open sbx-ui.xcodeproj
 
 Build and run with Cmd+R in Xcode. The app requires Docker Desktop to be running when using real sandboxes.
 
-### Development mode (mock CLI)
+### macOS GUI — Development mode (mock CLI)
 
 For development and testing without Docker Desktop, use the bundled CLI mock:
 
@@ -45,23 +56,69 @@ For development and testing without Docker Desktop, use the bundled CLI mock:
 
 The mock CLI (`tools/mock-sbx`) emulates all `sbx` commands using file-based state, exercising the full code path: `RealSbxService` -> `CliExecutor` -> `mock-sbx`.
 
+### Linux CLI — Build and install
+
+```bash
+git clone https://github.com/TETRA2000/sbx-ui.git
+cd sbx-ui
+swift build -c release
+# Binary is at .build/release/sbx-ui-cli
+# Optionally copy to PATH:
+cp .build/release/sbx-ui-cli /usr/local/bin/sbx-ui
+```
+
+### Linux CLI — Quick start
+
+```bash
+# List sandboxes
+sbx-ui ls
+
+# Create a sandbox
+sbx-ui create /path/to/workspace --name my-sandbox --agent claude
+
+# Show detailed status
+sbx-ui status my-sandbox
+
+# Manage ports
+sbx-ui ports publish my-sandbox 8080:3000
+sbx-ui ports ls my-sandbox
+
+# Manage env vars
+sbx-ui env set my-sandbox API_KEY secret123
+sbx-ui env ls my-sandbox
+
+# Network policies
+sbx-ui policy ls
+sbx-ui policy allow example.com
+sbx-ui policy log --blocked
+
+# JSON output for scripting
+sbx-ui ls --json
+```
+
+See `docs/linux-cli.md` for the full CLI reference.
+
 ## Architecture
 
 ```
-SwiftUI Views
-     |
-  Stores (@MainActor @Observable)
-     |
-  SbxServiceProtocol
-     |
-  RealSbxService -> CliExecutor -> sbx CLI (or mock-sbx)
+SwiftUI Views (macOS)          CLI Commands (Linux)
+     |                              |
+  Stores (@MainActor @Observable)   |
+     |                              |
+     +--------- SBXCore -----------+
+                   |
+            SbxServiceProtocol
+                   |
+            RealSbxService -> CliExecutor -> sbx CLI (or mock-sbx)
 ```
+
+The **SBXCore** library (Models + Services) is shared between the macOS GUI and the Linux CLI. It is built as a Swift Package Manager target from the same source files (`sbx-ui/Models/` and `sbx-ui/Services/`).
 
 ### Service Layer (`sbx-ui/Services/`)
 
 `SbxServiceProtocol` defines the contract for all sandbox operations. `RealSbxService` implements it by invoking the `sbx` CLI through `CliExecutor`. `ServiceFactory` selects the service based on environment configuration.
 
-### Store Layer (`sbx-ui/Stores/`)
+### Store Layer (`sbx-ui/Stores/`) — macOS only
 
 `@MainActor @Observable` classes that bridge services and views:
 
@@ -72,7 +129,7 @@ SwiftUI Views
 - `KanbanStore` -- kanban board, task CRUD, dependency engine, execution
 - `SettingsStore` -- user preferences
 
-### View Layer (`sbx-ui/Views/`)
+### View Layer (`sbx-ui/Views/`) — macOS only
 
 SwiftUI views organized by feature:
 
@@ -84,7 +141,18 @@ SwiftUI views organized by feature:
 - **Session** -- terminal panel, agent status bar
 - **Error** -- toast notifications, error states, debug log
 
-### Design System (`sbx-ui/DesignSystem/`)
+### CLI Layer (`Sources/sbx-ui-cli/`) — Linux
+
+Swift ArgumentParser commands that call `SBXCore` directly:
+
+- `CLI.swift` -- `@main` entry point and subcommand registration
+- `Commands.swift` -- `ls`, `create`, `stop`, `rm`, `run`, `exec`, `status`
+- `PolicyCommands.swift` -- `policy {ls,allow,deny,rm,log}`
+- `PortsCommands.swift` -- `ports {ls,publish,unpublish}`
+- `EnvCommands.swift` -- `env {ls,set,rm}`
+- `Formatting.swift` -- ANSI colored table output
+
+### Design System (`sbx-ui/DesignSystem/`) — macOS only
 
 "The Technical Monolith" dark theme with surface hierarchy, custom fonts, and accent/secondary/error color tokens.
 
@@ -92,56 +160,54 @@ SwiftUI views organized by feature:
 
 ```
 sbx-ui/
+  Package.swift                    # SPM manifest (SBXCore + sbx-ui-cli)
   sbx-ui/
-    sbx_uiApp.swift              # App entry point
+    sbx_uiApp.swift                # macOS app entry point
     Models/
-      DomainTypes.swift           # Sandbox, PolicyRule, PortMapping, EnvVar, etc.
-      KanbanTypes.swift           # KanbanTask, KanbanColumn, KanbanBoard
+      DomainTypes.swift            # Sandbox, PolicyRule, PortMapping, EnvVar, etc.
+      KanbanTypes.swift            # KanbanTask, KanbanColumn, KanbanBoard
     Services/
-      SbxServiceProtocol.swift    # Service protocol + JSON response types
-      RealSbxService.swift        # CLI-backed implementation
-      CliExecutor.swift           # Process spawning and output capture
-      SbxOutputParser.swift       # CLI output parsing
-      ServiceFactory.swift        # Service creation based on environment
-      KanbanPersistence.swift     # Kanban JSON file persistence
-    Stores/
-      SandboxStore.swift          # Sandbox lifecycle store
-      PolicyStore.swift           # Network policy store
-      EnvVarStore.swift           # Environment variable store
-      TerminalSessionStore.swift  # Terminal session store
-      KanbanStore.swift           # Kanban board and task store
-      SettingsStore.swift         # User preferences store
-      LogStore.swift              # Debug log store
-    Views/
-      ShellView.swift             # Main shell with NavigationSplitView
-      SidebarView.swift           # Sidebar navigation
-      Dashboard/                  # Sandbox grid, creation, status
-      Kanban/                     # Kanban board, columns, task cards
-      Policies/                   # Policy management views
-      Ports/                      # Port forwarding views
-      EnvVars/                    # Environment variable views
-      Session/                    # Terminal session views
-      Error/                      # Toast, error state, debug log
-    DesignSystem/
-      Colors.swift                # Color tokens
-      Fonts.swift                 # Typography
-      Constants.swift             # Layout constants
+      SbxServiceProtocol.swift     # Service protocol + JSON response types
+      RealSbxService.swift         # CLI-backed implementation
+      CliExecutor.swift            # Process spawning and output capture
+      SbxOutputParser.swift        # CLI output parsing
+      ServiceFactory.swift         # Service creation based on environment
+      KanbanPersistence.swift      # Kanban JSON file persistence
+      LinuxShims.swift             # Linux-only stubs (appLog, etc.)
+    Stores/                        # macOS-only reactive state
+    Views/                         # macOS-only SwiftUI views
+    DesignSystem/                  # macOS-only theme
+    Plugins/                       # Plugin system
+  Sources/
+    sbx-ui-cli/                    # Linux CLI executable
+      CLI.swift                    # @main entry point
+      Commands.swift               # Sandbox lifecycle commands
+      PolicyCommands.swift         # Network policy commands
+      PortsCommands.swift          # Port forwarding commands
+      EnvCommands.swift            # Environment variable commands
+      Formatting.swift             # ANSI table output
+  Tests/
+    SBXCoreTests/
+      SBXCoreTests.swift           # SPM tests (25 tests, Swift Testing)
   sbx-uiTests/
-    sbx_uiTests.swift            # Unit tests (Swift Testing)
+    sbx_uiTests.swift             # Xcode unit tests (Swift Testing)
   sbx-uiUITests/
-    sbx_uiUITests.swift          # UI/E2E tests (XCTest)
+    sbx_uiUITests.swift           # Xcode UI/E2E tests (XCTest)
   tools/
-    mock-sbx                      # CLI mock (bash)
-    mock-sbx-tests.sh            # CLI mock test suite
+    mock-sbx                       # CLI mock (bash)
+    mock-sbx-tests.sh             # CLI mock test suite (32 tests)
   docs/
-    sbx-cli-reference.md         # sbx CLI v0.23.0 reference
-    mock-sbx.md                  # CLI mock documentation
-    kanban-design.md             # Kanban feature design document
+    sbx-cli-reference.md          # sbx CLI v0.23.0 reference
+    mock-sbx.md                   # CLI mock documentation
+    kanban-design.md              # Kanban feature design document
+    linux-cli.md                  # Linux CLI reference
 ```
 
 ## Usage
 
-### Creating a Sandbox
+### macOS GUI
+
+#### Creating a Sandbox
 
 1. Click "Deploy Agent" in the sidebar or the "+" card in the dashboard grid.
 2. Select a workspace directory (auto-filled to `/tmp/mock-project` in mock mode).
@@ -149,7 +215,7 @@ sbx-ui/
 4. Optionally add initial environment variables in the creation sheet.
 5. Click "Deploy" to create and start the sandbox.
 
-### Managing Environment Variables
+#### Managing Environment Variables
 
 Each sandbox card shows an "ENV" chip when environment variables are configured.
 
@@ -159,39 +225,52 @@ Each sandbox card shows an "ENV" chip when environment variables are configured.
 
 Variables are persisted inside the sandbox via `/etc/sandbox-persistent.sh`. The service uses managed section markers (`# --- sbx-ui managed ---` / `# --- end sbx-ui managed ---`) so user edits outside the managed section are preserved across syncs.
 
-### Kanban Board
+#### Kanban Board
 
 1. Select "KANBAN" in the sidebar.
 2. Click "Create Board" to create your first board (with default Backlog, In Progress, Done columns).
 3. Click the "+" button on any column header to add a task.
-4. Fill in the task title, agent prompt, agent type, and workspace directory.
+4. Select a running sandbox, enter the task title and agent prompt.
 5. Optionally select dependency tasks that must complete before this task can start.
 6. Drag task cards between columns to reorganize. Cards can be reordered within columns.
-7. Click "Start" on a task card to create a sandbox and run the agent with the configured prompt.
-8. Running tasks show live terminal thumbnails. When the sandbox stops, the task auto-moves to "Done".
+7. Click "Start" on a task card to launch a terminal session and send the prompt.
+8. Running tasks show live terminal thumbnails — click to view the full session.
 9. Tasks with dependencies are marked "BLOCKED" until all upstream tasks complete, then auto-execute.
 
 See `docs/kanban-design.md` for the full design document.
 
-### Network Policies
+#### Network Policies
 
 1. Select "POLICIES" in the sidebar to open the policy panel.
 2. View existing global allow/deny rules.
 3. Click "Add Policy" to create a new allow or deny rule for a domain.
 4. View the activity log to see allowed and blocked requests, filterable by sandbox and blocked-only.
 
-### Port Forwarding
+#### Port Forwarding
 
 1. Select a running sandbox to view its port panel.
 2. Click "Add Port" to map a host port to a sandbox port.
 3. Remove existing mappings with the unpublish button.
 
-### Terminal Sessions
+#### Terminal Sessions
 
 1. Click a sandbox card to open an agent session (Claude Code).
 2. Use the "Open Shell" button on a sandbox card to start a shell session (`sbx exec -it <name> bash`).
 3. Active sessions appear in the sidebar under "SESSIONS" -- click to switch between them.
 4. Dashboard thumbnails show live previews of active sessions.
+
+### Linux CLI
+
+See `docs/linux-cli.md` for the full reference. Quick examples:
+
+```bash
+sbx-ui ls                                    # List all sandboxes
+sbx-ui create /path/to/project -n my-sb      # Create a sandbox
+sbx-ui status my-sb                          # Detailed status
+sbx-ui policy log --blocked                  # View blocked requests
+sbx-ui env set my-sb NODE_ENV production     # Set env var
+sbx-ui --json ls                             # JSON output
+```
 
 ## Testing
 
@@ -199,19 +278,34 @@ All tests use the CLI mock (`tools/mock-sbx`). No Docker Desktop is required to 
 
 ### Running Tests
 
-Run all tests in Xcode with Product -> Test (Cmd+U).
+| Platform | Command | Tests |
+|----------|---------|-------|
+| macOS (Xcode) | Product -> Test (Cmd+U) | 73 unit + UI tests |
+| Linux (SPM) | `swift test` | 25 unit + integration tests |
+| CLI mock | `bash tools/mock-sbx-tests.sh` | 32 bash tests |
 
 ### Test Structure
 
-- **Unit tests** (`sbx-uiTests/sbx_uiTests.swift`) -- Swift Testing framework (`@Test`, `#expect`). Tests stores and service logic using `StubSbxService` and `FailingSbxService`.
-- **UI/E2E tests** (`sbx-uiUITests/sbx_uiUITests.swift`) -- XCTest framework (`XCTestCase`). Launches the app with `SBX_CLI_MOCK=1` and exercises full user flows via XCUITest.
+- **Xcode unit tests** (`sbx-uiTests/sbx_uiTests.swift`) -- Swift Testing framework (`@Test`, `#expect`). Tests stores and service logic using `StubSbxService` and `FailingSbxService`.
+- **Xcode UI/E2E tests** (`sbx-uiUITests/sbx_uiUITests.swift`) -- XCTest framework (`XCTestCase`). Launches the app with `SBX_CLI_MOCK=1` and exercises full user flows via XCUITest.
+- **SPM tests** (`Tests/SBXCoreTests/SBXCoreTests.swift`) -- Swift Testing framework. Tests models, parsers, and service layer with mock-sbx integration on Linux.
 - **CLI mock tests** (`tools/mock-sbx-tests.sh`) -- Bash test suite validating the mock CLI behavior against expected `sbx` CLI output formats.
 
 ### Key Testing Patterns
 
 - Stores are `@MainActor`, so test code accesses properties via `await store.property`.
 - UI tests inject the mock CLI via `app.launchEnvironment["SBX_CLI_MOCK"] = "1"` and PATH injection.
+- SPM integration tests inject mock-sbx via `SBX_MOCK_STATE_DIR` + PATH environment variables.
 - Use `waitForExistence(timeout:)` generously in UI tests (5-10s) since the mock CLI spawns real processes.
+
+## CI
+
+| Workflow | Trigger | Runner | What it does |
+|----------|---------|--------|-------------|
+| **Tests** | push/PR to main | macOS | Xcode unit + UI tests |
+| **Linux CLI Tests** | push/PR to main (SPM/Services paths) | Ubuntu | `swift build` + `swift test` + release build |
+| **SDK Tests** | push/PR to main (sdk/ paths) | Ubuntu | TypeScript + Python SDK tests |
+| **Build** | push to main | macOS | Release archives for canary/beta/stable |
 
 ## CLI Mock
 

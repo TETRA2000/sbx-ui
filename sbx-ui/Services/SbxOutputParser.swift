@@ -3,11 +3,11 @@ import Foundation
 /// Port pattern: matches "8080->3000" or "127.0.0.1:8080->3000/tcp" style port mappings
 private nonisolated(unsafe) let portPattern = /(\d+)\s*[-→>]+\s*(\d+)/
 
-enum SbxOutputParser {
+public enum SbxOutputParser {
 
     // MARK: - Sandbox List (tabular fallback — prefer JSON via RealSbxService)
 
-    nonisolated static func parseSandboxList(_ stdout: String) -> [Sandbox] {
+    nonisolated public static func parseSandboxList(_ stdout: String) -> [Sandbox] {
         let lines = stdout.components(separatedBy: "\n").filter { !$0.isEmpty }
         guard lines.count > 1 else { return [] }
 
@@ -48,7 +48,7 @@ enum SbxOutputParser {
 
     // MARK: - Policy List (tabular — no JSON option available)
 
-    nonisolated static func parsePolicyList(_ stdout: String) -> [PolicyRule] {
+    nonisolated public static func parsePolicyList(_ stdout: String) -> [PolicyRule] {
         // Filter empty lines (real CLI has blank lines between rules)
         let lines = stdout.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard lines.count > 1 else { return [] }
@@ -79,7 +79,7 @@ enum SbxOutputParser {
     // MARK: - Policy Log (tabular fallback — prefer JSON via RealSbxService)
 
     /// Parses policy log output which has "Allowed requests:" and "Blocked requests:" sections.
-    nonisolated static func parsePolicyLog(_ stdout: String) -> [PolicyLogEntry] {
+    nonisolated public static func parsePolicyLog(_ stdout: String) -> [PolicyLogEntry] {
         var results: [PolicyLogEntry] = []
         var currentSection: String? // "allowed" or "blocked"
         var currentHeader: String?
@@ -141,7 +141,7 @@ enum SbxOutputParser {
 
     // MARK: - Ports List (tabular fallback — prefer JSON via RealSbxService)
 
-    nonisolated static func parsePortsList(_ stdout: String) -> [PortMapping] {
+    nonisolated public static func parsePortsList(_ stdout: String) -> [PortMapping] {
         let lines = stdout.components(separatedBy: "\n").filter { !$0.isEmpty }
         return lines.compactMap { line in
             guard let match = line.firstMatch(of: portPattern),
@@ -159,7 +159,7 @@ enum SbxOutputParser {
     private static let managedEnd = "# --- end sbx-ui managed ---"
 
     /// Parse only the sbx-ui managed section from the full file content.
-    nonisolated static func parseManagedEnvVars(_ fileContent: String) -> [EnvVar] {
+    nonisolated public static func parseManagedEnvVars(_ fileContent: String) -> [EnvVar] {
         let lines = fileContent.components(separatedBy: "\n")
         var inManaged = false
         var result: [EnvVar] = []
@@ -189,7 +189,7 @@ enum SbxOutputParser {
     }
 
     /// Rebuild the full file content: preserve user sections, replace managed section.
-    nonisolated static func rebuildPersistentSh(existingContent: String, managedVars: [EnvVar]) -> String {
+    nonisolated public static func rebuildPersistentSh(existingContent: String, managedVars: [EnvVar]) -> String {
         let lines = existingContent.components(separatedBy: "\n")
         var before: [String] = []
         var after: [String] = []

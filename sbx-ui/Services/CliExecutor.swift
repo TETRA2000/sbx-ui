@@ -1,10 +1,14 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 
-struct CliExecutor: CliExecutorProtocol, Sendable {
+public struct CliExecutor: CliExecutorProtocol, Sendable {
+    #if canImport(os)
     private let logger = Logger(subsystem: "com.sbx-ui", category: "CliExecutor")
+    #endif
 
-    nonisolated init() {}
+    nonisolated public init() {}
 
     /// Resolves the full path of a command by searching PATH and common install locations.
     /// macOS GUI apps don't inherit the shell's PATH, so /opt/homebrew/bin etc. are missing.
@@ -33,7 +37,7 @@ struct CliExecutor: CliExecutorProtocol, Sendable {
         return command
     }
 
-    func exec(command: String, args: [String]) async throws -> CliResult {
+    public func exec(command: String, args: [String]) async throws -> CliResult {
         let resolvedCommand = resolveCommand(command)
         let cmdLine = "\(resolvedCommand) \(args.joined(separator: " "))"
 
@@ -96,7 +100,7 @@ struct CliExecutor: CliExecutorProtocol, Sendable {
         }
     }
 
-    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
+    public func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
         let result = try await exec(command: command, args: args)
         guard result.exitCode == 0 else {
             throw SbxServiceError.cliError(result.stderr.isEmpty ? "Command failed with exit code \(result.exitCode)" : result.stderr)
