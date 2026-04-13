@@ -26,6 +26,19 @@ import SwiftUI
     func loadBoards() {
         do {
             boards = try persistence.loadBoards()
+            // Recover tasks stuck in transient states from a previous session
+            for bIndex in boards.indices {
+                var changed = false
+                for tIndex in boards[bIndex].tasks.indices {
+                    let status = boards[bIndex].tasks[tIndex].status
+                    if status == .creating || status == .running {
+                        boards[bIndex].tasks[tIndex].status = .pending
+                        boards[bIndex].tasks[tIndex].sandboxName = nil
+                        changed = true
+                    }
+                }
+                if changed { save(boards[bIndex]) }
+            }
             if let first = boards.first, selectedBoardID == nil {
                 selectedBoardID = first.id
             }

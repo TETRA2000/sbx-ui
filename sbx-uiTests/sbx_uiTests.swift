@@ -3202,6 +3202,25 @@ struct KanbanStoreTests {
         #expect(updated.prompt == "New prompt")
     }
 
+    @Test func loadBoardsRecoversStuckTasks() async throws {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("kanban-test-\(UUID().uuidString)", isDirectory: true)
+        // Write a board with a task stuck in .creating directly to persistence
+        let persistence = KanbanPersistence(directory: tempDir)
+        var board = KanbanBoard(name: "Test")
+        var task = KanbanTask(title: "Stuck", columnID: board.columns.first!.id, status: .creating)
+        task.sandboxName = "old-sbx"
+        board.tasks.append(task)
+        try persistence.saveBoard(board)
+        // Create a store from that directory — should recover stuck tasks
+        let service = StubSbxService()
+        let store = await KanbanStore(service: service, persistenceDirectory: tempDir)
+        let boards = await store.boards
+        let recovered = boards.first!.tasks.first { $0.id == task.id }!
+        #expect(recovered.status == .pending)
+        #expect(recovered.sandboxName == nil)
+    }
+
     @Test func renameBoard() async throws {
         let service = StubSbxService()
         let store = await makeKanbanStore(service: service)
