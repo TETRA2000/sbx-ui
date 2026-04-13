@@ -1006,7 +1006,7 @@ struct TerminalSessionStoreTests {
     @Test func sendMessageWhenNoSessionNoOp() async throws {
         let service = StubSbxService()
         let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
-        try await store.sendMessage("hello", to: "nonexistent")
+        await store.sendMessage("hello", to: "nonexistent")
     }
 
     @Test func captureSnapshotsDoesNotCrash() async {
@@ -3162,9 +3162,13 @@ struct KanbanStoreTests {
 
     @Test func taskExecutionSendsPrompt() async throws {
         let service = StubSbxService()
-        // Pre-create a running sandbox in the stub
-        _ = try await service.run(agent: "claude", workspace: "/tmp/project", opts: RunOptions(name: "my-sbx"))
         let store = await makeKanbanStore(service: service)
+        var sentPrompt: (sandbox: String, message: String)?
+        await MainActor.run {
+            store.onSendPrompt = { sandbox, message in
+                sentPrompt = (sandbox, message)
+            }
+        }
         let board = await store.createBoard(name: "Test")
         let colID = board.columns.first { $0.title == "Backlog" }!.id
         let task = await store.addTask(boardID: board.id, columnID: colID, title: "exec-test",
@@ -3173,8 +3177,8 @@ struct KanbanStoreTests {
         let boards = await store.boards
         let updated = boards.first { $0.id == board.id }!.tasks.first { $0.id == task.id }!
         #expect(updated.status == .running)
-        let sentMessage = await service.lastSentMessage
-        #expect(sentMessage == "hello")
+        #expect(sentPrompt?.sandbox == "my-sbx")
+        #expect(sentPrompt?.message == "hello")
     }
 
     @Test func executeBlockedTaskIsRejected() async throws {

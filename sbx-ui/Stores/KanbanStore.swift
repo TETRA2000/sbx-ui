@@ -6,6 +6,8 @@ import SwiftUI
     var selectedBoardID: String?
     var error: String?
     var executingTaskIDs: Set<String> = []
+    /// Closure to send a prompt to a sandbox's agent terminal session.
+    var onSendPrompt: ((_ sandboxName: String, _ message: String) -> Void)?
 
     private let service: any SbxServiceProtocol
     private let persistence: KanbanPersistence
@@ -207,7 +209,7 @@ import SwiftUI
 
     // MARK: - Execution
 
-    func executeTask(boardID: String, taskID: String) async {
+    func executeTask(boardID: String, taskID: String) {
         guard let bIndex = boardIndex(boardID),
               let tIndex = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) else { return }
 
@@ -238,17 +240,8 @@ import SwiftUI
         }
         save(boards[bIndex])
 
-        do {
-            try await service.sendMessage(name: sandboxName, message: task.prompt)
-            appLog(.info, "KanbanStore", "Task '\(task.title)' sent to sandbox '\(sandboxName)'")
-        } catch {
-            if let tIdx = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) {
-                boards[bIndex].tasks[tIdx].status = .failed
-                save(boards[bIndex])
-            }
-            self.error = error.localizedDescription
-            appLog(.error, "KanbanStore", "Task execution failed: \(task.title)", detail: error.localizedDescription)
-        }
+        onSendPrompt?(sandboxName, task.prompt)
+        appLog(.info, "KanbanStore", "Task '\(task.title)' sent to sandbox '\(sandboxName)'")
 
         executingTaskIDs.remove(taskID)
     }
@@ -306,9 +299,7 @@ import SwiftUI
                 boards[bIndex].updatedAt = Date()
                 save(boards[bIndex])
                 // Check if newly completed tasks unblock dependents
-                Task {
-                    await checkAndExecuteDependents(boardID: boards[bIndex].id)
-                }
+                checkAndExecuteDependents(boardID: boards[bIndex].id)
             }
         }
     }
@@ -352,7 +343,7 @@ import SwiftUI
         }
     }
 
-    private func checkAndExecuteDependents(boardID: String) async {
+    private func checkAndExecuteDependents(boardID: String) {
         guard let bIndex = boardIndex(boardID) else { return }
         let readyTasks = boards[bIndex].tasks.filter { task in
             task.status == .blocked &&
@@ -364,7 +355,7 @@ import SwiftUI
             if let tIndex = boards[bIndex].tasks.firstIndex(where: { $0.id == task.id }) {
                 boards[bIndex].tasks[tIndex].status = .pending
             }
-            await executeTask(boardID: boardID, taskID: task.id)
+            executeTask(boardID: boardID, taskID: task.id)
         }
     }
 }

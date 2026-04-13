@@ -213,8 +213,11 @@ final class TerminalSessionStore {
         }
     }
 
-    func sendMessage(_ message: String, to sandboxName: String) async throws {
-        guard hasAnySession(sandboxName: sandboxName) else { return }
-        try await service.sendMessage(name: sandboxName, message: message)
+    func sendMessage(_ message: String, to sandboxName: String) {
+        guard let sessionID = agentSessionID(for: sandboxName),
+              let session = activeSessions[sessionID],
+              session.connected else { return }
+        session.terminalView.send(txt: message + "\n")
+        appLog(.info, "PTY", "Sent message to \(sandboxName): \(message.prefix(80))")
     }
 }

@@ -73,12 +73,10 @@ struct KanbanBoardView: View {
                                     taskSheetContext = TaskSheetContext(board: board, columnID: task.columnID, editingTask: task)
                                 },
                                 onStartTask: { task in
-                                    Task {
-                                        await kanbanStore.executeTask(boardID: board.id, taskID: task.id)
-                                        if let err = kanbanStore.error {
-                                            toastManager.show(err)
-                                            kanbanStore.error = nil
-                                        }
+                                    kanbanStore.executeTask(boardID: board.id, taskID: task.id)
+                                    if let err = kanbanStore.error {
+                                        toastManager.show(err)
+                                        kanbanStore.error = nil
                                     }
                                 },
                                 onCancelTask: { task in
