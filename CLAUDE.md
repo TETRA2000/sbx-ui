@@ -54,23 +54,38 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 ### Reference
 - **`docs/sbx-cli-reference.md`** — Verified sbx CLI v0.23.0 command syntax, output formats, JSON schemas, and error patterns
 - **`docs/mock-sbx.md`** — Documentation for the bash CLI emulator used in integration testing
+- **`docs/linux-cli.md`** — Linux CLI (`sbx-ui-cli`) full command reference
 - **`tools/mock-sbx`** — Bash CLI emulator (32 tests in `tools/mock-sbx-tests.sh`)
 
 ### Overview
 sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker Sandbox (`sbx`) CLI. It enables developers to manage sandbox lifecycles, network policies, port forwarding, and Claude Code agent sessions without terminal interaction.
 
-### Architecture
-- **Service Layer** (`sbx-ui/Services/`): `SbxServiceProtocol` with `RealSbxService` implementation. `ServiceFactory` creates the service. For testing, the CLI mock (`tools/mock-sbx`) is used via PATH injection.
-- **Store Layer** (`sbx-ui/Stores/`): `@MainActor @Observable` classes — `SandboxStore`, `PolicyStore`, `SessionStore`, `SettingsStore`. Bridges between services and views.
-- **View Layer** (`sbx-ui/Views/`): SwiftUI views organized by feature — Dashboard, Policies, Ports, Session, Error.
-- **Design System** (`sbx-ui/DesignSystem/`): Color/Font/Constants extensions for "The Technical Monolith" dark theme.
+A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager provides the same sandbox management operations from the command line, sharing the core service layer with the macOS GUI.
 
-### Key Build Settings
+### Architecture
+- **SBXCore** (`sbx-ui/Models/` + `sbx-ui/Services/`): Shared library built via SPM. Contains domain types, service protocol, CLI executor, and output parser. Used by both macOS GUI and Linux CLI.
+- **Service Layer** (`sbx-ui/Services/`): `SbxServiceProtocol` with `RealSbxService` implementation. `ServiceFactory` creates the service. For testing, the CLI mock (`tools/mock-sbx`) is used via PATH injection.
+- **Store Layer** (`sbx-ui/Stores/`): `@MainActor @Observable` classes — `SandboxStore`, `PolicyStore`, `SessionStore`, `SettingsStore`. Bridges between services and views. macOS only.
+- **View Layer** (`sbx-ui/Views/`): SwiftUI views organized by feature — Dashboard, Policies, Ports, Session, Error. macOS only.
+- **CLI Layer** (`Sources/sbx-ui-cli/`): Swift ArgumentParser commands that call SBXCore directly. Linux/cross-platform.
+- **Design System** (`sbx-ui/DesignSystem/`): Color/Font/Constants extensions for "The Technical Monolith" dark theme. macOS only.
+
+### Key Build Settings (Xcode / macOS)
 - `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` — all types default to `@MainActor` unless opted out
 - `ENABLE_APP_SANDBOX = NO` — required for CLI spawning
 - SwiftTerm 1.13+ via SPM for terminal rendering
 
+### SPM / Linux Build
+- `Package.swift` at project root defines `SBXCore` library + `sbx-ui-cli` executable
+- `SBXCore` includes only `Models/` and `Services/` from `sbx-ui/` (no Views, Stores, Plugins, DesignSystem)
+- `SBX_SPM` compilation flag enables `LinuxShims.swift` (provides `appLog` stub for Linux)
+- `#if canImport(os)` guards `os.Logger` usage in `CliExecutor.swift` for Linux
+- All explicit inits on `Sendable` types must be `nonisolated` — the Xcode project uses `MainActor` default isolation, so omitting `nonisolated` breaks macOS builds
+- Dependencies: `swift-argument-parser` 1.5+
+
 ### Building & Running
+
+#### macOS (Xcode)
 - **Prefer Xcode MCP tools** over `xcodebuild` CLI
   - `mcp__xcode__XcodeListWindows` → get `tabIdentifier`
   - `mcp__xcode__BuildProject` → build
@@ -79,11 +94,18 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
 - Set `SBX_CLI_MOCK=1` and add `tools/` to PATH in scheme environment variables for development without Docker
 - Build and run (Cmd+R)
 
+#### Linux (SPM)
+- `swift build` — build SBXCore library + sbx-ui-cli executable
+- `swift build -c release` — optimized release build
+- `swift run sbx-ui-cli ls` — run CLI directly
+- `swift run sbx-ui-cli --help` — see all commands
+
 ## Testing Guide
 
 ### Test Structure
 - **Unit tests**: `sbx-uiTests/sbx_uiTests.swift` — Swift Testing framework (`@Test`, `#expect`)
 - **UI/E2E tests**: `sbx-uiUITests/sbx_uiUITests.swift` — XCTest (`XCTestCase`, `XCTAssertTrue`)
+- **SPM tests**: `Tests/SBXCoreTests/SBXCoreTests.swift` — Swift Testing (25 tests: models, parsers, integration)
 - **CLI mock tests**: `tools/mock-sbx-tests.sh` — Bash test suite (32 tests)
 - All tests use the CLI mock (`tools/mock-sbx`) — no Docker required
 
@@ -94,6 +116,8 @@ sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker San
 ### Running Tests
 - Xcode: Product → Test (Cmd+U) runs all 73 tests
 - Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
+- Linux/SPM: `swift test` runs all 25 SBXCore tests
+- CLI mock: `bash tools/mock-sbx-tests.sh` runs 32 bash tests
 
 ### Writing Unit Tests
 
