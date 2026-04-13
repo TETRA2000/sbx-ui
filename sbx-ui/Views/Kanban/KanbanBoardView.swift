@@ -9,6 +9,7 @@ private struct TaskSheetContext: Identifiable {
 
 struct KanbanBoardView: View {
     @Environment(KanbanStore.self) private var kanbanStore
+    @Environment(SandboxStore.self) private var sandboxStore
     @Environment(ToastManager.self) private var toastManager
     @State private var taskSheetContext: TaskSheetContext?
     @State private var showAddColumnSheet = false
@@ -123,6 +124,7 @@ struct KanbanBoardView: View {
             KanbanTaskDetailSheet(
                 board: context.board,
                 columnID: context.columnID,
+                sandboxes: sandboxStore.sandboxes,
                 existingTask: context.editingTask,
                 onSave: { task in
                     if context.editingTask != nil {
@@ -142,7 +144,7 @@ struct KanbanBoardView: View {
                         if let created = kanbanStore.addTask(
                             boardID: context.board.id, columnID: context.columnID,
                             title: task.title, description: task.description,
-                            prompt: task.prompt, agent: task.agent, workspace: task.workspace
+                            prompt: task.prompt, sandboxName: task.sandboxName ?? ""
                         ) {
                             for depID in task.dependencyIDs {
                                 _ = kanbanStore.addDependency(boardID: context.board.id, taskID: created.id, dependsOn: depID)

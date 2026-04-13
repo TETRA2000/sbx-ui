@@ -988,6 +988,28 @@ final class PluginExecutionUITests: XCTestCase {
 
     @MainActor
     func testKanbanCreateTask() throws {
+        // First, create a sandbox from the dashboard so it's available to pick
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        newButton.click()
+        let nameField = app.textFields["sandboxNameField"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3))
+        nameField.click()
+        nameField.typeText("kanban-test-sbx")
+        let deployButton = app.buttons["deployButton"]
+        let enabled = NSPredicate(format: "isEnabled == true")
+        let exp = XCTNSPredicateExpectation(predicate: enabled, object: deployButton)
+        XCTWaiter.wait(for: [exp], timeout: 5)
+        deployButton.click()
+        sleep(3)
+
+        // Go back from the auto-opened session to allow sidebar navigation
+        let backButton = app.buttons["backToDashboard"]
+        if backButton.waitForExistence(timeout: 3) {
+            backButton.click()
+            sleep(1)
+        }
+
         // Navigate to kanban and create a board
         let kanbanLabel = app.staticTexts["KANBAN"]
         XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5))
@@ -1000,7 +1022,6 @@ final class PluginExecutionUITests: XCTestCase {
         sleep(1)
 
         // Click add task on any column
-        // Find the first add task button
         let addTaskButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'addTaskButton-'"))
         XCTAssertTrue(addTaskButtons.firstMatch.waitForExistence(timeout: 5), "Add task button should exist")
         addTaskButtons.firstMatch.click()
@@ -1012,7 +1033,7 @@ final class PluginExecutionUITests: XCTestCase {
         titleField.click()
         titleField.typeText("My Test Task")
 
-        // Save the task
+        // Save the task (sandbox is auto-selected since there's only one)
         let saveButton = app.buttons["saveTaskButton"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
         saveButton.click()

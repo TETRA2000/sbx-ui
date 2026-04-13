@@ -15,8 +15,6 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
     var title: String
     var description: String
     var prompt: String
-    var agent: String
-    var workspace: String
     var columnID: String
     var sortOrder: Int
     var sandboxName: String?
@@ -30,8 +28,6 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
         title: String,
         description: String = "",
         prompt: String = "",
-        agent: String = "claude",
-        workspace: String = "",
         columnID: String,
         sortOrder: Int = 0,
         sandboxName: String? = nil,
@@ -44,8 +40,6 @@ struct KanbanTask: Identifiable, Sendable, Codable, Equatable {
         self.title = title
         self.description = description
         self.prompt = prompt
-        self.agent = agent
-        self.workspace = workspace
         self.columnID = columnID
         self.sortOrder = sortOrder
         self.sandboxName = sandboxName

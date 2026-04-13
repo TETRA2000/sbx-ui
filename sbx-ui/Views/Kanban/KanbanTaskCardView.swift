@@ -49,23 +49,15 @@ struct KanbanTaskCardView: View {
                 statusChip
             }
 
-            // Agent + workspace
-            HStack(spacing: 8) {
+            // Sandbox
+            if let sbxName = task.sandboxName {
                 HStack(spacing: 3) {
-                    Image(systemName: "cpu")
+                    Image(systemName: "shippingbox")
                         .font(.system(size: 9))
-                    Text(task.agent)
+                    Text(sbxName)
                         .font(.code(10))
                 }
                 .foregroundStyle(.secondary)
-
-                if !task.workspace.isEmpty {
-                    Text(task.workspace)
-                        .font(.code(10))
-                        .foregroundStyle(Color.surfaceContainerHighest)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
             }
 
             // Prompt preview

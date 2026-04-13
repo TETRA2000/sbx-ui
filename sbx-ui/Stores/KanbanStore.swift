@@ -26,14 +26,13 @@ import SwiftUI
     func loadBoards() {
         do {
             boards = try persistence.loadBoards()
-            // Recover tasks stuck in transient states from a previous session
+            // Recover tasks stuck in transient status from a previous session
             for bIndex in boards.indices {
                 var changed = false
                 for tIndex in boards[bIndex].tasks.indices {
                     let status = boards[bIndex].tasks[tIndex].status
-                    if status == .creating || status == .running {
+                    if status == .running {
                         boards[bIndex].tasks[tIndex].status = .pending
-                        boards[bIndex].tasks[tIndex].sandboxName = nil
                         changed = true
                     }
                 }
@@ -113,14 +112,14 @@ import SwiftUI
 
     @discardableResult
     func addTask(boardID: String, columnID: String, title: String, description: String = "",
-                 prompt: String = "", agent: String = "claude", workspace: String = "") -> KanbanTask? {
+                 prompt: String = "", sandboxName: String) -> KanbanTask? {
         guard let index = boardIndex(boardID) else { return nil }
         let existingInColumn = boards[index].tasks(inColumn: columnID)
         let maxOrder = existingInColumn.map(\.sortOrder).max() ?? -1
         let task = KanbanTask(
             title: title, description: description, prompt: prompt,
-            agent: agent, workspace: workspace,
-            columnID: columnID, sortOrder: maxOrder + 1
+            columnID: columnID, sortOrder: maxOrder + 1,
+            sandboxName: sandboxName
         )
         boards[index].tasks.append(task)
         boards[index].updatedAt = Date()
@@ -214,6 +213,11 @@ import SwiftUI
 
         let task = boards[bIndex].tasks[tIndex]
 
+        guard let sandboxName = task.sandboxName else {
+            appLog(.error, "KanbanStore", "Cannot execute task '\(task.title)': no sandbox assigned")
+            return
+        }
+
         // Check dependencies are met
         let unresolved = unresolvedDependencies(boardID: boardID, task: task)
         if !unresolved.isEmpty {
@@ -221,34 +225,22 @@ import SwiftUI
             return
         }
 
+        guard !task.prompt.isEmpty else {
+            appLog(.warn, "KanbanStore", "Cannot execute task '\(task.title)': no prompt")
+            return
+        }
+
         executingTaskIDs.insert(taskID)
-        boards[bIndex].tasks[tIndex].status = .creating
+        boards[bIndex].tasks[tIndex].status = .running
+        // Move to In Progress column
+        if let inProgressCol = boards[bIndex].columns.first(where: { $0.title == "In Progress" }) {
+            boards[bIndex].tasks[tIndex].columnID = inProgressCol.id
+        }
         save(boards[bIndex])
 
         do {
-            let sandboxName = task.title.lowercased()
-                .replacingOccurrences(of: "[^a-z0-9-]", with: "-", options: .regularExpression)
-                .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-            let opts = RunOptions(name: sandboxName.isEmpty ? nil : sandboxName)
-            let sandbox = try await service.run(agent: task.agent, workspace: task.workspace, opts: opts)
-
-            if let tIdx = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) {
-                boards[bIndex].tasks[tIdx].sandboxName = sandbox.name
-                boards[bIndex].tasks[tIdx].status = .running
-                // Move to In Progress column
-                if let inProgressCol = boards[bIndex].columns.first(where: { $0.title == "In Progress" }) {
-                    boards[bIndex].tasks[tIdx].columnID = inProgressCol.id
-                }
-                save(boards[bIndex])
-            }
-
-            // Send the prompt if provided
-            if !task.prompt.isEmpty {
-                try? await service.sendMessage(name: sandbox.name, message: task.prompt)
-            }
-
-            appLog(.info, "KanbanStore", "Task '\(task.title)' started in sandbox '\(sandbox.name)'")
+            try await service.sendMessage(name: sandboxName, message: task.prompt)
+            appLog(.info, "KanbanStore", "Task '\(task.title)' sent to sandbox '\(sandboxName)'")
         } catch {
             if let tIdx = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) {
                 boards[bIndex].tasks[tIdx].status = .failed

@@ -1,9 +1,9 @@
 import SwiftUI
-import AppKit
 
 struct KanbanTaskDetailSheet: View {
     let board: KanbanBoard
     let columnID: String
+    let sandboxes: [Sandbox]
     var existingTask: KanbanTask?
     var onSave: (KanbanTask) -> Void
     var onDismiss: () -> Void
@@ -11,16 +11,17 @@ struct KanbanTaskDetailSheet: View {
     @State private var title: String = ""
     @State private var description: String = ""
     @State private var prompt: String = ""
-    @State private var agent: String = "claude"
-    @State private var workspace: String = ""
+    @State private var selectedSandboxName: String = ""
     @State private var selectedDependencyIDs: Set<String> = []
-
-    private let availableAgents = ["claude", "codex", "copilot", "docker-agent", "gemini", "kiro", "opencode", "shell"]
 
     private var isEditing: Bool { existingTask != nil }
 
+    private var runningSandboxes: [Sandbox] {
+        sandboxes.filter { $0.status == .running }
+    }
+
     private var isValid: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty
+        !title.trimmingCharacters(in: .whitespaces).isEmpty && !selectedSandboxName.isEmpty
     }
 
     private var otherTasks: [KanbanTask] {
@@ -71,6 +72,33 @@ struct KanbanTaskDetailSheet: View {
                             .accessibilityIdentifier("taskDescriptionField")
                     }
 
+                    // Sandbox picker
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Sandbox")
+                            .font(.label(11))
+                            .foregroundStyle(.secondary)
+                        if runningSandboxes.isEmpty {
+                            Text("No running sandboxes — deploy one from the Dashboard first")
+                                .font(.ui(11))
+                                .foregroundStyle(Color.surfaceContainerHighest)
+                                .padding(.vertical, 6)
+                        } else {
+                            Picker("Sandbox", selection: $selectedSandboxName) {
+                                Text("Select a sandbox…").tag("")
+                                ForEach(runningSandboxes) { sandbox in
+                                    HStack {
+                                        Text(sandbox.name)
+                                        Text("(\(sandbox.agent))")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .tag(sandbox.name)
+                                }
+                            }
+                            .labelsHidden()
+                            .accessibilityIdentifier("taskSandboxPicker")
+                        }
+                    }
+
                     // Prompt
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Agent Prompt")
@@ -80,42 +108,6 @@ struct KanbanTaskDetailSheet: View {
                             .textFieldStyle(.roundedBorder)
                             .lineLimit(3...6)
                             .accessibilityIdentifier("taskPromptField")
-                    }
-
-                    // Agent picker
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Agent")
-                            .font(.label(11))
-                            .foregroundStyle(.secondary)
-                        Picker("Agent", selection: $agent) {
-                            ForEach(availableAgents, id: \.self) { agentName in
-                                Text(agentName).tag(agentName)
-                            }
-                        }
-                        .labelsHidden()
-                        .accessibilityIdentifier("taskAgentPicker")
-                    }
-
-                    // Workspace
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Workspace")
-                            .font(.label(11))
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            TextField("Workspace path", text: $workspace)
-                                .textFieldStyle(.roundedBorder)
-                                .accessibilityIdentifier("taskWorkspaceField")
-                            Button("Browse") {
-                                let panel = NSOpenPanel()
-                                panel.canChooseDirectories = true
-                                panel.canChooseFiles = false
-                                panel.allowsMultipleSelection = false
-                                if panel.runModal() == .OK, let url = panel.url {
-                                    workspace = url.path
-                                }
-                            }
-                            .accessibilityIdentifier("taskBrowseButton")
-                        }
                     }
 
                     // Dependencies
@@ -175,11 +167,9 @@ struct KanbanTaskDetailSheet: View {
                         title: title.trimmingCharacters(in: .whitespaces),
                         description: description,
                         prompt: prompt,
-                        agent: agent,
-                        workspace: workspace,
                         columnID: existingTask?.columnID ?? columnID,
                         sortOrder: existingTask?.sortOrder ?? 0,
-                        sandboxName: existingTask?.sandboxName,
+                        sandboxName: selectedSandboxName.isEmpty ? nil : selectedSandboxName,
                         dependencyIDs: Array(selectedDependencyIDs),
                         status: existingTask?.status ?? .pending,
                         createdAt: existingTask?.createdAt ?? Date(),
@@ -202,11 +192,10 @@ struct KanbanTaskDetailSheet: View {
                 title = task.title
                 description = task.description
                 prompt = task.prompt
-                agent = task.agent
-                workspace = task.workspace
+                selectedSandboxName = task.sandboxName ?? ""
                 selectedDependencyIDs = Set(task.dependencyIDs)
-            } else if ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" {
-                workspace = "/tmp/mock-project"
+            } else if let first = runningSandboxes.first {
+                selectedSandboxName = first.name
             }
         }
     }
