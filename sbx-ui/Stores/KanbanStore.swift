@@ -232,6 +232,7 @@ import SwiftUI
 
         executingTaskIDs.insert(taskID)
         boards[bIndex].tasks[tIndex].status = .running
+        boards[bIndex].tasks[tIndex].completedAt = nil
         if let inProgressCol = boards[bIndex].columns.first(where: { $0.title == "In Progress" }) {
             boards[bIndex].tasks[tIndex].columnID = inProgressCol.id
         }

@@ -113,11 +113,13 @@ struct KanbanTaskCardView: View {
 
                 Spacer()
 
-                if task.status == .pending || task.status == .blocked {
+                if task.status == .pending || task.status == .blocked
+                    || task.status == .cancelled || task.status == .failed {
                     Button {
                         onStart()
                     } label: {
-                        Image(systemName: "play.fill")
+                        Image(systemName: task.status == .cancelled || task.status == .failed
+                              ? "arrow.clockwise" : "play.fill")
                             .font(.system(size: 9))
                     }
                     .buttonStyle(.bordered)

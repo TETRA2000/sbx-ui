@@ -198,6 +198,38 @@ KanbanStore.executeTask()
                                            └── Start ready tasks
 ```
 
+## Known Issues
+
+### Prompt submission to Claude Code TUI
+
+**Status: Not working reliably.**
+
+When a Kanban task executes, the app types the task's prompt into the agent's PTY and sends a carriage return (`\r`) to submit. The text appears in Claude Code's input box, but the `\r` is frequently ignored — the message stays in the input without being submitted.
+
+**Current implementation** (`TerminalSessionStore.sendMessage`):
+
+1. Start the agent session (`sbx run <sandbox>` in a PTY via SwiftTerm).
+2. Poll `FocusableTerminalView.lastOutputAt` (updated by `rangeChanged`) until the terminal has been quiet for ≥ 1.0s (up to 30s max). This avoids typing while Claude Code is still drawing its banner.
+3. Send the prompt text via `terminalView.send(txt: message)`.
+4. Wait 300ms.
+5. Send `terminalView.send(txt: "\r")` to submit.
+
+**What we've tried:**
+- `message + "\n"` in a single send — typed into input but not submitted.
+- `message + "\r"` in a single send — same.
+- Bracketed paste escape sequences (`\e[200~message\e[201~`) — Claude Code doesn't have bracketed paste mode enabled, so the escape codes appear as literal text.
+- Delayed `\r` after a static wait — still not submitted.
+- Output-quiescence wait before typing — no improvement.
+
+**Hypothesis:** Claude Code's Ink-based TUI expects the Enter key as a specific raw input event that `\r` alone doesn't satisfy. The PTY's line discipline flags (ICRNL, ICANON) may also be converting `\r` in ways that lose the "Enter" signal.
+
+**Workaround:** After a Kanban task starts, manually click the terminal thumbnail to open the session and press Enter to submit the pre-typed prompt.
+
+**Next steps to investigate:**
+- Inspect what bytes are sent when a user types Enter in the terminal view with Claude Code focused (e.g., via `ioctl` / stty introspection on the PTY slave).
+- Try sending the kitty keyboard protocol encoding for Return when those flags are active.
+- Check if Claude Code requires a "key up" event alongside key down.
+
 ## Files
 
 ### New Files
