@@ -50,5 +50,10 @@ let package = Package(
             dependencies: ["SBXCore"],
             path: "Tests/SBXCoreTests"
         ),
+        .testTarget(
+            name: "CLIE2ETests",
+            dependencies: ["SBXCore", "sbx-ui-cli"],
+            path: "Tests/CLIE2ETests"
+        ),
     ]
 )

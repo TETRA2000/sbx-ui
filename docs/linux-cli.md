@@ -311,8 +311,20 @@ Tests run on Linux via Swift Testing (`@Test`, `#expect`):
 swift test
 ```
 
-25 tests cover:
+Two test targets cover the stack:
+
+**`SBXCoreTests` (25 tests)** — library-level tests:
 - **Validation** -- sandbox name and env key validation
 - **Models** -- type construction, IDs, error descriptions
 - **Parsers** -- policy list, policy log JSON, ports JSON, env var parsing, persistent.sh rebuild
 - **Integration** -- full service operations against `mock-sbx` (create, stop, rm, policies, ports, env vars)
+
+**`CLIE2ETests` (78 tests)** — end-to-end tests against the compiled binary:
+- Spawn `sbx-ui-cli` as a subprocess with an isolated `SBX_MOCK_STATE_DIR` and
+  `tools/` injected into PATH, then assert on captured stdout / stderr / exit code.
+- Suites: help & version, ls, create, stop & rm, exec, status, policy ls,
+  policy allow/deny/rm, policy log, ports ls, ports publish/unpublish,
+  env ls, env set, env rm, formatting & color (NO_COLOR / FORCE_COLOR),
+  argument-parser errors, runtime errors, scenarios (full lifecycle, policy
+  round-trip, env var mutations, sandbox isolation), and runner isolation.
+- Run just the E2E target with `swift test --filter CLIE2ETests`.
