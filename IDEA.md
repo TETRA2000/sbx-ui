@@ -1,4 +1,6 @@
-# sbx-ui
+# sbx-ui - Original Project Vision
+
+> **Note**: This document contains the original project vision and requirements. For current project status, see [README.md](README.md).
 
 Docker Sandbox(sbx) based agentic coding environment
 

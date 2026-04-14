@@ -4,8 +4,11 @@ A native macOS desktop GUI built with SwiftUI and Swift that wraps the Docker Sa
 
 A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager is also available, providing the same sandbox management operations from the command line.
 
+**[→ Quick Start Guide](QUICKSTART.md)** | **[→ New Developer Onboarding](ONBOARDING.md)**
+
 ## Documentation
 
+- **[QUICKSTART.md](QUICKSTART.md)** - 5-minute getting started guide for users and developers
 - **[ONBOARDING.md](ONBOARDING.md)** - Start here! New developer onboarding guide
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - How to contribute to the project
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** - Detailed development setup and workflows
