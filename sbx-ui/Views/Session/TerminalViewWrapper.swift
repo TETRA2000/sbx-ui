@@ -113,8 +113,16 @@ class FocusableTerminalView: LocalProcessTerminalView {
     /// Called when the PTY process exits (may fire on a background thread).
     var onProcessExit: ((_ exitCode: Int32?) -> Void)?
 
+    /// Timestamp of the last terminal buffer update — used to detect output quiescence.
+    private(set) var lastOutputAt: Date = Date()
+
     /// Strong reference keeps the proxy alive (terminalDelegate is weak).
     private var delegateProxy: TerminalDelegateProxy?
+
+    override func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        lastOutputAt = Date()
+        super.rangeChanged(source: source, startY: startY, endY: endY)
+    }
 
     /// Replace the default terminalDelegate with our proxy that cleans URLs.
     /// Must be called after init (which sets terminalDelegate = self internally).

@@ -7,6 +7,7 @@ struct sbx_uiApp: App {
     @State private var sessionStore: TerminalSessionStore
     @State private var envVarStore: EnvVarStore
     @State private var pluginStore: PluginStore
+    @State private var kanbanStore: KanbanStore
     @State private var settingsStore = SettingsStore()
     @State private var toastManager = ToastManager()
     @State private var logStore = LogStore.shared
@@ -22,11 +23,21 @@ struct sbx_uiApp: App {
         sandbox.onPluginEvent = { event in
             await pluginSt.dispatchEvent(event)
         }
+        let kanbanDir: URL? = ProcessInfo.processInfo.environment["SBX_KANBAN_DIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let kanban = KanbanStore(service: service, persistenceDirectory: kanbanDir)
+        kanban.onExecuteTask = { sandboxName, prompt in
+            // Start terminal session if not already running; sendMessage waits
+            // for the terminal to quiesce before typing.
+            _ = session.startSession(sandboxName: sandboxName, type: .agent)
+            session.sendMessage(prompt, to: sandboxName)
+        }
         _sandboxStore = State(initialValue: sandbox)
         _policyStore = State(initialValue: policy)
         _sessionStore = State(initialValue: session)
         _envVarStore = State(initialValue: envVar)
         _pluginStore = State(initialValue: pluginSt)
+        _kanbanStore = State(initialValue: kanban)
     }
 
     var body: some Scene {
@@ -37,6 +48,7 @@ struct sbx_uiApp: App {
                 .environment(sessionStore)
                 .environment(envVarStore)
                 .environment(pluginStore)
+                .environment(kanbanStore)
                 .environment(settingsStore)
                 .environment(toastManager)
                 .preferredColorScheme(.dark)

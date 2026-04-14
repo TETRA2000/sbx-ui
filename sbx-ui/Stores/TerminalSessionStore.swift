@@ -131,6 +131,7 @@ final class TerminalSessionStore {
         terminalView.nativeForegroundColor = .white
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminalView.linkHighlightMode = .hover
+        terminalView.notifyUpdateChanges = true  // enables rangeChanged for output quiescence detection
         terminalView.installLinkDelegate()
 
         terminalView.onProcessExit = { [weak self] exitCode in
@@ -213,8 +214,26 @@ final class TerminalSessionStore {
         }
     }
 
-    func sendMessage(_ message: String, to sandboxName: String) async throws {
-        guard hasAnySession(sandboxName: sandboxName) else { return }
-        try await service.sendMessage(name: sandboxName, message: message)
+    /// Sends a message to the agent session's terminal, waiting for the terminal to quiesce
+    /// (no output for `quietInterval` seconds) before typing. Caps total wait at `maxWait` seconds.
+    func sendMessage(_ message: String, to sandboxName: String,
+                     quietInterval: TimeInterval = 1.0, maxWait: TimeInterval = 30.0) {
+        guard let sessionID = agentSessionID(for: sandboxName),
+              let session = activeSessions[sessionID],
+              session.connected else { return }
+        let terminalView = session.terminalView
+        Task { @MainActor in
+            let deadline = Date().addingTimeInterval(maxWait)
+            while Date() < deadline {
+                let idle = Date().timeIntervalSince(terminalView.lastOutputAt)
+                if idle >= quietInterval { break }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            terminalView.send(txt: message)
+            appLog(.info, "PTY", "Sent text to \(sandboxName): \(message.prefix(80))")
+            try? await Task.sleep(for: .milliseconds(300))
+            terminalView.send(txt: "\r")
+            appLog(.info, "PTY", "Sent Enter to \(sandboxName)")
+        }
     }
 }

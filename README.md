@@ -8,6 +8,7 @@ A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager is also availabl
 
 - Sandbox Dashboard with live status grid and global statistics
 - Sandbox Lifecycle management (create, resume, stop, terminate)
+- Kanban Board for orchestrating multiple agent tasks with drag-and-drop, dependency chaining, and auto-execution
 - Network Policies with global allow/deny rules and activity log
 - Port Forwarding with per-sandbox host-to-sandbox mappings
 - Environment Variables with per-sandbox persistent vars (via `/etc/sandbox-persistent.sh`, with managed section markers to preserve user edits)
@@ -125,6 +126,7 @@ The **SBXCore** library (Models + Services) is shared between the macOS GUI and 
 - `PolicyStore` -- network policy rules and activity log
 - `EnvVarStore` -- per-sandbox environment variables
 - `TerminalSessionStore` -- agent and shell terminal sessions
+- `KanbanStore` -- kanban board, task CRUD, dependency engine, execution
 - `SettingsStore` -- user preferences
 
 ### View Layer (`sbx-ui/Views/`) — macOS only
@@ -132,6 +134,7 @@ The **SBXCore** library (Models + Services) is shared between the macOS GUI and 
 SwiftUI views organized by feature:
 
 - **Dashboard** -- sandbox grid, creation sheet, status chips, global stats
+- **Kanban** -- task board, columns, task cards, drag-and-drop, dependency management
 - **Policies** -- policy list, add policy sheet, policy log
 - **Ports** -- port mappings, add port sheet
 - **EnvVars** -- environment variable management, add variable sheet
@@ -162,12 +165,14 @@ sbx-ui/
     sbx_uiApp.swift                # macOS app entry point
     Models/
       DomainTypes.swift            # Sandbox, PolicyRule, PortMapping, EnvVar, etc.
+      KanbanTypes.swift            # KanbanTask, KanbanColumn, KanbanBoard
     Services/
       SbxServiceProtocol.swift     # Service protocol + JSON response types
       RealSbxService.swift         # CLI-backed implementation
       CliExecutor.swift            # Process spawning and output capture
       SbxOutputParser.swift        # CLI output parsing
       ServiceFactory.swift         # Service creation based on environment
+      KanbanPersistence.swift      # Kanban JSON file persistence
       LinuxShims.swift             # Linux-only stubs (appLog, etc.)
     Stores/                        # macOS-only reactive state
     Views/                         # macOS-only SwiftUI views
@@ -194,6 +199,7 @@ sbx-ui/
   docs/
     sbx-cli-reference.md          # sbx CLI v0.23.0 reference
     mock-sbx.md                   # CLI mock documentation
+    kanban-design.md              # Kanban feature design document
     linux-cli.md                  # Linux CLI reference
 ```
 
@@ -218,6 +224,28 @@ Each sandbox card shows an "ENV" chip when environment variables are configured.
 3. Remove variables individually.
 
 Variables are persisted inside the sandbox via `/etc/sandbox-persistent.sh`. The service uses managed section markers (`# --- sbx-ui managed ---` / `# --- end sbx-ui managed ---`) so user edits outside the managed section are preserved across syncs.
+
+#### Kanban Board
+
+1. Select "KANBAN" in the sidebar.
+2. Click "Create Board" to create your first board (with default Backlog, In Progress, Done columns).
+3. Click the "+" button on any column header to add a task.
+4. Select a running sandbox, enter the task title and agent prompt.
+5. Optionally select dependency tasks that must complete before this task can start.
+6. Drag task cards between columns to reorganize. Cards can be reordered within columns.
+7. Click "Start" on a task card to launch a terminal session and send the prompt.
+8. Running tasks show live terminal thumbnails — click to view the full session.
+9. Tasks with dependencies are marked "BLOCKED" until all upstream tasks complete, then auto-execute.
+
+> **Known issue:** Prompt submission to Claude Code is not yet reliable. The task's prompt
+> is typed into the agent's terminal, but the trailing Enter (`\r`) is frequently not
+> recognized as "submit" by Claude Code's TUI — the text ends up in the input box without
+> being sent. Current implementation waits for terminal output quiescence before typing,
+> then sends text + 300ms + `\r`, but this can still leave the prompt unsubmitted.
+> Workaround: manually press Enter in the terminal view after the task starts. See
+> `docs/kanban-design.md` for details.
+
+See `docs/kanban-design.md` for the full design document.
 
 #### Network Policies
 
