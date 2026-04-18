@@ -20,7 +20,8 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
         let shellPath = "/bin/zsh"
         // In mock mode, `exec cat` keeps the PTY alive so UI tests can assert on session state.
         // In real mode, the process exits when sbx finishes, triggering onProcessExit → disconnect.
-        let keepAlive = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" ? "; exec cat" : ""
+        let mockMode = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1"
+        let keepAlive = mockMode ? "; exec cat" : ""
         let quotedName = shellSingleQuote(sandboxName)
         let args: [String]
         switch sessionType {
@@ -42,10 +43,12 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
         }
         var env: [String] = []
         var hasTerm = false
+        var resolvedPath = ""
         for (key, value) in ProcessInfo.processInfo.environment {
             if key == "PATH" {
                 let extended = "/opt/homebrew/bin:/usr/local/bin:\(value)"
                 env.append("\(key)=\(extended)")
+                resolvedPath = extended
             } else if key == "TERM" {
                 env.append("TERM=xterm-256color")
                 hasTerm = true
@@ -58,7 +61,43 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
         }
         env.append("COLORTERM=truecolor")
 
+        // Verbose launch logging — the spawned shell is invisible until its
+        // first byte of output reaches the terminal view, so when "nothing
+        // happens" we want to see exactly what we tried to run, with what
+        // env, and where `sbx` was discovered (or not).
+        let scriptForLog = args.dropFirst().joined(separator: " ")
+        appLog(.debug, "PTY", "Launching: \(shellPath) -c \(scriptForLog)")
+        appLog(.debug, "PTY", "  type=\(sessionType.rawValue) sandbox=\(sandboxName) mock=\(mockMode)")
+        appLog(.debug, "PTY", "  PATH=\(resolvedPath)")
+        if let sbxPath = locateExecutable("sbx", searchPath: resolvedPath) {
+            appLog(.debug, "PTY", "  resolved sbx → \(sbxPath)")
+        } else {
+            appLog(.warn, "PTY", "  `sbx` NOT FOUND on PATH — terminal will exit immediately")
+        }
+
         terminalView.startProcess(executable: shellPath, args: args, environment: env, execName: nil)
+
+        // After startProcess, the LocalProcess holds the spawned shell's PID.
+        // Reading it confirms the fork/exec actually happened.
+        let pid = terminalView.process.shellPid
+        if pid > 0 {
+            appLog(.debug, "PTY", "  spawned shell PID=\(pid)")
+        } else {
+            appLog(.warn, "PTY", "  startProcess returned without a PID — spawn may have failed")
+        }
+    }
+
+    /// Resolve the absolute path of `name` against the given PATH string. Used
+    /// only for diagnostic logging — returns nil if the binary is not on PATH
+    /// or is not executable.
+    private func locateExecutable(_ name: String, searchPath: String) -> String? {
+        for dir in searchPath.split(separator: ":") {
+            let candidate = "\(dir)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 }
 
