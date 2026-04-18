@@ -361,15 +361,14 @@ test_run_existing_sandbox_with_agent_args() {
   # `-- '<prompt>'` and hand the prompt through to interactive_mode as the
   # initial `[received]` line.
   sbx run claude /tmp/proj --name existing-task-sbx < /dev/null
-  # Use `script -qc` to provide a pseudo-TTY so interactive_mode renders.
-  if command -v script >/dev/null 2>&1; then
-    local out
-    out="$(script -qc "sbx run existing-task-sbx -- 'Ship the feature'" /dev/null < /dev/null 2>&1 || true)"
-    assert_contains "$out" "Claude Code"
-    assert_contains "$out" "[received] Ship the feature"
-  else
-    sbx run existing-task-sbx -- "Ship the feature" < /dev/null
-  fi
+  # `SBX_MOCK_FORCE_INTERACTIVE=1` bypasses the `[[ -t 0 ]]` TTY guard so
+  # we can exercise interactive_mode from a script. This avoids `script(1)`,
+  # whose arg order is incompatible between Linux (`script -qc CMD FILE`)
+  # and BSD/macOS (`script -q FILE CMD`).
+  local out
+  out="$(SBX_MOCK_FORCE_INTERACTIVE=1 sbx run existing-task-sbx -- "Ship the feature" < /dev/null 2>&1)"
+  assert_contains "$out" "Claude Code"
+  assert_contains "$out" "[received] Ship the feature"
 }
 
 # --- Environment Variable Tests ---

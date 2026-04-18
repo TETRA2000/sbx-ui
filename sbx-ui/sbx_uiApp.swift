@@ -29,11 +29,12 @@ struct sbx_uiApp: App {
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let kanban = KanbanStore(service: service, persistenceDirectory: kanbanDir)
         kanban.onExecuteTask = { sandboxName, prompt in
-            // Spawn a fresh, independent claude process inside the existing
-            // sandbox via `sbx exec -it <sbx> claude --dangerously-skip-permissions '<prompt>'`.
-            // The prompt rides in as a positional argument to the new claude,
-            // so there's no need to "type into" the already-attached TUI —
-            // each kanban task gets its own terminal session.
+            // Each kanban task Start spawns its own independent session via
+            // `sbx run <sandbox> -- '<prompt>'`. sbx appends the args after
+            // `--` to its default `claude --dangerously-skip-permissions`
+            // invocation, and claude treats the first positional as the
+            // initial prompt — so there's no need to type into any
+            // already-attached TUI.
             _ = session.startSession(sandboxName: sandboxName, type: .kanbanTask, initialPrompt: prompt)
         }
         let toast = ToastManager()

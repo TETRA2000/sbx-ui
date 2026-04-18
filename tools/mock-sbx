@@ -162,7 +162,7 @@ cmd_run() {
       sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$_name.json" > "$tmp"
       mv "$tmp" "$STATE_DIR/sandboxes/$_name.json"
     fi
-    if [[ -t 0 ]]; then
+    if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
       interactive_mode "$_name" "${agent_args[@]}"
     fi
     return
@@ -190,7 +190,7 @@ cmd_run() {
     local status
     status="$(read_sandbox_field "$name" "status")"
     if [[ "$status" == "running" ]]; then
-      if [[ -t 0 ]]; then
+      if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
         interactive_mode "$name" "${agent_args[@]}"
       fi
       return
@@ -199,7 +199,7 @@ cmd_run() {
     local tmp="$STATE_DIR/sandboxes/$name.json.tmp"
     sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$name.json" > "$tmp"
     mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
-    if [[ -t 0 ]]; then
+    if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
       interactive_mode "$name" "${agent_args[@]}"
     fi
     return
@@ -216,8 +216,11 @@ cmd_run() {
   echo "  Workspace: $workspace (direct mount)"
   echo "  Agent: $agent"
 
-  # If stdin is a TTY, enter interactive mode
-  if [[ -t 0 ]]; then
+  # If stdin is a TTY (or forced), enter interactive mode.
+  # `SBX_MOCK_FORCE_INTERACTIVE=1` is used by mock-sbx-tests.sh so the test
+  # can exercise interactive_mode without spawning a pseudo-TTY via `script`
+  # (whose argument order is incompatible between Linux and BSD/macOS).
+  if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
     interactive_mode "$name" "${agent_args[@]}"
   fi
 }
