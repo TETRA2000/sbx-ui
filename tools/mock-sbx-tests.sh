@@ -339,6 +339,20 @@ test_interactive_attach_no_crash() {
   assert_contains "$out" '"status":"running"'
 }
 
+test_run_accepts_agent_args_after_dashdash() {
+  # The kanban autonomous-execution path passes the prompt to the agent CLI as
+  # `sbx run <name> -- <prompt>`. The mock must accept the `--` separator and
+  # any positional args following it without error, both at create time and on
+  # attach. (Without a TTY, args are parsed but interactive_mode is skipped.)
+  sbx run claude /tmp/proj --name argfwd-test -- "Implement the feature" < /dev/null
+  local out
+  out="$(sbx ls --json)"
+  assert_contains "$out" '"name":"argfwd-test"'
+  assert_contains "$out" '"status":"running"'
+  # Attach with extra agent args (multiple positional + special chars)
+  sbx run argfwd-test -- "first" "second arg with spaces and \$dollar" < /dev/null
+}
+
 # --- Environment Variable Tests ---
 
 test_exec_write_envvars() {
@@ -447,6 +461,7 @@ run_test "unknown command"            test_unknown_command
 echo ""
 echo "Interactive:"
 run_test "attach no crash"            test_interactive_attach_no_crash
+run_test "agent args after --"        test_run_accepts_agent_args_after_dashdash
 
 echo ""
 echo "Environment Variables:"

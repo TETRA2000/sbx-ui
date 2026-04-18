@@ -198,37 +198,49 @@ KanbanStore.executeTask()
                                            └── Start ready tasks
 ```
 
-## Known Issues
+## Autonomous task execution
 
-### Prompt submission to Claude Code TUI
+When a Kanban task is started, the prompt is delivered to the agent CLI as a
+**positional launch argument** rather than typed into the live TUI:
 
-**Status: Not working reliably.**
+```
+sbx run <sandbox> -- "<task prompt>"
+```
 
-When a Kanban task executes, the app types the task's prompt into the agent's PTY and sends a carriage return (`\r`) to submit. The text appears in Claude Code's input box, but the `\r` is frequently ignored — the message stays in the input without being submitted.
+`sbx run` forwards everything after `--` to the underlying agent CLI as
+`AGENT_ARGS`. Claude Code (and most other agent CLIs — Codex, Gemini,
+Opencode) treat the first positional argument as the initial prompt and start
+processing it immediately. This is the same approach used by
+[Cline Kanban](https://github.com/cline/kanban): see
+`src/terminal/agent-session-adapters.ts` (`withPrompt(args, prompt, "append")`).
 
-**Current implementation** (`TerminalSessionStore.sendMessage`):
+**Implementation:** `TerminalSessionStore.startSession(sandboxName:type:initialPrompt:)`
+forwards the prompt to the process launcher, which assembles
+`sbx run <name> -- '<shell-quoted prompt>'` (single-quote escaping handled by
+`shellSingleQuote(_:)`). The PTY is still fully interactive, so the user can
+continue the conversation after the initial prompt is processed.
 
-1. Start the agent session (`sbx run <sandbox>` in a PTY via SwiftTerm).
-2. Poll `FocusableTerminalView.lastOutputAt` (updated by `rangeChanged`) until the terminal has been quiet for ≥ 1.0s (up to 30s max). This avoids typing while Claude Code is still drawing its banner.
-3. Send the prompt text via `terminalView.send(txt: message)`.
-4. Wait 300ms.
-5. Send `terminalView.send(txt: "\r")` to submit.
+**Wiring:** `sbx_uiApp.swift` → `kanban.onExecuteTask`:
 
-**What we've tried:**
-- `message + "\n"` in a single send — typed into input but not submitted.
-- `message + "\r"` in a single send — same.
-- Bracketed paste escape sequences (`\e[200~message\e[201~`) — Claude Code doesn't have bracketed paste mode enabled, so the escape codes appear as literal text.
-- Delayed `\r` after a static wait — still not submitted.
-- Output-quiescence wait before typing — no improvement.
+1. If no agent session exists for the sandbox, start one with
+   `initialPrompt: prompt` — the prompt rides in on the launch arg, no
+   typing required.
+2. If an agent session already exists (e.g. the user opened a terminal
+   manually), fall back to the legacy `sendMessage` path
+   (`terminalView.send(txt:)` + `\r`). This is best-effort because Claude
+   Code's Ink-based TUI doesn't reliably treat `\r` as submit; the user may
+   have to press Enter manually in this case.
 
-**Hypothesis:** Claude Code's Ink-based TUI expects the Enter key as a specific raw input event that `\r` alone doesn't satisfy. The PTY's line discipline flags (ICRNL, ICANON) may also be converting `\r` in ways that lose the "Enter" signal.
+### Why not type into the TUI?
 
-**Workaround:** After a Kanban task starts, manually click the terminal thumbnail to open the session and press Enter to submit the pre-typed prompt.
+The original implementation typed the prompt into the running PTY then sent
+`\r`. The text appeared in Claude Code's input box but the `\r` was
+frequently ignored — Claude Code's Ink TUI expects the Enter key as a
+specific raw input event that a bare `\r` byte doesn't satisfy. We tried
+`\n`, bracketed paste escape sequences (Claude Code does not enable
+bracketed paste), and various delays. None worked reliably.
 
-**Next steps to investigate:**
-- Inspect what bytes are sent when a user types Enter in the terminal view with Claude Code focused (e.g., via `ioctl` / stty introspection on the PTY slave).
-- Try sending the kitty keyboard protocol encoding for Return when those flags are active.
-- Check if Claude Code requires a "key up" event alongside key down.
+Passing the prompt at launch sidesteps the entire keyboard-input problem.
 
 ## Files
 

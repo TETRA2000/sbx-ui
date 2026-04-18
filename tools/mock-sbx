@@ -129,6 +129,7 @@ cmd_ls() {
 cmd_run() {
   local agent="" workspace="" name="" force=false
   local args=()
+  local agent_args=()
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -137,7 +138,7 @@ cmd_run() {
       --branch) shift 2 ;; # Ignored
       -m|--memory) shift 2 ;; # Ignored
       -t|--template) shift 2 ;; # Ignored
-      --) shift; break ;;
+      --) shift; while [[ $# -gt 0 ]]; do agent_args+=("$1"); shift; done ;;
       -*) shift ;;
       *) args+=("$1"); shift ;;
     esac
@@ -160,7 +161,7 @@ cmd_run() {
       mv "$tmp" "$STATE_DIR/sandboxes/$_name.json"
     fi
     if [[ -t 0 ]]; then
-      interactive_mode "$_name"
+      interactive_mode "$_name" "${agent_args[@]}"
     fi
     return
   fi
@@ -188,7 +189,7 @@ cmd_run() {
     status="$(read_sandbox_field "$name" "status")"
     if [[ "$status" == "running" ]]; then
       if [[ -t 0 ]]; then
-        interactive_mode "$name"
+        interactive_mode "$name" "${agent_args[@]}"
       fi
       return
     fi
@@ -197,7 +198,7 @@ cmd_run() {
     sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$name.json" > "$tmp"
     mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
     if [[ -t 0 ]]; then
-      interactive_mode "$name"
+      interactive_mode "$name" "${agent_args[@]}"
     fi
     return
   fi
@@ -215,7 +216,7 @@ cmd_run() {
 
   # If stdin is a TTY, enter interactive mode
   if [[ -t 0 ]]; then
-    interactive_mode "$name"
+    interactive_mode "$name" "${agent_args[@]}"
   fi
 }
 
@@ -291,6 +292,16 @@ cmd_create() {
 
 interactive_mode() {
   local name="$1"
+  shift || true
+  # Remaining positional args are the agent args forwarded after `--`.
+  # Claude Code (and similar CLIs) treat the first positional argument as the
+  # initial prompt. We render it the same way as a typed prompt so callers can
+  # assert that the kanban → launch-arg path actually delivered the prompt.
+  local initial_prompt=""
+  if [[ $# -gt 0 ]]; then
+    initial_prompt="$1"
+  fi
+
   trap 'printf "\r\n"; exit 0' INT TERM
 
   # Simulate startup with staggered output so clients can detect quiescence.
@@ -306,6 +317,18 @@ interactive_mode() {
   printf '\033[0;90mWorkspace: %s\033[0m\r\n' "$name"
   printf '\r\n'
   sleep 0.3
+
+  if [[ -n "$initial_prompt" ]]; then
+    # Auto-process the launch-arg prompt before showing the input prompt so the
+    # behavior mirrors `claude "<prompt>"`.
+    printf '\033[0;35m[received] %s\033[0m\r\n' "$initial_prompt"
+    sleep 0.1
+    printf '\033[0;33m⠋ Thinking...\033[0m\r\n'
+    sleep 0.1
+    printf '\033[1;32m✓ Done\033[0m\r\n'
+    printf '\r\n'
+  fi
+
   printf '\033[1;32m>\033[0m '
   # After this point output is quiet until input arrives — clients poll for
   # quiescence here before typing.

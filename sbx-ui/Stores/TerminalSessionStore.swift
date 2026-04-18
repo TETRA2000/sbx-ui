@@ -5,21 +5,36 @@ import AppKit
 // MARK: - Process Launcher Abstraction
 
 protocol TerminalProcessLauncher {
-    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType)
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?)
+}
+
+/// Single-quote a string for safe inclusion in a /bin/zsh -c command line.
+/// Wraps the value in single quotes and escapes any embedded single quotes
+/// using the standard `'\''` shell idiom.
+func shellSingleQuote(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
 struct RealTerminalProcessLauncher: TerminalProcessLauncher {
-    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?) {
         let shellPath = "/bin/zsh"
         // In mock mode, `exec cat` keeps the PTY alive so UI tests can assert on session state.
         // In real mode, the process exits when sbx finishes, triggering onProcessExit → disconnect.
         let keepAlive = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" ? "; exec cat" : ""
+        let quotedName = shellSingleQuote(sandboxName)
         let args: [String]
         switch sessionType {
         case .agent:
-            args = ["-c", "sbx run \(sandboxName)\(keepAlive)"]
+            // Pass the prompt as a positional argument to the underlying agent CLI
+            // via `sbx run <name> -- <prompt>`. Claude Code (and most other agent
+            // CLIs) accept a positional prompt argument and start processing it
+            // immediately, so we don't have to fight Ink's TUI keybindings by
+            // typing into the PTY after startup.
+            let trimmedPrompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let promptSegment = trimmedPrompt.isEmpty ? "" : " -- \(shellSingleQuote(trimmedPrompt))"
+            args = ["-c", "sbx run \(quotedName)\(promptSegment)\(keepAlive)"]
         case .shell:
-            args = ["-c", "sbx exec -it \(sandboxName) bash\(keepAlive)"]
+            args = ["-c", "sbx exec -it \(quotedName) bash\(keepAlive)"]
         }
         var env: [String] = []
         var hasTerm = false
@@ -101,12 +116,19 @@ final class TerminalSessionStore {
 
     /// Start a new session or reattach to an existing agent session.
     /// Agent sessions are idempotent (returns existing). Shell sessions always create new.
+    /// `initialPrompt` is forwarded to the agent CLI as a positional argument when a
+    /// fresh agent session is created (e.g. `sbx run <sandbox> -- <prompt>`); it is
+    /// ignored when reattaching to an existing agent session or for shell sessions.
     @discardableResult
-    func startSession(sandboxName: String, type: SessionType) -> (id: String, view: FocusableTerminalView) {
+    func startSession(sandboxName: String, type: SessionType, initialPrompt: String? = nil) -> (id: String, view: FocusableTerminalView) {
         // Agent sessions are idempotent — reattach if one already exists
         if type == .agent,
            let existing = activeSessions.values.first(where: { $0.sandboxName == sandboxName && $0.sessionType == .agent }) {
-            appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName)")
+            if initialPrompt != nil {
+                appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName) — initial prompt ignored (already running)")
+            } else {
+                appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName)")
+            }
             return (existing.id, existing.terminalView)
         }
 
@@ -142,8 +164,13 @@ final class TerminalSessionStore {
             }
         }
 
-        processLauncher.launch(on: terminalView, sandboxName: sandboxName, sessionType: type)
-        appLog(.debug, "PTY", "Launched process for: \(label)")
+        let promptForLaunch = (type == .agent) ? initialPrompt : nil
+        processLauncher.launch(on: terminalView, sandboxName: sandboxName, sessionType: type, initialPrompt: promptForLaunch)
+        if let promptForLaunch, !promptForLaunch.isEmpty {
+            appLog(.debug, "PTY", "Launched process for: \(label) (with initial prompt, \(promptForLaunch.count) chars)")
+        } else {
+            appLog(.debug, "PTY", "Launched process for: \(label)")
+        }
 
         let session = TerminalSession(
             id: sessionID,

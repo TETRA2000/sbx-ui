@@ -6,7 +6,31 @@ import Testing
 // MARK: - Test Helpers
 
 struct StubProcessLauncher: TerminalProcessLauncher {
-    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {}
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?) {}
+}
+
+/// Records every launch invocation so tests can assert what was forwarded to
+/// the underlying agent CLI (most importantly: that the kanban prompt arrived
+/// as a launch-arg rather than typed into the PTY). Uses an internal lock so
+/// it remains safe regardless of which actor the protocol method is called
+/// from.
+final class RecordingProcessLauncher: TerminalProcessLauncher, @unchecked Sendable {
+    struct Invocation: Equatable, Sendable {
+        let sandboxName: String
+        let sessionType: SessionType
+        let initialPrompt: String?
+    }
+    private let lock = NSLock()
+    private var storage: [Invocation] = []
+    var invocations: [Invocation] {
+        lock.lock(); defer { lock.unlock() }
+        return storage
+    }
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?) {
+        let invocation = Invocation(sandboxName: sandboxName, sessionType: sessionType, initialPrompt: initialPrompt)
+        lock.lock(); defer { lock.unlock() }
+        storage.append(invocation)
+    }
 }
 
 actor FailingSbxService: SbxServiceProtocol {
@@ -1007,6 +1031,71 @@ struct TerminalSessionStoreTests {
         let service = StubSbxService()
         let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         await store.sendMessage("hello", to: "nonexistent")
+    }
+
+    @Test func startAgentSessionForwardsInitialPromptToLauncher() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        _ = await store.startSession(sandboxName: "agent-prompt", type: .agent, initialPrompt: "Implement feature X")
+
+        #expect(recorder.invocations.count == 1)
+        let inv = recorder.invocations.first
+        #expect(inv?.sandboxName == "agent-prompt")
+        #expect(inv?.sessionType == .agent)
+        #expect(inv?.initialPrompt == "Implement feature X")
+    }
+
+    @Test func startAgentSessionWithoutPromptPassesNilToLauncher() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        _ = await store.startSession(sandboxName: "agent-noprompt", type: .agent)
+
+        #expect(recorder.invocations.count == 1)
+        #expect(recorder.invocations.first?.initialPrompt == nil)
+    }
+
+    @Test func startShellSessionDropsInitialPrompt() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        // Shell sessions never receive an initial prompt — even if a caller
+        // mistakenly supplies one it must be dropped (no `claude -- prompt`
+        // semantics for a bash shell).
+        _ = await store.startSession(sandboxName: "shell-noprompt", type: .shell, initialPrompt: "ignored")
+
+        #expect(recorder.invocations.count == 1)
+        #expect(recorder.invocations.first?.sessionType == .shell)
+        #expect(recorder.invocations.first?.initialPrompt == nil)
+    }
+
+    @Test func shellSingleQuoteHandlesSpecialChars() {
+        // Plain string
+        #expect(shellSingleQuote("hello") == "'hello'")
+        // Embedded single quote: must close, escape, reopen
+        #expect(shellSingleQuote("it's fine") == "'it'\\''s fine'")
+        // Whitespace and shell metacharacters survive untouched inside quotes
+        #expect(shellSingleQuote("a b $c `d` \"e\"") == "'a b $c `d` \"e\"'")
+        // Newlines and multi-line prompts
+        #expect(shellSingleQuote("line1\nline2") == "'line1\nline2'")
+    }
+
+    @Test func reattachingAgentSessionDoesNotRelaunch() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        let (id1, _) = await store.startSession(sandboxName: "reattach", type: .agent, initialPrompt: "first prompt")
+        let (id2, _) = await store.startSession(sandboxName: "reattach", type: .agent, initialPrompt: "second prompt — should be ignored")
+
+        #expect(id1 == id2)
+        // Only the first launch should have happened; the second call reattaches.
+        #expect(recorder.invocations.count == 1)
+        #expect(recorder.invocations.first?.initialPrompt == "first prompt")
     }
 
     @Test func captureSnapshotsDoesNotCrash() async {
