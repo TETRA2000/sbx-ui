@@ -52,5 +52,6 @@ struct ToastOverlay: View {
         .padding(.horizontal, 24)
         .padding(.top, 8)
         .animation(.spring(duration: 0.3), value: toastManager.toasts.count)
+        .allowsHitTesting(!toastManager.toasts.isEmpty)
     }
 }
