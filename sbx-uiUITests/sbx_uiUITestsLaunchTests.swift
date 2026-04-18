@@ -22,7 +22,6 @@ final class sbx_uiUITestsLaunchTests: XCTestCase {
         URL(fileURLWithPath: projectRoot).appendingPathComponent("tools").path
     }
 
-    @MainActor
     func testLaunch() throws {
         let app = XCUIApplication()
         app.launchEnvironment["SBX_CLI_MOCK"] = "1"

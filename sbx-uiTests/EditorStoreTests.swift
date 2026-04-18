@@ -21,6 +21,7 @@ private let root = URL(fileURLWithPath: "/ws")
 
 // MARK: - Tab open / classification
 
+@MainActor
 struct EditorStoreOpenTests {
     @Test func openFile_new_addsEditableTab() async {
         let (store, provider, _) = await makeStore()
@@ -106,6 +107,7 @@ struct EditorStoreOpenTests {
 
 // MARK: - Tab lifecycle
 
+@MainActor
 struct EditorStoreTabLifecycleTests {
     @Test func activateTab_byIndex_switchesActive() async {
         let (store, provider, _) = await makeStore()
@@ -180,6 +182,7 @@ struct EditorStoreTabLifecycleTests {
 
 // MARK: - Dirty pipeline
 
+@MainActor
 struct EditorStoreDirtyPipelineTests {
     @Test func onBufferMutated_setsTentativelyDirty() async {
         let (store, provider, _) = await makeStore()
@@ -251,6 +254,7 @@ struct EditorStoreDirtyPipelineTests {
 
 // MARK: - Save flow
 
+@MainActor
 struct EditorStoreSaveTests {
     @Test func save_success_clearsDirtyAndFlashes() async {
         let (store, provider, _) = await makeStore()
@@ -313,6 +317,7 @@ struct EditorStoreSaveTests {
 
 // MARK: - Classification helper
 
+@MainActor
 struct EditorStoreClassificationTests {
     @Test func classifyFile_underSoftCap_isEditable() {
         #expect(EditorStore.classifyFile(size: 1024) == .editable)
@@ -333,6 +338,7 @@ struct EditorStoreClassificationTests {
 
 // MARK: - Sandbox status sync
 
+@MainActor
 struct EditorStoreSandboxSyncTests {
     @Test func syncSandboxStatus_stoppedSandbox_preservesState() async {
         let (store, provider, _) = await makeStore()
@@ -366,6 +372,7 @@ struct EditorStoreSandboxSyncTests {
 
 // MARK: - 20-tab warning
 
+@MainActor
 struct EditorStoreTabLimitTests {
     @Test func exceedingLimit_triggersWarning_andDoesNotAddTab() async {
         let (store, provider, _) = await makeStore()
@@ -390,6 +397,7 @@ struct EditorStoreTabLimitTests {
 
 // MARK: - Layout + pane visibility
 
+@MainActor
 struct EditorStoreLayoutTests {
     @Test func setLayoutRatio_clampsToSafeRange() async {
         let (store, _, _) = await makeStore()

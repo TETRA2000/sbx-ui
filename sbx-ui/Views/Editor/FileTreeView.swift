@@ -60,7 +60,8 @@ private struct FileTreeNode: View {
     @Environment(EditorStore.self) private var store
 
     private var isExpanded: Bool {
-        store.workspaces[sandboxName]?.expandedDirs.contains(entry.url.standardizedFileURL) ?? isRoot
+        if isRoot { return true }
+        return store.workspaces[sandboxName]?.expandedDirs.contains(entry.url.standardizedFileURL) ?? false
     }
 
     private var loadState: DirectoryLoadState {

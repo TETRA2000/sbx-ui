@@ -38,6 +38,9 @@ class EditorUITestCase: XCTestCase {
         let kanbanDir = NSTemporaryDirectory() + "kanban-\(UUID().uuidString)"
         app.launchEnvironment["SBX_KANBAN_DIR"] = kanbanDir
 
+        // Disable window state restoration so WindowGroup always opens a fresh window
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+
         // Seed a per-test temporary workspace and point the sheet at it.
         let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("editor-ws-\(UUID().uuidString)", isDirectory: true)
@@ -61,11 +64,14 @@ class EditorUITestCase: XCTestCase {
 
     // MARK: - Flow helpers
 
-    @MainActor
+    
     func createSandboxAndEnter(name: String) {
-        app.buttons["newSandboxButton"].click()
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5), "newSandboxButton did not appear")
+        newButton.click()
         sleep(2) // wait for onAppear to set mock workspace
         let nameField = app.textFields["sandboxNameField"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5), "sandboxNameField did not appear")
         nameField.click()
         nameField.typeText(name)
         let deployButton = app.buttons["deployButton"]

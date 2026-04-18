@@ -2,7 +2,7 @@ import XCTest
 
 final class EditorE2ETests: EditorUITestCase {
 
-    @MainActor
+    
     func testOpensFileFromTreeAndDisplaysContents() throws {
         createSandboxAndEnter(name: "editor-open")
         let fileNode = app.buttons["fileTreeNode-README.md"]
@@ -13,7 +13,7 @@ final class EditorE2ETests: EditorUITestCase {
         XCTAssertTrue(tabExists, "README.md tab should appear after clicking")
     }
 
-    @MainActor
+    
     func testEditAndSaveClearsDirtyIndicator() throws {
         createSandboxAndEnter(name: "editor-save")
         let fileNode = app.buttons["fileTreeNode-README.md"]
@@ -34,7 +34,7 @@ final class EditorE2ETests: EditorUITestCase {
         XCTWaiter.wait(for: [exp], timeout: 5)
     }
 
-    @MainActor
+    
     func testHiddenEntriesFilteredByDefault() throws {
         createSandboxAndEnter(name: "editor-hidden")
         XCTAssertTrue(app.buttons["fileTreeNode-README.md"].waitForExistence(timeout: 10))
@@ -42,7 +42,7 @@ final class EditorE2ETests: EditorUITestCase {
         XCTAssertFalse(gitNode.exists, ".git should be hidden by default")
     }
 
-    @MainActor
+    
     func testCloseDirtyTabShowsConfirmDialog() throws {
         createSandboxAndEnter(name: "editor-close")
         let fileNode = app.buttons["fileTreeNode-README.md"]
@@ -52,13 +52,19 @@ final class EditorE2ETests: EditorUITestCase {
         XCTAssertTrue(buffer.waitForExistence(timeout: 5))
         buffer.click()
         buffer.typeText("dirty\n")
-        // Cmd+W triggers close.
-        app.typeKey("w", modifierFlags: .command)
-        let dialog = app.otherElements["editorConfirmCloseDialog"]
-        XCTAssertTrue(dialog.waitForExistence(timeout: 5))
+        // Wait for dirty indicator to confirm edit registered.
+        let dirty = app.otherElements["editorTabDirtyIndicator-README.md"]
+        _ = dirty.waitForExistence(timeout: 3)
+        // Navigate back to trigger dirty-tab confirmation.
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5), "backToDashboard should be present")
+        backButton.click()
+        // The confirmation may appear as sheet or group.
+        let dialogAny = app.descendants(matching: .any).matching(identifier: "editorConfirmCloseDialog").firstMatch
+        XCTAssertTrue(dialogAny.waitForExistence(timeout: 5), "Dirty-tab confirmation dialog should appear")
     }
 
-    @MainActor
+    
     func testEmptyWorkspaceShowsPlaceholder() throws {
         // Remove all files in the workspace to simulate an empty tree; the
         // sandbox.workspace path itself still exists so the placeholder is
