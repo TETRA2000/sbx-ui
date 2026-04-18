@@ -1082,7 +1082,7 @@ final class PluginExecutionUITests: XCTestCase {
     }
 
     @MainActor
-    func testKanbanTaskStartLaunchesAgentSession() throws {
+    func testKanbanTaskStartLaunchesTaskSession() throws {
         // Deploy a sandbox so the kanban task has somewhere to execute.
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
@@ -1098,17 +1098,10 @@ final class PluginExecutionUITests: XCTestCase {
         deployButton.click()
         sleep(3)
 
-        // Disconnect the auto-opened agent session so the kanban path will
-        // create a fresh one (the launch-arg path only runs when no agent
-        // session already exists for the sandbox).
+        // Back out of the auto-opened session.
         let backButton = app.buttons["backToDashboard"]
         if backButton.waitForExistence(timeout: 3) {
             backButton.click()
-            sleep(1)
-        }
-        let disconnectButton = app.buttons["disconnectButton"]
-        if disconnectButton.exists {
-            disconnectButton.click()
             sleep(1)
         }
 
@@ -1141,18 +1134,17 @@ final class PluginExecutionUITests: XCTestCase {
         app.buttons["saveTaskButton"].click()
         sleep(1)
 
-        // Click the task's start button — there is exactly one task on the board.
+        // Click the task's start button.
         let startButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'startTaskButton-'"))
         XCTAssertTrue(startButtons.firstMatch.waitForExistence(timeout: 5), "Start button should appear on the new task")
         startButtons.firstMatch.click()
 
-        // Autonomous execution must spawn an agent session for the sandbox —
-        // confirming the launch reached the process launcher (and, with the
-        // fix in place, that the prompt was passed as a CLI arg via
-        // `sbx run -- "<prompt>"`).
-        let sidebarSession = app.buttons["sidebarSession-kanban-exec-sbx (agent)"]
+        // A kanban-task session spawns a new claude inside the sandbox via
+        // `sbx exec -it <sbx> claude --dangerously-skip-permissions '<prompt>'`.
+        // The sidebar entry is labelled "<sandbox> (task)".
+        let sidebarSession = app.buttons["sidebarSession-kanban-exec-sbx (task)"]
         XCTAssertTrue(sidebarSession.waitForExistence(timeout: 10),
-                      "Agent sidebar entry should appear after kanban task start")
+                      "Task sidebar entry should appear after kanban task start")
     }
 }
 

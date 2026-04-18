@@ -25,16 +25,20 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
         let args: [String]
         switch sessionType {
         case .agent:
-            // Pass the prompt as a positional argument to the underlying agent CLI
-            // via `sbx run <name> -- <prompt>`. Claude Code (and most other agent
-            // CLIs) accept a positional prompt argument and start processing it
-            // immediately, so we don't have to fight Ink's TUI keybindings by
-            // typing into the PTY after startup.
+            args = ["-c", "sbx run \(quotedName)\(keepAlive)"]
+        case .shell:
+            args = ["-c", "sbx exec -it \(quotedName) bash\(keepAlive)"]
+        case .kanbanTask:
+            // Kanban tasks run through `sbx run <sandbox> -- '<prompt>'`.
+            // sbx forwards args after `--` to its default
+            // `claude --dangerously-skip-permissions` launch, so this becomes
+            // `claude --dangerously-skip-permissions '<prompt>'` — claude
+            // consumes the prompt from argv at startup, which avoids the Ink
+            // TUI "bare \r not recognized as submit" problem. Each task
+            // spawns its own fresh session.
             let trimmedPrompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let promptSegment = trimmedPrompt.isEmpty ? "" : " -- \(shellSingleQuote(trimmedPrompt))"
             args = ["-c", "sbx run \(quotedName)\(promptSegment)\(keepAlive)"]
-        case .shell:
-            args = ["-c", "sbx exec -it \(quotedName) bash\(keepAlive)"]
         }
         var env: [String] = []
         var hasTerm = false
@@ -115,20 +119,16 @@ final class TerminalSessionStore {
     }
 
     /// Start a new session or reattach to an existing agent session.
-    /// Agent sessions are idempotent (returns existing). Shell sessions always create new.
-    /// `initialPrompt` is forwarded to the agent CLI as a positional argument when a
-    /// fresh agent session is created (e.g. `sbx run <sandbox> -- <prompt>`); it is
-    /// ignored when reattaching to an existing agent session or for shell sessions.
+    /// Agent sessions are idempotent (returns existing). Shell and kanban-task
+    /// sessions always create new. `initialPrompt` is required for
+    /// `.kanbanTask` (forwarded to the spawned `claude` as a positional
+    /// argument) and is ignored for other session types.
     @discardableResult
     func startSession(sandboxName: String, type: SessionType, initialPrompt: String? = nil) -> (id: String, view: FocusableTerminalView) {
         // Agent sessions are idempotent — reattach if one already exists
         if type == .agent,
            let existing = activeSessions.values.first(where: { $0.sandboxName == sandboxName && $0.sessionType == .agent }) {
-            if initialPrompt != nil {
-                appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName) — initial prompt ignored (already running)")
-            } else {
-                appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName)")
-            }
+            appLog(.info, "PTY", "Reattaching existing agent session: \(sandboxName)")
             return (existing.id, existing.terminalView)
         }
 
@@ -140,6 +140,8 @@ final class TerminalSessionStore {
         case .shell:
             shellCounters[sandboxName, default: 0] += 1
             label = "\(sandboxName) (shell \(shellCounters[sandboxName]!))"
+        case .kanbanTask:
+            label = "\(sandboxName) (task)"
         }
 
         appLog(.info, "PTY", "Starting new \(type.rawValue) session: \(label)")
@@ -164,7 +166,7 @@ final class TerminalSessionStore {
             }
         }
 
-        let promptForLaunch = (type == .agent) ? initialPrompt : nil
+        let promptForLaunch = (type == .kanbanTask) ? initialPrompt : nil
         processLauncher.launch(on: terminalView, sandboxName: sandboxName, sessionType: type, initialPrompt: promptForLaunch)
         if let promptForLaunch, !promptForLaunch.isEmpty {
             appLog(.debug, "PTY", "Launched process for: \(label) (with initial prompt, \(promptForLaunch.count) chars)")

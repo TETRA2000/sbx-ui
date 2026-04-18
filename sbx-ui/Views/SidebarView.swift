@@ -66,7 +66,7 @@ struct SidebarView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Circle()
-                                    .fill(session.sessionType == .agent ? Color.accent : Color.secondary)
+                                    .fill(sessionDotColor(session.sessionType))
                                     .frame(width: 6, height: 6)
                                 Text(session.label)
                                     .font(.code(11))
@@ -102,6 +102,14 @@ struct SidebarView: View {
             .sheet(isPresented: $showCreateSheet) {
                 CreateProjectSheet(onCreated: onCreatedSandbox)
             }
+        }
+    }
+
+    private func sessionDotColor(_ type: SessionType) -> Color {
+        switch type {
+        case .agent:      return Color.accent
+        case .shell:      return Color.secondary
+        case .kanbanTask: return Color.accent
         }
     }
 }

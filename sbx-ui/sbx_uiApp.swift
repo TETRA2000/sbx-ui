@@ -29,21 +29,12 @@ struct sbx_uiApp: App {
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let kanban = KanbanStore(service: service, persistenceDirectory: kanbanDir)
         kanban.onExecuteTask = { sandboxName, prompt in
-            // Prefer launching a fresh agent session with the prompt as a
-            // positional argument (`sbx run <name> -- <prompt>`). Claude Code
-            // and other agent CLIs accept a positional prompt and start
-            // processing it immediately, which avoids the unreliable
-            // type-into-TUI-then-press-Enter dance on the Ink-based UI.
-            //
-            // If an agent session already exists for the sandbox, the
-            // launch-arg path is unavailable (process is already running), so
-            // fall back to typing the prompt and sending Enter.
-            if session.agentSessionID(for: sandboxName) == nil {
-                _ = session.startSession(sandboxName: sandboxName, type: .agent, initialPrompt: prompt)
-            } else {
-                _ = session.startSession(sandboxName: sandboxName, type: .agent)
-                session.sendMessage(prompt, to: sandboxName)
-            }
+            // Spawn a fresh, independent claude process inside the existing
+            // sandbox via `sbx exec -it <sbx> claude --dangerously-skip-permissions '<prompt>'`.
+            // The prompt rides in as a positional argument to the new claude,
+            // so there's no need to "type into" the already-attached TUI —
+            // each kanban task gets its own terminal session.
+            _ = session.startSession(sandboxName: sandboxName, type: .kanbanTask, initialPrompt: prompt)
         }
         let toast = ToastManager()
         let editor = EditorStore(provider: DefaultEditorDocumentProvider(), toastManager: toast)

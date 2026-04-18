@@ -340,17 +340,36 @@ test_interactive_attach_no_crash() {
 }
 
 test_run_accepts_agent_args_after_dashdash() {
-  # The kanban autonomous-execution path passes the prompt to the agent CLI as
-  # `sbx run <name> -- <prompt>`. The mock must accept the `--` separator and
-  # any positional args following it without error, both at create time and on
-  # attach. (Without a TTY, args are parsed but interactive_mode is skipped.)
-  sbx run claude /tmp/proj --name argfwd-test -- "Implement the feature" < /dev/null
+  # `sbx run` accepts `-- AGENT_ARGS` for parity with the real CLI: agent args
+  # are forwarded to the default agent launch (for claude:
+  # `claude --dangerously-skip-permissions <agent_args>`). Mock parsing must
+  # succeed and preserve those args into interactive_mode.
+  sbx run claude /tmp/proj --name argfwd-test -- --continue < /dev/null
   local out
   out="$(sbx ls --json)"
   assert_contains "$out" '"name":"argfwd-test"'
   assert_contains "$out" '"status":"running"'
-  # Attach with extra agent args (multiple positional + special chars)
-  sbx run argfwd-test -- "first" "second arg with spaces and \$dollar" < /dev/null
+}
+
+test_run_existing_sandbox_with_agent_args() {
+  # The kanban-task path runs:
+  #   sbx run <existing-sandbox> -- '<prompt>'
+  # which in real sbx expands to:
+  #   claude --dangerously-skip-permissions '<prompt>'
+  # i.e. a fresh interactive claude with the prompt pre-loaded as argv. The
+  # mock's `cmd_run` must accept the single-arg attach form combined with
+  # `-- '<prompt>'` and hand the prompt through to interactive_mode as the
+  # initial `[received]` line.
+  sbx run claude /tmp/proj --name existing-task-sbx < /dev/null
+  # Use `script -qc` to provide a pseudo-TTY so interactive_mode renders.
+  if command -v script >/dev/null 2>&1; then
+    local out
+    out="$(script -qc "sbx run existing-task-sbx -- 'Ship the feature'" /dev/null < /dev/null 2>&1 || true)"
+    assert_contains "$out" "Claude Code"
+    assert_contains "$out" "[received] Ship the feature"
+  else
+    sbx run existing-task-sbx -- "Ship the feature" < /dev/null
+  fi
 }
 
 # --- Environment Variable Tests ---
@@ -462,6 +481,7 @@ echo ""
 echo "Interactive:"
 run_test "attach no crash"            test_interactive_attach_no_crash
 run_test "agent args after --"        test_run_accepts_agent_args_after_dashdash
+run_test "run existing -- prompt"     test_run_existing_sandbox_with_agent_args
 
 echo ""
 echo "Environment Variables:"

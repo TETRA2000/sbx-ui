@@ -208,28 +208,34 @@ sbx run <sandbox> -- "<task prompt>"
 ```
 
 `sbx run` forwards everything after `--` to the underlying agent CLI as
-`AGENT_ARGS`. Claude Code (and most other agent CLIs — Codex, Gemini,
-Opencode) treat the first positional argument as the initial prompt and start
-processing it immediately. This is the same approach used by
-[Cline Kanban](https://github.com/cline/kanban): see
-`src/terminal/agent-session-adapters.ts` (`withPrompt(args, prompt, "append")`).
+`AGENT_ARGS`, appended to sbx's default launch command
+(`claude --dangerously-skip-permissions`). Claude Code's CLI treats the first
+positional argument as the initial prompt for the interactive session (see
+[Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference):
+_"claude \"query\" — Start interactive session with initial prompt"_), so
+the user lands directly inside a ready-to-go conversation. This is the
+same approach used by [Cline Kanban](https://github.com/cline/kanban)
+(`src/terminal/agent-session-adapters.ts` → `withPrompt(args, prompt, "append")`).
 
-**Implementation:** `TerminalSessionStore.startSession(sandboxName:type:initialPrompt:)`
-forwards the prompt to the process launcher, which assembles
-`sbx run <name> -- '<shell-quoted prompt>'` (single-quote escaping handled by
-`shellSingleQuote(_:)`). The PTY is still fully interactive, so the user can
-continue the conversation after the initial prompt is processed.
+The `--` form works equally well for existing sandboxes:
 
-**Wiring:** `sbx_uiApp.swift` → `kanban.onExecuteTask`:
+```sh
+sbx run claude-markdown-jam -- "Implement the new feature"
+```
 
-1. If no agent session exists for the sandbox, start one with
-   `initialPrompt: prompt` — the prompt rides in on the launch arg, no
-   typing required.
-2. If an agent session already exists (e.g. the user opened a terminal
-   manually), fall back to the legacy `sendMessage` path
-   (`terminalView.send(txt:)` + `\r`). This is best-effort because Claude
-   Code's Ink-based TUI doesn't reliably treat `\r` as submit; the user may
-   have to press Enter manually in this case.
+**Implementation:** Kanban tasks use a dedicated `SessionType.kanbanTask`
+(distinct from `.agent`) so they can coexist with a manually-attached agent
+session on the same sandbox and multiple tasks on the same sandbox don't
+reattach to each other. `TerminalSessionStore.startSession(
+sandboxName:type:.kanbanTask, initialPrompt:)` forwards the prompt to the
+process launcher, which assembles `sbx run <name> -- '<shell-quoted prompt>'`
+(single-quote escaping handled by `shellSingleQuote(_:)`). The PTY is fully
+interactive, so the user can continue the conversation after the initial
+prompt is processed. Sidebar label: `"<sandbox> (task)"`.
+
+**Wiring:** `sbx_uiApp.swift` → `kanban.onExecuteTask` calls
+`session.startSession(sandboxName:, type: .kanbanTask, initialPrompt: prompt)`
+for every task Start — no conditional branching on existing sessions.
 
 ### Why not type into the TUI?
 

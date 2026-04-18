@@ -1033,44 +1033,78 @@ struct TerminalSessionStoreTests {
         await store.sendMessage("hello", to: "nonexistent")
     }
 
-    @Test func startAgentSessionForwardsInitialPromptToLauncher() async {
+    @Test func startKanbanTaskForwardsPromptToLauncher() async {
         let service = StubSbxService()
         let recorder = RecordingProcessLauncher()
         let store = await TerminalSessionStore(service: service, processLauncher: recorder)
 
-        _ = await store.startSession(sandboxName: "agent-prompt", type: .agent, initialPrompt: "Implement feature X")
+        _ = await store.startSession(sandboxName: "task-sbx", type: .kanbanTask, initialPrompt: "Implement feature X")
 
         #expect(recorder.invocations.count == 1)
         let inv = recorder.invocations.first
-        #expect(inv?.sandboxName == "agent-prompt")
-        #expect(inv?.sessionType == .agent)
+        #expect(inv?.sandboxName == "task-sbx")
+        #expect(inv?.sessionType == .kanbanTask)
         #expect(inv?.initialPrompt == "Implement feature X")
     }
 
-    @Test func startAgentSessionWithoutPromptPassesNilToLauncher() async {
+    @Test func agentSessionDropsInitialPrompt() async {
+        // The `.agent` path (`sbx run <sbx>`) doesn't accept a per-message
+        // prompt — that's delivered via `.kanbanTask` instead. Any prompt
+        // passed to `.agent` must be dropped before reaching the launcher.
         let service = StubSbxService()
         let recorder = RecordingProcessLauncher()
         let store = await TerminalSessionStore(service: service, processLauncher: recorder)
 
-        _ = await store.startSession(sandboxName: "agent-noprompt", type: .agent)
+        _ = await store.startSession(sandboxName: "agent-sbx", type: .agent, initialPrompt: "ignored by design")
 
         #expect(recorder.invocations.count == 1)
+        #expect(recorder.invocations.first?.sessionType == .agent)
         #expect(recorder.invocations.first?.initialPrompt == nil)
     }
 
-    @Test func startShellSessionDropsInitialPrompt() async {
+    @Test func shellSessionDropsInitialPrompt() async {
         let service = StubSbxService()
         let recorder = RecordingProcessLauncher()
         let store = await TerminalSessionStore(service: service, processLauncher: recorder)
 
-        // Shell sessions never receive an initial prompt — even if a caller
-        // mistakenly supplies one it must be dropped (no `claude -- prompt`
-        // semantics for a bash shell).
-        _ = await store.startSession(sandboxName: "shell-noprompt", type: .shell, initialPrompt: "ignored")
+        _ = await store.startSession(sandboxName: "shell-sbx", type: .shell, initialPrompt: "ignored")
 
         #expect(recorder.invocations.count == 1)
         #expect(recorder.invocations.first?.sessionType == .shell)
         #expect(recorder.invocations.first?.initialPrompt == nil)
+    }
+
+    @Test func kanbanTaskSessionsAreNotIdempotent() async {
+        // Each kanban task execution must get its own independent session —
+        // otherwise a second "Start" for the same sandbox would reattach to
+        // the previous task's claude instance instead of spawning a new one.
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        let (id1, _) = await store.startSession(sandboxName: "task-sbx", type: .kanbanTask, initialPrompt: "first")
+        let (id2, _) = await store.startSession(sandboxName: "task-sbx", type: .kanbanTask, initialPrompt: "second")
+
+        #expect(id1 != id2)
+        #expect(recorder.invocations.count == 2)
+        #expect(recorder.invocations.map(\.initialPrompt) == ["first", "second"])
+    }
+
+    @Test func kanbanTaskSessionCoexistsWithAgentSession() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        // User manually attaches to the sandbox, then kicks off a kanban task
+        // — both sessions must live side-by-side.
+        _ = await store.startSession(sandboxName: "coexist", type: .agent)
+        _ = await store.startSession(sandboxName: "coexist", type: .kanbanTask, initialPrompt: "task prompt")
+
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+        let sessions = await store.sessions(for: "coexist")
+        #expect(sessions.contains { $0.sessionType == .agent })
+        #expect(sessions.contains { $0.sessionType == .kanbanTask })
     }
 
     @Test func shellSingleQuoteHandlesSpecialChars() {
@@ -1082,20 +1116,6 @@ struct TerminalSessionStoreTests {
         #expect(shellSingleQuote("a b $c `d` \"e\"") == "'a b $c `d` \"e\"'")
         // Newlines and multi-line prompts
         #expect(shellSingleQuote("line1\nline2") == "'line1\nline2'")
-    }
-
-    @Test func reattachingAgentSessionDoesNotRelaunch() async {
-        let service = StubSbxService()
-        let recorder = RecordingProcessLauncher()
-        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
-
-        let (id1, _) = await store.startSession(sandboxName: "reattach", type: .agent, initialPrompt: "first prompt")
-        let (id2, _) = await store.startSession(sandboxName: "reattach", type: .agent, initialPrompt: "second prompt — should be ignored")
-
-        #expect(id1 == id2)
-        // Only the first launch should have happened; the second call reattaches.
-        #expect(recorder.invocations.count == 1)
-        #expect(recorder.invocations.first?.initialPrompt == "first prompt")
     }
 
     @Test func captureSnapshotsDoesNotCrash() async {

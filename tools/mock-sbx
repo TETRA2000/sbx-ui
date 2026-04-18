@@ -131,7 +131,9 @@ cmd_run() {
   local args=()
   local agent_args=()
 
-  # Parse arguments
+  # Parse arguments. Args after `--` are agent args forwarded to the default
+  # agent launch (e.g. `claude --dangerously-skip-permissions <agent_args>`).
+  # For the kanban-task path, the prompt rides in as the first agent arg.
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --name) name="$2"; shift 2 ;;
@@ -293,14 +295,25 @@ cmd_create() {
 interactive_mode() {
   local name="$1"
   shift || true
-  # Remaining positional args are the agent args forwarded after `--`.
-  # Claude Code (and similar CLIs) treat the first positional argument as the
-  # initial prompt. We render it the same way as a typed prompt so callers can
-  # assert that the kanban → launch-arg path actually delivered the prompt.
+  # Any remaining positional args are the agent args that were forwarded via
+  # `sbx run <sbx> -- <agent_args>...`. Real sbx appends them to its default
+  # `claude --dangerously-skip-permissions` invocation, so the first
+  # non-flag positional becomes claude's initial prompt. The mock mirrors
+  # this by emitting a `[received]` line during startup — tests use this to
+  # assert the kanban-task prompt arrived end-to-end.
   local initial_prompt=""
-  if [[ $# -gt 0 ]]; then
-    initial_prompt="$1"
-  fi
+  local i=1
+  while [[ $i -le $# ]]; do
+    local tok="${!i}"
+    case "$tok" in
+      -p|--print|--continue|-c|--dangerously-skip-permissions) ;;  # flag with no value
+      --resume|--session-id|--model|--output-format|--input-format|--settings|--append-system-prompt)
+        i=$((i + 1)) ;;  # flag with value — skip next
+      -*) ;;  # unknown flag — skip
+      *) initial_prompt="$tok"; break ;;
+    esac
+    i=$((i + 1))
+  done
 
   trap 'printf "\r\n"; exit 0' INT TERM
 
