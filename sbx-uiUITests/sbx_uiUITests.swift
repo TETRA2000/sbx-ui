@@ -2,6 +2,7 @@ import XCTest
 
 final class sbx_uiUITests: XCTestCase {
     var app: XCUIApplication!
+    private var workspaceURL: URL?
 
     /// Derive the project root from this source file's compile-time path.
     private static let projectRoot: String = {
@@ -39,17 +40,35 @@ final class sbx_uiUITests: XCTestCase {
         let kanbanDir = NSTemporaryDirectory() + "kanban-\(UUID().uuidString)"
         app.launchEnvironment["SBX_KANBAN_DIR"] = kanbanDir
 
+        // Create a real workspace directory so EditorStore.refreshDirectory
+        // doesn't fail and show a toast that covers the backToDashboard button.
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("mock-ws-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try Data("# Mock Project\n".utf8).write(to: workspace.appendingPathComponent("README.md"))
+        self.workspaceURL = workspace
+        app.launchEnvironment["SBX_CLI_MOCK_WORKSPACE"] = workspace.path
+
+        // Disable window state restoration so WindowGroup always opens a fresh window
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+
         app.launch()
+    }
+
+    override func tearDownWithError() throws {
+        if let workspaceURL {
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
     }
 
     // MARK: - App Launch & Navigation
 
-    @MainActor
+    
     func testAppLaunches() throws {
-        XCTAssertTrue(app.windows.firstMatch.exists)
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testSidebarNavigationExists() throws {
         let dashboard = app.staticTexts["DASHBOARD"]
         XCTAssertTrue(dashboard.waitForExistence(timeout: 5))
@@ -60,7 +79,7 @@ final class sbx_uiUITests: XCTestCase {
 
     // MARK: - Create Project Sheet
 
-    @MainActor
+    
     func testNewSandboxCardOpensSheet() throws {
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
@@ -70,7 +89,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(deploySubmit.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testCreateSheetNameValidation() throws {
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
@@ -102,7 +121,7 @@ final class sbx_uiUITests: XCTestCase {
     /// Mock workspace is auto-filled when SBX_CLI_MOCK=1.
     /// After creation, the app auto-navigates to the terminal session.
     /// Pass `returnToDashboard: true` to navigate back to the dashboard.
-    @MainActor
+    
     private func createSandbox(name: String, returnToDashboard: Bool = false) {
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
@@ -142,7 +161,7 @@ final class sbx_uiUITests: XCTestCase {
         }
     }
 
-    @MainActor
+    
     func testCreateSandboxWithCustomName() throws {
         createSandbox(name: "test-create", returnToDashboard: true)
 
@@ -155,7 +174,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(nameText.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testCreateSandboxShowsRunningStats() throws {
         createSandbox(name: "test-stats", returnToDashboard: true)
 
@@ -171,21 +190,22 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(totalLabel.exists)
     }
 
-    @MainActor
+    
     func testCreateSandboxShowsWorkspacePath() throws {
         createSandbox(name: "test-path", returnToDashboard: true)
 
         let liveChip = app.staticTexts["LIVE"]
         XCTAssertTrue(liveChip.waitForExistence(timeout: 5))
 
-        // Mock workspace auto-fills to /tmp/mock-project
-        let pathText = app.staticTexts["/tmp/mock-project"]
+        // Workspace path (from SBX_CLI_MOCK_WORKSPACE) should appear on the card.
+        let pathPredicate = NSPredicate(format: "value CONTAINS 'mock-ws-'")
+        let pathText = app.staticTexts.matching(pathPredicate).firstMatch
         XCTAssertTrue(pathText.waitForExistence(timeout: 5))
     }
 
     // MARK: - Policy E2E
 
-    @MainActor
+    
     func testNavigateToPolicies() throws {
         let policies = app.staticTexts["POLICIES"]
         XCTAssertTrue(policies.waitForExistence(timeout: 5))
@@ -195,7 +215,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(addButton.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testPolicyDefaultsLoaded() throws {
         let policies = app.staticTexts["POLICIES"]
         XCTAssertTrue(policies.waitForExistence(timeout: 5))
@@ -209,7 +229,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(githubRule.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testAddPolicySheet() throws {
         let policies = app.staticTexts["POLICIES"]
         XCTAssertTrue(policies.waitForExistence(timeout: 5))
@@ -227,7 +247,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(submitButton.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testPolicyCRUDWorkflow() throws {
         // Navigate to Policies
         let policies = app.staticTexts["POLICIES"]
@@ -261,7 +281,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(disappeared)
     }
 
-    @MainActor
+    
     func testPolicySheetCatchAllValidation() throws {
         let policies = app.staticTexts["POLICIES"]
         XCTAssertTrue(policies.waitForExistence(timeout: 5))
@@ -287,7 +307,7 @@ final class sbx_uiUITests: XCTestCase {
 
     /// Helper: opens a session for the named sandbox (must already exist on dashboard).
     /// Clicks the sandbox name text, which triggers .onTapGesture on the parent card.
-    @MainActor
+    
     private func openSession(name: String) {
         let nameText = app.staticTexts[name]
         XCTAssertTrue(nameText.waitForExistence(timeout: 5))
@@ -297,7 +317,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testSessionPanelOpens() throws {
         createSandbox(name: "test-session")
 
@@ -316,7 +336,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(connected.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testTerminalAutoFocusReceivesKeyboardInput() throws {
         createSandbox(name: "test-autofocus")
 
@@ -344,7 +364,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(connected.exists)
     }
 
-    @MainActor
+    
     func testTerminalInputDoesNotLeakToOtherUI() throws {
         createSandbox(name: "test-noleak")
 
@@ -372,7 +392,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(backButton.exists)
     }
 
-    @MainActor
+    
     func testSessionReattachAfterBack() throws {
         // Terminal auto-opens after creation
         createSandbox(name: "test-reattach")
@@ -397,7 +417,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(connected.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testTerminalAcceptsSustainedInput() throws {
         createSandbox(name: "test-sustained")
 
@@ -428,7 +448,7 @@ final class sbx_uiUITests: XCTestCase {
 
     // MARK: - Background Session E2E
 
-    @MainActor
+    
     func testBackgroundSessionShowsBadgeOnDashboard() throws {
         createSandbox(name: "test-bg-badge", returnToDashboard: true)
 
@@ -448,7 +468,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(sessionBadge.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testBackgroundSessionShowsInSidebar() throws {
         createSandbox(name: "test-bg-sidebar", returnToDashboard: true)
 
@@ -473,7 +493,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testDisconnectButtonEndsSession() throws {
         createSandbox(name: "test-disconnect", returnToDashboard: true)
 
@@ -497,7 +517,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertFalse(sessionBadge.waitForExistence(timeout: 3))
     }
 
-    @MainActor
+    
     func testSessionsCountInGlobalStats() throws {
         // Create sandbox — terminal auto-opens, then go back to dashboard
         createSandbox(name: "test-stats", returnToDashboard: true)
@@ -512,7 +532,7 @@ final class sbx_uiUITests: XCTestCase {
 
     // MARK: - Multi-Session Switching E2E
 
-    @MainActor
+    
     func testSwitchBetweenTwoBackgroundSessions() throws {
         // Create two sandboxes
         createSandbox(name: "test-switch-a", returnToDashboard: true)
@@ -551,7 +571,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testDisconnectOneSessionPreservesOther() throws {
         // Create two sandboxes
         createSandbox(name: "test-keep-a", returnToDashboard: true)
@@ -585,7 +605,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
     }
 
-    @MainActor
+    
     func testRapidSessionSwitching() throws {
         // Create two sandboxes
         createSandbox(name: "test-rapid-a", returnToDashboard: true)
@@ -627,7 +647,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(sidebarB.exists)
     }
 
-    @MainActor
+    
     func testTerminalThumbnailAreaAppearsOnCard() throws {
         createSandbox(name: "test-thumb", returnToDashboard: true)
 
@@ -652,7 +672,7 @@ final class sbx_uiUITests: XCTestCase {
 
     // MARK: - Environment Variables
 
-    @MainActor
+    
     func testEnvVarButtonExistsOnCard() throws {
         createSandbox(name: "test-envbtn", returnToDashboard: true)
 
@@ -663,7 +683,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(envButton.waitForExistence(timeout: 5), "ENV chip should appear on sandbox card")
     }
 
-    @MainActor
+    
     func testEnvVarSheetOpens() throws {
         createSandbox(name: "test-envsheet", returnToDashboard: true)
 
@@ -681,7 +701,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(noVarsText.waitForExistence(timeout: 5), "Empty state should show")
     }
 
-    @MainActor
+    
     func testAddEnvVarSheetValidation() throws {
         createSandbox(name: "test-envval", returnToDashboard: true)
 
@@ -714,7 +734,7 @@ final class sbx_uiUITests: XCTestCase {
 
     // MARK: - Port Forwarding
 
-    @MainActor
+    
     func testPortButtonExistsOnCard() throws {
         createSandbox(name: "test-portbtn", returnToDashboard: true)
 
@@ -725,7 +745,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(portButton.waitForExistence(timeout: 5), "PORTS chip should appear on sandbox card")
     }
 
-    @MainActor
+    
     func testPortSheetOpens() throws {
         createSandbox(name: "test-portsheet", returnToDashboard: true)
 
@@ -743,7 +763,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(noPortsText.waitForExistence(timeout: 5), "Empty state should show")
     }
 
-    @MainActor
+    
     func testAddPortSheetValidation() throws {
         createSandbox(name: "test-portval", returnToDashboard: true)
 
@@ -774,7 +794,7 @@ final class sbx_uiUITests: XCTestCase {
         XCTAssertTrue(errorText.waitForExistence(timeout: 3), "Validation error should appear for invalid port")
     }
 
-    @MainActor
+    
     func testCreateSheetEnvVarSection() throws {
         let newButton = app.buttons["newSandboxButton"]
         XCTAssertTrue(newButton.waitForExistence(timeout: 5))
@@ -842,6 +862,7 @@ final class sbx_uiUITests: XCTestCase {
 final class PluginExecutionUITests: XCTestCase {
     var app: XCUIApplication!
     var pluginDir: String!
+    private var workspaceURL: URL?
 
     private static let projectRoot: String = {
         URL(fileURLWithPath: #filePath)
@@ -891,12 +912,28 @@ final class PluginExecutionUITests: XCTestCase {
         app.launchEnvironment["SBX_PLUGIN_DIR"] = pluginDir
         let kanbanDir = NSTemporaryDirectory() + "kanban-\(UUID().uuidString)"
         app.launchEnvironment["SBX_KANBAN_DIR"] = kanbanDir
+
+        // Create a real workspace directory so EditorStore.refreshDirectory doesn't
+        // fail and show a toast that covers navigation buttons.
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("mock-ws-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try Data("# Mock\n".utf8).write(to: workspace.appendingPathComponent("README.md"))
+        workspaceURL = workspace
+        app.launchEnvironment["SBX_CLI_MOCK_WORKSPACE"] = workspace.path
+
+        // Disable window state restoration so WindowGroup always opens a fresh window
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+
         app.launch()
     }
 
     override func tearDownWithError() throws {
         if let dir = pluginDir {
             try? FileManager.default.removeItem(atPath: dir)
+        }
+        if let url = workspaceURL {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 
@@ -951,7 +988,7 @@ final class PluginExecutionUITests: XCTestCase {
 
     // MARK: - Kanban Board
 
-    @MainActor
+    
     func testKanbanSidebarNavigation() throws {
         let kanbanLabel = app.staticTexts["KANBAN"]
         XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5), "KANBAN sidebar entry should exist")
@@ -963,7 +1000,7 @@ final class PluginExecutionUITests: XCTestCase {
         XCTAssertTrue(createBoardButton.waitForExistence(timeout: 5), "Create Board button should appear")
     }
 
-    @MainActor
+    
     func testKanbanCreateBoardAndDefaultColumns() throws {
         let kanbanLabel = app.staticTexts["KANBAN"]
         XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5))
@@ -986,7 +1023,7 @@ final class PluginExecutionUITests: XCTestCase {
         XCTAssertTrue(done.exists, "Done column should exist")
     }
 
-    @MainActor
+    
     func testKanbanCreateTask() throws {
         // First, deploy a sandbox so it appears in the sandbox picker
         let newButton = app.buttons["newSandboxButton"]

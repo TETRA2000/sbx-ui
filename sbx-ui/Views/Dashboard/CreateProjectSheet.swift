@@ -181,7 +181,8 @@ struct CreateProjectSheet: View {
         .background(Color.surfaceContainer)
         .onAppear {
             if ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1" {
-                selectedPath = URL(fileURLWithPath: "/tmp/mock-project")
+                let override = ProcessInfo.processInfo.environment["SBX_CLI_MOCK_WORKSPACE"]
+                selectedPath = URL(fileURLWithPath: override ?? "/tmp/mock-project")
             }
         }
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.folder]) { result in

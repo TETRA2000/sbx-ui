@@ -15,6 +15,7 @@ struct ShellView: View {
     @Environment(TerminalSessionStore.self) private var sessionStore
     @Environment(KanbanStore.self) private var kanbanStore
     @Environment(ToastManager.self) private var toastManager
+    @Environment(EditorStore.self) private var editorStore
 
     /// Names of running sandboxes, used to detect status changes for session cleanup.
     private var runningSandboxNames: Set<String> {
@@ -36,7 +37,7 @@ struct ShellView: View {
                        let session = sessionStore.session(for: sessionID),
                        let sandbox = sandboxStore.sandboxes.first(where: { $0.name == session.sandboxName }),
                        sandbox.status == .running {
-                        SessionPanelView(sessionID: sessionID, sandbox: sandbox, onBack: { selectedSessionID = nil })
+                        SandboxWorkspaceView(sessionID: sessionID, sandbox: sandbox, onBack: { selectedSessionID = nil })
                     } else {
                         switch selection {
                         case .dashboard, .none:
@@ -103,6 +104,7 @@ struct ShellView: View {
         .onChange(of: runningSandboxNames) { _, _ in
             sessionStore.cleanupStaleSessions(sandboxes: sandboxStore.sandboxes)
             kanbanStore.syncSandboxStatus(sandboxes: sandboxStore.sandboxes)
+            editorStore.syncSandboxStatus(sandboxes: sandboxStore.sandboxes)
         }
         .onChange(of: sessionStore.activeSessionIDs) { _, newIDs in
             if let selected = selectedSessionID, !newIDs.contains(selected) {

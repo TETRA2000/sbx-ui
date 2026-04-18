@@ -1963,7 +1963,15 @@ struct PluginPermissionTests {
 
     @Test func permissionCountIsStable() {
         // Fails if a permission is added/removed without updating tests
-        #expect(PluginPermission.allCases.count == 17)
+        #expect(PluginPermission.allCases.count == 19)
+    }
+
+    @Test func reservedEditorPermissionsExist() {
+        #expect(PluginPermission.editorReadState.rawValue == "editor.readState")
+        #expect(PluginPermission.editorMutateState.rawValue == "editor.mutateState")
+        // They must be distinct from the existing file.* permissions.
+        #expect(PluginPermission.editorReadState != PluginPermission.fileRead)
+        #expect(PluginPermission.editorMutateState != PluginPermission.fileWrite)
     }
 
     @Test func allPermissionsHaveDisplayName() {

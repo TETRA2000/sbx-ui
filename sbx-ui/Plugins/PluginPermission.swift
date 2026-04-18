@@ -20,6 +20,12 @@ enum PluginPermission: String, Codable, Sendable, CaseIterable {
     case fileWrite = "file.write"
     case uiNotify = "ui.notify"
     case uiLog = "ui.log"
+    // Reserved for a future editor-plugin spec. Intentionally distinct from
+    // file.read / file.write — editor plugins operate against the in-memory
+    // editor state (open tabs, selection, dirty set), not raw host paths.
+    // No JSON-RPC handlers are wired to these cases yet.
+    case editorReadState = "editor.readState"
+    case editorMutateState = "editor.mutateState"
 
     var displayName: String {
         switch self {
@@ -40,6 +46,8 @@ enum PluginPermission: String, Codable, Sendable, CaseIterable {
         case .fileWrite: "Write files on host"
         case .uiNotify: "Show notifications"
         case .uiLog: "Write to app log"
+        case .editorReadState: "Read editor state (reserved)"
+        case .editorMutateState: "Mutate editor state (reserved)"
         }
     }
 }

@@ -32,6 +32,8 @@ let package = Package(
                 "Services/SbxOutputParser.swift",
                 "Services/ServiceFactory.swift",
                 "Services/LinuxShims.swift",
+                "Services/EditorDocumentProvider.swift",
+                "Services/EditorPath.swift",
             ],
             swiftSettings: [
                 .define("SBX_SPM"),

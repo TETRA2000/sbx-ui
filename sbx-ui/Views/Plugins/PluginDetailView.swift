@@ -159,6 +159,7 @@ struct PluginDetailView: View {
         case .policyList, .policyAllow, .policyDeny, .policyRemove: "shield.lefthalf.filled"
         case .fileRead, .fileWrite: "doc"
         case .uiNotify, .uiLog: "bell"
+        case .editorReadState, .editorMutateState: "square.and.pencil"
         }
     }
 
