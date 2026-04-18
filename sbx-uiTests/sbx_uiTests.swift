@@ -3284,6 +3284,7 @@ struct KanbanStoreTests {
         await MainActor.run {
             store.onExecuteTask = { sandboxName, prompt in
                 received = (sandboxName, prompt)
+                return "stub-session-id"
             }
         }
         let board = await store.createBoard(name: "Test")
@@ -3297,6 +3298,10 @@ struct KanbanStoreTests {
         #expect(updated.sandboxName == "my-sbx")
         #expect(received?.sandbox == "my-sbx")
         #expect(received?.prompt == "hello")
+        // The session ID returned by onExecuteTask must land on the store's
+        // observable `lastStartedSessionID` so ShellView can auto-navigate.
+        let lastID = await store.lastStartedSessionID
+        #expect(lastID == "stub-session-id")
     }
 
     @Test func executeBlockedTaskIsRejected() async throws {

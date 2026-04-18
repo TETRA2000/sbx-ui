@@ -34,8 +34,15 @@ struct sbx_uiApp: App {
             // `--` to its default `claude --dangerously-skip-permissions`
             // invocation, and claude treats the first positional as the
             // initial prompt — so there's no need to type into any
-            // already-attached TUI.
-            _ = session.startSession(sandboxName: sandboxName, type: .kanbanTask, initialPrompt: prompt)
+            // already-attached TUI. The returned session ID flows back to
+            // ShellView (via `KanbanStore.lastStartedSessionID`) so the
+            // detail pane auto-navigates to the new terminal.
+            let (id, _) = session.startSession(sandboxName: sandboxName, type: .kanbanTask, initialPrompt: prompt)
+            // Kick the sandbox list refresh so SandboxStore picks up the
+            // resumed sandbox quickly — otherwise ShellView's status-based
+            // render guard can briefly reject the new session.
+            Task { await sandbox.fetchSandboxes() }
+            return id
         }
         let toast = ToastManager()
         let editor = EditorStore(provider: DefaultEditorDocumentProvider(), toastManager: toast)
