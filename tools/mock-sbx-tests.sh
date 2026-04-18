@@ -339,6 +339,38 @@ test_interactive_attach_no_crash() {
   assert_contains "$out" '"status":"running"'
 }
 
+test_run_accepts_agent_args_after_dashdash() {
+  # `sbx run` accepts `-- AGENT_ARGS` for parity with the real CLI: agent args
+  # are forwarded to the default agent launch (for claude:
+  # `claude --dangerously-skip-permissions <agent_args>`). Mock parsing must
+  # succeed and preserve those args into interactive_mode.
+  sbx run claude /tmp/proj --name argfwd-test -- --continue < /dev/null
+  local out
+  out="$(sbx ls --json)"
+  assert_contains "$out" '"name":"argfwd-test"'
+  assert_contains "$out" '"status":"running"'
+}
+
+test_run_existing_sandbox_with_agent_args() {
+  # The kanban-task path runs:
+  #   sbx run <existing-sandbox> -- '<prompt>'
+  # which in real sbx expands to:
+  #   claude --dangerously-skip-permissions '<prompt>'
+  # i.e. a fresh interactive claude with the prompt pre-loaded as argv. The
+  # mock's `cmd_run` must accept the single-arg attach form combined with
+  # `-- '<prompt>'` and hand the prompt through to interactive_mode as the
+  # initial `[received]` line.
+  sbx run claude /tmp/proj --name existing-task-sbx < /dev/null
+  # `SBX_MOCK_FORCE_INTERACTIVE=1` bypasses the `[[ -t 0 ]]` TTY guard so
+  # we can exercise interactive_mode from a script. This avoids `script(1)`,
+  # whose arg order is incompatible between Linux (`script -qc CMD FILE`)
+  # and BSD/macOS (`script -q FILE CMD`).
+  local out
+  out="$(SBX_MOCK_FORCE_INTERACTIVE=1 sbx run existing-task-sbx -- "Ship the feature" < /dev/null 2>&1)"
+  assert_contains "$out" "Claude Code"
+  assert_contains "$out" "[received] Ship the feature"
+}
+
 # --- Environment Variable Tests ---
 
 test_exec_write_envvars() {
@@ -447,6 +479,8 @@ run_test "unknown command"            test_unknown_command
 echo ""
 echo "Interactive:"
 run_test "attach no crash"            test_interactive_attach_no_crash
+run_test "agent args after --"        test_run_accepts_agent_args_after_dashdash
+run_test "run existing -- prompt"     test_run_existing_sandbox_with_agent_args
 
 echo ""
 echo "Environment Variables:"

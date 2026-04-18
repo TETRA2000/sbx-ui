@@ -13,10 +13,17 @@ struct AgentStatusBar: View {
         HStack(spacing: 16) {
             // Session type indicator
             if let sessionType = session?.sessionType {
+                let (icon, label): (String, String) = {
+                    switch sessionType {
+                    case .agent:      return ("cpu", "agent")
+                    case .shell:      return ("terminal", "shell")
+                    case .kanbanTask: return ("checklist", "task")
+                    }
+                }()
                 HStack(spacing: 4) {
-                    Image(systemName: sessionType == .agent ? "cpu" : "terminal")
+                    Image(systemName: icon)
                         .font(.system(size: 10))
-                    Text(sessionType == .agent ? "agent" : "shell")
+                    Text(label)
                         .font(.code(11))
                 }
                 .foregroundStyle(.secondary)

@@ -5,8 +5,9 @@ public enum SandboxStatus: String, Sendable, Codable {
 }
 
 public enum SessionType: String, Sendable {
-    case agent   // sbx run <name>
-    case shell   // sbx exec -it <name> bash
+    case agent       // sbx run <name>
+    case shell       // sbx exec -it <name> bash
+    case kanbanTask  // sbx exec -it <name> claude --dangerously-skip-permissions "<prompt>"
 }
 
 public struct Sandbox: Identifiable, Sendable, Encodable {

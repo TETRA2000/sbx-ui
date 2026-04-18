@@ -198,37 +198,55 @@ KanbanStore.executeTask()
                                            └── Start ready tasks
 ```
 
-## Known Issues
+## Autonomous task execution
 
-### Prompt submission to Claude Code TUI
+When a Kanban task is started, the prompt is delivered to the agent CLI as a
+**positional launch argument** rather than typed into the live TUI:
 
-**Status: Not working reliably.**
+```
+sbx run <sandbox> -- "<task prompt>"
+```
 
-When a Kanban task executes, the app types the task's prompt into the agent's PTY and sends a carriage return (`\r`) to submit. The text appears in Claude Code's input box, but the `\r` is frequently ignored — the message stays in the input without being submitted.
+`sbx run` forwards everything after `--` to the underlying agent CLI as
+`AGENT_ARGS`, appended to sbx's default launch command
+(`claude --dangerously-skip-permissions`). Claude Code's CLI treats the first
+positional argument as the initial prompt for the interactive session (see
+[Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference):
+_"claude \"query\" — Start interactive session with initial prompt"_), so
+the user lands directly inside a ready-to-go conversation. This is the
+same approach used by [Cline Kanban](https://github.com/cline/kanban)
+(`src/terminal/agent-session-adapters.ts` → `withPrompt(args, prompt, "append")`).
 
-**Current implementation** (`TerminalSessionStore.sendMessage`):
+The `--` form works equally well for existing sandboxes:
 
-1. Start the agent session (`sbx run <sandbox>` in a PTY via SwiftTerm).
-2. Poll `FocusableTerminalView.lastOutputAt` (updated by `rangeChanged`) until the terminal has been quiet for ≥ 1.0s (up to 30s max). This avoids typing while Claude Code is still drawing its banner.
-3. Send the prompt text via `terminalView.send(txt: message)`.
-4. Wait 300ms.
-5. Send `terminalView.send(txt: "\r")` to submit.
+```sh
+sbx run claude-markdown-jam -- "Implement the new feature"
+```
 
-**What we've tried:**
-- `message + "\n"` in a single send — typed into input but not submitted.
-- `message + "\r"` in a single send — same.
-- Bracketed paste escape sequences (`\e[200~message\e[201~`) — Claude Code doesn't have bracketed paste mode enabled, so the escape codes appear as literal text.
-- Delayed `\r` after a static wait — still not submitted.
-- Output-quiescence wait before typing — no improvement.
+**Implementation:** Kanban tasks use a dedicated `SessionType.kanbanTask`
+(distinct from `.agent`) so they can coexist with a manually-attached agent
+session on the same sandbox and multiple tasks on the same sandbox don't
+reattach to each other. `TerminalSessionStore.startSession(
+sandboxName:type:.kanbanTask, initialPrompt:)` forwards the prompt to the
+process launcher, which assembles `sbx run <name> -- '<shell-quoted prompt>'`
+(single-quote escaping handled by `shellSingleQuote(_:)`). The PTY is fully
+interactive, so the user can continue the conversation after the initial
+prompt is processed. Sidebar label: `"<sandbox> (task)"`.
 
-**Hypothesis:** Claude Code's Ink-based TUI expects the Enter key as a specific raw input event that `\r` alone doesn't satisfy. The PTY's line discipline flags (ICRNL, ICANON) may also be converting `\r` in ways that lose the "Enter" signal.
+**Wiring:** `sbx_uiApp.swift` → `kanban.onExecuteTask` calls
+`session.startSession(sandboxName:, type: .kanbanTask, initialPrompt: prompt)`
+for every task Start — no conditional branching on existing sessions.
 
-**Workaround:** After a Kanban task starts, manually click the terminal thumbnail to open the session and press Enter to submit the pre-typed prompt.
+### Why not type into the TUI?
 
-**Next steps to investigate:**
-- Inspect what bytes are sent when a user types Enter in the terminal view with Claude Code focused (e.g., via `ioctl` / stty introspection on the PTY slave).
-- Try sending the kitty keyboard protocol encoding for Return when those flags are active.
-- Check if Claude Code requires a "key up" event alongside key down.
+The original implementation typed the prompt into the running PTY then sent
+`\r`. The text appeared in Claude Code's input box but the `\r` was
+frequently ignored — Claude Code's Ink TUI expects the Enter key as a
+specific raw input event that a bare `\r` byte doesn't satisfy. We tried
+`\n`, bracketed paste escape sequences (Claude Code does not enable
+bracketed paste), and various delays. None worked reliably.
+
+Passing the prompt at launch sidesteps the entire keyboard-input problem.
 
 ## Files
 

@@ -6,8 +6,14 @@ import SwiftUI
     var selectedBoardID: String?
     var error: String?
     var executingTaskIDs: Set<String> = []
-    /// Starts a terminal session on the sandbox, waits for ready, then sends the prompt.
-    var onExecuteTask: ((_ sandboxName: String, _ prompt: String) async throws -> Void)?
+    /// Starts a terminal session on the sandbox with the given prompt and
+    /// returns the new session's ID so callers (ShellView) can auto-navigate
+    /// to it.
+    var onExecuteTask: ((_ sandboxName: String, _ prompt: String) async throws -> String?)?
+    /// Session ID most recently spawned by `executeTask`. ShellView observes
+    /// this to switch the detail pane to the new terminal as soon as the
+    /// kanban Start button fires.
+    var lastStartedSessionID: String?
 
     private let service: any SbxServiceProtocol
     private let persistence: KanbanPersistence
@@ -239,7 +245,10 @@ import SwiftUI
         save(boards[bIndex])
 
         do {
-            try await onExecuteTask?(sandboxName, task.prompt)
+            let spawnedID = try await onExecuteTask?(sandboxName, task.prompt)
+            if let spawnedID {
+                lastStartedSessionID = spawnedID
+            }
             appLog(.info, "KanbanStore", "Task '\(task.title)' sent to sandbox '\(sandboxName)'")
         } catch {
             if let tIdx = boards[bIndex].tasks.firstIndex(where: { $0.id == taskID }) {

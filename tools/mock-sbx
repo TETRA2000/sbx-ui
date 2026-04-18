@@ -129,15 +129,18 @@ cmd_ls() {
 cmd_run() {
   local agent="" workspace="" name="" force=false
   local args=()
+  local agent_args=()
 
-  # Parse arguments
+  # Parse arguments. Args after `--` are agent args forwarded to the default
+  # agent launch (e.g. `claude --dangerously-skip-permissions <agent_args>`).
+  # For the kanban-task path, the prompt rides in as the first agent arg.
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --name) name="$2"; shift 2 ;;
       --branch) shift 2 ;; # Ignored
       -m|--memory) shift 2 ;; # Ignored
       -t|--template) shift 2 ;; # Ignored
-      --) shift; break ;;
+      --) shift; while [[ $# -gt 0 ]]; do agent_args+=("$1"); shift; done ;;
       -*) shift ;;
       *) args+=("$1"); shift ;;
     esac
@@ -159,8 +162,8 @@ cmd_run() {
       sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$_name.json" > "$tmp"
       mv "$tmp" "$STATE_DIR/sandboxes/$_name.json"
     fi
-    if [[ -t 0 ]]; then
-      interactive_mode "$_name"
+    if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
+      interactive_mode "$_name" "${agent_args[@]}"
     fi
     return
   fi
@@ -187,8 +190,8 @@ cmd_run() {
     local status
     status="$(read_sandbox_field "$name" "status")"
     if [[ "$status" == "running" ]]; then
-      if [[ -t 0 ]]; then
-        interactive_mode "$name"
+      if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
+        interactive_mode "$name" "${agent_args[@]}"
       fi
       return
     fi
@@ -196,8 +199,8 @@ cmd_run() {
     local tmp="$STATE_DIR/sandboxes/$name.json.tmp"
     sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$name.json" > "$tmp"
     mv "$tmp" "$STATE_DIR/sandboxes/$name.json"
-    if [[ -t 0 ]]; then
-      interactive_mode "$name"
+    if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
+      interactive_mode "$name" "${agent_args[@]}"
     fi
     return
   fi
@@ -213,9 +216,12 @@ cmd_run() {
   echo "  Workspace: $workspace (direct mount)"
   echo "  Agent: $agent"
 
-  # If stdin is a TTY, enter interactive mode
-  if [[ -t 0 ]]; then
-    interactive_mode "$name"
+  # If stdin is a TTY (or forced), enter interactive mode.
+  # `SBX_MOCK_FORCE_INTERACTIVE=1` is used by mock-sbx-tests.sh so the test
+  # can exercise interactive_mode without spawning a pseudo-TTY via `script`
+  # (whose argument order is incompatible between Linux and BSD/macOS).
+  if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
+    interactive_mode "$name" "${agent_args[@]}"
   fi
 }
 
@@ -291,6 +297,27 @@ cmd_create() {
 
 interactive_mode() {
   local name="$1"
+  shift || true
+  # Any remaining positional args are the agent args that were forwarded via
+  # `sbx run <sbx> -- <agent_args>...`. Real sbx appends them to its default
+  # `claude --dangerously-skip-permissions` invocation, so the first
+  # non-flag positional becomes claude's initial prompt. The mock mirrors
+  # this by emitting a `[received]` line during startup — tests use this to
+  # assert the kanban-task prompt arrived end-to-end.
+  local initial_prompt=""
+  local i=1
+  while [[ $i -le $# ]]; do
+    local tok="${!i}"
+    case "$tok" in
+      -p|--print|--continue|-c|--dangerously-skip-permissions) ;;  # flag with no value
+      --resume|--session-id|--model|--output-format|--input-format|--settings|--append-system-prompt)
+        i=$((i + 1)) ;;  # flag with value — skip next
+      -*) ;;  # unknown flag — skip
+      *) initial_prompt="$tok"; break ;;
+    esac
+    i=$((i + 1))
+  done
+
   trap 'printf "\r\n"; exit 0' INT TERM
 
   # Simulate startup with staggered output so clients can detect quiescence.
@@ -306,6 +333,18 @@ interactive_mode() {
   printf '\033[0;90mWorkspace: %s\033[0m\r\n' "$name"
   printf '\r\n'
   sleep 0.3
+
+  if [[ -n "$initial_prompt" ]]; then
+    # Auto-process the launch-arg prompt before showing the input prompt so the
+    # behavior mirrors `claude "<prompt>"`.
+    printf '\033[0;35m[received] %s\033[0m\r\n' "$initial_prompt"
+    sleep 0.1
+    printf '\033[0;33m⠋ Thinking...\033[0m\r\n'
+    sleep 0.1
+    printf '\033[1;32m✓ Done\033[0m\r\n'
+    printf '\r\n'
+  fi
+
   printf '\033[1;32m>\033[0m '
   # After this point output is quiet until input arrives — clients poll for
   # quiescence here before typing.

@@ -36,7 +36,16 @@ struct ShellView: View {
                     if let sessionID = selectedSessionID,
                        let session = sessionStore.session(for: sessionID),
                        let sandbox = sandboxStore.sandboxes.first(where: { $0.name == session.sandboxName }),
-                       sandbox.status == .running {
+                       (sandbox.status == .running || session.sessionType == .kanbanTask) {
+                        // `sandbox.status == .running` is the normal gate.
+                        // Kanban task sessions are exempt because they may be
+                        // launched against a stopped sandbox that sbx is
+                        // concurrently resuming — the store can lag behind
+                        // the real container state by up to one poll. The
+                        // spawned PTY is authoritative: if the session
+                        // exists here we should render it. Externally-
+                        // stopped sandboxes are still handled by
+                        // `cleanupStaleSessions` on the next poll.
                         SandboxWorkspaceView(sessionID: sessionID, sandbox: sandbox, onBack: { selectedSessionID = nil })
                     } else {
                         switch selection {
@@ -109,6 +118,15 @@ struct ShellView: View {
         .onChange(of: sessionStore.activeSessionIDs) { _, newIDs in
             if let selected = selectedSessionID, !newIDs.contains(selected) {
                 selectedSessionID = nil
+            }
+        }
+        .onChange(of: kanbanStore.lastStartedSessionID) { _, newID in
+            // Auto-navigate to the terminal whenever a kanban task Start
+            // spawns a new session. Without this, the user is stranded on
+            // the Kanban board with a sidebar entry they have to click
+            // manually.
+            if let newID {
+                selectedSessionID = newID
             }
         }
     }

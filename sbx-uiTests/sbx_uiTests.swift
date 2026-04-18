@@ -6,7 +6,31 @@ import Testing
 // MARK: - Test Helpers
 
 struct StubProcessLauncher: TerminalProcessLauncher {
-    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType) {}
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?) {}
+}
+
+/// Records every launch invocation so tests can assert what was forwarded to
+/// the underlying agent CLI (most importantly: that the kanban prompt arrived
+/// as a launch-arg rather than typed into the PTY). Uses an internal lock so
+/// it remains safe regardless of which actor the protocol method is called
+/// from.
+final class RecordingProcessLauncher: TerminalProcessLauncher, @unchecked Sendable {
+    struct Invocation: Equatable, Sendable {
+        let sandboxName: String
+        let sessionType: SessionType
+        let initialPrompt: String?
+    }
+    private let lock = NSLock()
+    private var storage: [Invocation] = []
+    var invocations: [Invocation] {
+        lock.lock(); defer { lock.unlock() }
+        return storage
+    }
+    func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?) {
+        let invocation = Invocation(sandboxName: sandboxName, sessionType: sessionType, initialPrompt: initialPrompt)
+        lock.lock(); defer { lock.unlock() }
+        storage.append(invocation)
+    }
 }
 
 actor FailingSbxService: SbxServiceProtocol {
@@ -1007,6 +1031,91 @@ struct TerminalSessionStoreTests {
         let service = StubSbxService()
         let store = await TerminalSessionStore(service: service, processLauncher: StubProcessLauncher())
         await store.sendMessage("hello", to: "nonexistent")
+    }
+
+    @Test func startKanbanTaskForwardsPromptToLauncher() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        _ = await store.startSession(sandboxName: "task-sbx", type: .kanbanTask, initialPrompt: "Implement feature X")
+
+        #expect(recorder.invocations.count == 1)
+        let inv = recorder.invocations.first
+        #expect(inv?.sandboxName == "task-sbx")
+        #expect(inv?.sessionType == .kanbanTask)
+        #expect(inv?.initialPrompt == "Implement feature X")
+    }
+
+    @Test func agentSessionDropsInitialPrompt() async {
+        // The `.agent` path (`sbx run <sbx>`) doesn't accept a per-message
+        // prompt — that's delivered via `.kanbanTask` instead. Any prompt
+        // passed to `.agent` must be dropped before reaching the launcher.
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        _ = await store.startSession(sandboxName: "agent-sbx", type: .agent, initialPrompt: "ignored by design")
+
+        #expect(recorder.invocations.count == 1)
+        #expect(recorder.invocations.first?.sessionType == .agent)
+        #expect(recorder.invocations.first?.initialPrompt == nil)
+    }
+
+    @Test func shellSessionDropsInitialPrompt() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        _ = await store.startSession(sandboxName: "shell-sbx", type: .shell, initialPrompt: "ignored")
+
+        #expect(recorder.invocations.count == 1)
+        #expect(recorder.invocations.first?.sessionType == .shell)
+        #expect(recorder.invocations.first?.initialPrompt == nil)
+    }
+
+    @Test func kanbanTaskSessionsAreNotIdempotent() async {
+        // Each kanban task execution must get its own independent session —
+        // otherwise a second "Start" for the same sandbox would reattach to
+        // the previous task's claude instance instead of spawning a new one.
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        let (id1, _) = await store.startSession(sandboxName: "task-sbx", type: .kanbanTask, initialPrompt: "first")
+        let (id2, _) = await store.startSession(sandboxName: "task-sbx", type: .kanbanTask, initialPrompt: "second")
+
+        #expect(id1 != id2)
+        #expect(recorder.invocations.count == 2)
+        #expect(recorder.invocations.map(\.initialPrompt) == ["first", "second"])
+    }
+
+    @Test func kanbanTaskSessionCoexistsWithAgentSession() async {
+        let service = StubSbxService()
+        let recorder = RecordingProcessLauncher()
+        let store = await TerminalSessionStore(service: service, processLauncher: recorder)
+
+        // User manually attaches to the sandbox, then kicks off a kanban task
+        // — both sessions must live side-by-side.
+        _ = await store.startSession(sandboxName: "coexist", type: .agent)
+        _ = await store.startSession(sandboxName: "coexist", type: .kanbanTask, initialPrompt: "task prompt")
+
+        let count = await store.activeSessionCount
+        #expect(count == 2)
+        let sessions = await store.sessions(for: "coexist")
+        #expect(sessions.contains { $0.sessionType == .agent })
+        #expect(sessions.contains { $0.sessionType == .kanbanTask })
+    }
+
+    @Test func shellSingleQuoteHandlesSpecialChars() {
+        // Plain string
+        #expect(shellSingleQuote("hello") == "'hello'")
+        // Embedded single quote: must close, escape, reopen
+        #expect(shellSingleQuote("it's fine") == "'it'\\''s fine'")
+        // Whitespace and shell metacharacters survive untouched inside quotes
+        #expect(shellSingleQuote("a b $c `d` \"e\"") == "'a b $c `d` \"e\"'")
+        // Newlines and multi-line prompts
+        #expect(shellSingleQuote("line1\nline2") == "'line1\nline2'")
     }
 
     @Test func captureSnapshotsDoesNotCrash() async {
@@ -3175,6 +3284,7 @@ struct KanbanStoreTests {
         await MainActor.run {
             store.onExecuteTask = { sandboxName, prompt in
                 received = (sandboxName, prompt)
+                return "stub-session-id"
             }
         }
         let board = await store.createBoard(name: "Test")
@@ -3188,6 +3298,10 @@ struct KanbanStoreTests {
         #expect(updated.sandboxName == "my-sbx")
         #expect(received?.sandbox == "my-sbx")
         #expect(received?.prompt == "hello")
+        // The session ID returned by onExecuteTask must land on the store's
+        // observable `lastStartedSessionID` so ShellView can auto-navigate.
+        let lastID = await store.lastStartedSessionID
+        #expect(lastID == "stub-session-id")
     }
 
     @Test func executeBlockedTaskIsRejected() async throws {

@@ -237,15 +237,15 @@ Variables are persisted inside the sandbox via `/etc/sandbox-persistent.sh`. The
 8. Running tasks show live terminal thumbnails — click to view the full session.
 9. Tasks with dependencies are marked "BLOCKED" until all upstream tasks complete, then auto-execute.
 
-> **Known issue:** Prompt submission to Claude Code is not yet reliable. The task's prompt
-> is typed into the agent's terminal, but the trailing Enter (`\r`) is frequently not
-> recognized as "submit" by Claude Code's TUI — the text ends up in the input box without
-> being sent. Current implementation waits for terminal output quiescence before typing,
-> then sends text + 300ms + `\r`, but this can still leave the prompt unsubmitted.
-> Workaround: manually press Enter in the terminal view after the task starts. See
-> `docs/kanban-design.md` for details.
-
-See `docs/kanban-design.md` for the full design document.
+Each task Start spawns a dedicated `SessionType.kanbanTask` terminal that
+runs `sbx run <sandbox> -- "<prompt>"`. `sbx run` appends the args after
+`--` to its default `claude --dangerously-skip-permissions` invocation, and
+Claude Code's CLI treats the first positional as the
+[initial prompt for an interactive session](https://code.claude.com/docs/en/cli-reference),
+so the task opens a ready-to-go conversation — no manual Enter press
+required. Multiple kanban tasks coexist with any manually-attached agent
+session on the same sandbox. See `docs/kanban-design.md` for the full design
+document.
 
 #### Network Policies
 

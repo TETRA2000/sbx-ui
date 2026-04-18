@@ -29,10 +29,20 @@ struct sbx_uiApp: App {
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let kanban = KanbanStore(service: service, persistenceDirectory: kanbanDir)
         kanban.onExecuteTask = { sandboxName, prompt in
-            // Start terminal session if not already running; sendMessage waits
-            // for the terminal to quiesce before typing.
-            _ = session.startSession(sandboxName: sandboxName, type: .agent)
-            session.sendMessage(prompt, to: sandboxName)
+            // Each kanban task Start spawns its own independent session via
+            // `sbx run <sandbox> -- '<prompt>'`. sbx appends the args after
+            // `--` to its default `claude --dangerously-skip-permissions`
+            // invocation, and claude treats the first positional as the
+            // initial prompt — so there's no need to type into any
+            // already-attached TUI. The returned session ID flows back to
+            // ShellView (via `KanbanStore.lastStartedSessionID`) so the
+            // detail pane auto-navigates to the new terminal.
+            let (id, _) = session.startSession(sandboxName: sandboxName, type: .kanbanTask, initialPrompt: prompt)
+            // Kick the sandbox list refresh so SandboxStore picks up the
+            // resumed sandbox quickly — otherwise ShellView's status-based
+            // render guard can briefly reject the new session.
+            Task { await sandbox.fetchSandboxes() }
+            return id
         }
         let toast = ToastManager()
         let editor = EditorStore(provider: DefaultEditorDocumentProvider(), toastManager: toast)

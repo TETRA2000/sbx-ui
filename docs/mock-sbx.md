@@ -58,8 +58,8 @@ $SBX_MOCK_STATE_DIR/
 All commands match the real `sbx` CLI v0.23.0 syntax (see `docs/sbx-cli-reference.md`):
 
 - `sbx ls [--json]` — List sandboxes
-- `sbx run <agent> <workspace> [--name <name>]` — Create and attach
-- `sbx run <name>` — Attach to existing sandbox
+- `sbx run <agent> <workspace> [--name <name>] [-- <agent_args>...]` — Create and attach
+- `sbx run <name> [-- <agent_args>...]` — Attach to existing sandbox
 - `sbx stop <name>` — Stop sandbox, clear ports
 - `sbx rm [-f] <name>` — Remove sandbox
 - `sbx create [--name <name>] <agent> [<workspace>]` — Create without attaching
@@ -79,9 +79,13 @@ All commands match the real `sbx` CLI v0.23.0 syntax (see `docs/sbx-cli-referenc
 
 When `sbx run` is called with a TTY attached (as by `PtySessionManager`), the script enters interactive mode:
 1. Prints a Claude Code startup banner with ANSI colors
-2. Shows a `>` prompt
-3. Reads stdin line by line
-4. For each input, simulates: Thinking → Reading file → Writing file → Done
+2. If positional args were forwarded after `--`, treats the first as the
+   initial prompt and emits `[received] <prompt>` followed by a fake
+   processing trace — mirrors the real `claude "<prompt>"` behavior used by
+   the kanban autonomous-execution path.
+3. Shows a `>` prompt
+4. Reads stdin line by line
+5. For each input, simulates: Thinking → Reading file → Writing file → Done
 
 ## Default Policies
 

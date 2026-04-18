@@ -1080,5 +1080,71 @@ final class PluginExecutionUITests: XCTestCase {
         let taskTitle = app.staticTexts["My Test Task"]
         XCTAssertTrue(taskTitle.waitForExistence(timeout: 5), "Task card should appear with title")
     }
+
+    @MainActor
+    func testKanbanTaskStartLaunchesTaskSession() throws {
+        // Deploy a sandbox so the kanban task has somewhere to execute.
+        let newButton = app.buttons["newSandboxButton"]
+        XCTAssertTrue(newButton.waitForExistence(timeout: 5))
+        newButton.click()
+        let nameField = app.textFields["sandboxNameField"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3))
+        nameField.click()
+        nameField.typeText("kanban-exec-sbx")
+        let deployButton = app.buttons["deployButton"]
+        let enabled = NSPredicate(format: "isEnabled == true")
+        let exp = XCTNSPredicateExpectation(predicate: enabled, object: deployButton)
+        XCTWaiter.wait(for: [exp], timeout: 5)
+        deployButton.click()
+        sleep(3)
+
+        // Back out of the auto-opened session.
+        let backButton = app.buttons["backToDashboard"]
+        if backButton.waitForExistence(timeout: 3) {
+            backButton.click()
+            sleep(1)
+        }
+
+        // Navigate to Kanban and create a board.
+        let kanbanLabel = app.staticTexts["KANBAN"]
+        XCTAssertTrue(kanbanLabel.waitForExistence(timeout: 5))
+        kanbanLabel.click()
+        sleep(1)
+        let createBoardButton = app.buttons["createBoardButton"]
+        XCTAssertTrue(createBoardButton.waitForExistence(timeout: 5))
+        createBoardButton.click()
+        sleep(1)
+
+        // Add a task with a prompt.
+        let addTaskButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'addTaskButton-'"))
+        XCTAssertTrue(addTaskButtons.firstMatch.waitForExistence(timeout: 5))
+        addTaskButtons.firstMatch.click()
+        sleep(1)
+        let titleField = app.textFields["taskTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 5))
+        titleField.click()
+        titleField.typeText("Auto-launch task")
+        let promptField = app.textViews["taskPromptField"].exists
+            ? app.textViews["taskPromptField"]
+            : app.textFields["taskPromptField"]
+        if promptField.exists {
+            promptField.click()
+            promptField.typeText("Implement the autonomous launch path")
+        }
+        app.buttons["saveTaskButton"].click()
+        sleep(1)
+
+        // Click the task's start button.
+        let startButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'startTaskButton-'"))
+        XCTAssertTrue(startButtons.firstMatch.waitForExistence(timeout: 5), "Start button should appear on the new task")
+        startButtons.firstMatch.click()
+
+        // A kanban-task session spawns a new claude inside the sandbox via
+        // `sbx exec -it <sbx> claude --dangerously-skip-permissions '<prompt>'`.
+        // The sidebar entry is labelled "<sandbox> (task)".
+        let sidebarSession = app.buttons["sidebarSession-kanban-exec-sbx (task)"]
+        XCTAssertTrue(sidebarSession.waitForExistence(timeout: 10),
+                      "Task sidebar entry should appear after kanban task start")
+    }
 }
 

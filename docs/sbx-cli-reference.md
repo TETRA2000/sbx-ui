@@ -44,11 +44,26 @@ Note: `ports` field is absent (not empty array) when no ports are published. `wo
 sbx run [flags] SANDBOX | AGENT [PATH...] [-- AGENT_ARGS...]
 ```
 
-Flags: `--name <name>`, `--branch <branch>`, `-m <memory>`, `-t <template>`
+Flags: `--name <name>`, `--branch <branch>`, `-m <memory>`, `-t <template>`, `--cpus <n>`
 
 - Creates sandbox if it doesn't exist; attaches to existing one if it does
 - Default name: `<agent>-<workdir>` (e.g., `claude-myproject`)
-- Agents: claude, codex, copilot, docker-agent, gemini, kiro, opencode, shell
+- Agents: claude, codex, copilot, docker-agent, factory-ai, gemini, kiro, opencode, shell
+
+Arguments after `--` are forwarded to the agent CLI, **appended to sbx's
+default launch command**. For claude this means they are appended to
+`claude --dangerously-skip-permissions`. This works both when creating a
+new sandbox and when attaching to an existing one:
+
+```sh
+# Resume the sandbox's previous agent session
+sbx run claude -- --continue
+
+# Attach to an existing sandbox with an initial prompt (claude treats the
+# first positional as its initial prompt). sbx-ui uses this exact shape
+# for autonomous Kanban task execution:
+sbx run claude-markdown-jam -- "Implement feature X"
+```
 
 ### `sbx create` — Create without attaching
 ```
