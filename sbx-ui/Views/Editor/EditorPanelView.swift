@@ -25,7 +25,7 @@ struct EditorPanelView: View {
                 EmptyWorkspacePlaceholder()
             } else {
                 HStack(spacing: 0) {
-                    FileTreeView(sandboxName: sandboxName, rootURL: rootURL)
+                    ChangedFilesListView(sandboxName: sandboxName, rootURL: rootURL)
                         .frame(width: 240)
                     Divider()
                     editorColumn
@@ -73,6 +73,8 @@ struct EditorPanelView: View {
                             NSPasteboard.general.setString(tab.path.path, forType: .string)
                         }
                     )
+                case .deleted:
+                    DeletedFilePlaceholder(relativePath: EditorPath.relative(tab.path, to: rootURL))
                 case .readOnly:
                     LargeFileBanner(relativePath: EditorPath.relative(tab.path, to: rootURL))
                     EditorBufferView(

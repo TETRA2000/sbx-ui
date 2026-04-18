@@ -395,6 +395,102 @@ struct EditorStoreTabLimitTests {
     }
 }
 
+// MARK: - Changed files (git status)
+
+@MainActor
+struct EditorStoreChangedFilesTests {
+    @Test func refreshChangedFiles_populatesSortedList() async {
+        let (store, provider, _) = await makeStore()
+        let sbx = sandbox()
+        await provider.seedDirectory(root)
+        await provider.seedChangedFile(ChangedFileEntry(
+            url: URL(fileURLWithPath: "/ws/b.swift"),
+            relativePath: "b.swift",
+            changeType: .modified
+        ))
+        await provider.seedChangedFile(ChangedFileEntry(
+            url: URL(fileURLWithPath: "/ws/a.swift"),
+            relativePath: "a.swift",
+            changeType: .added
+        ))
+        await store.open(sandbox: sbx)
+        // Wait briefly for open's refresh task to run.
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let entries = store.workspaces[sbx.name]?.changedFiles ?? []
+        #expect(entries.count == 2)
+        #expect(entries.map(\.relativePath) == ["a.swift", "b.swift"])
+        if case .loaded = store.workspaces[sbx.name]?.changedFilesLoadState {} else {
+            Issue.record("Expected .loaded")
+        }
+    }
+
+    @Test func refreshChangedFiles_notGitRepo_setsLoadState() async {
+        let (store, provider, _) = await makeStore()
+        let sbx = sandbox()
+        await provider.setFailListChanged(NSError(
+            domain: EditorErrorDomain,
+            code: EditorErrorCode.notGitRepository.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "not a git repo"]
+        ))
+        await store.open(sandbox: sbx)
+        _ = await store.refreshChangedFiles(sandboxName: sbx.name)
+        if case .notGitRepository = store.workspaces[sbx.name]?.changedFilesLoadState {} else {
+            Issue.record("Expected .notGitRepository")
+        }
+    }
+
+    @Test func refreshChangedFiles_gitUnavailable_toasts() async {
+        let (store, provider, toast) = await makeStore()
+        let sbx = sandbox()
+        await provider.setFailListChanged(NSError(
+            domain: EditorErrorDomain,
+            code: EditorErrorCode.gitUnavailable.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "git not found"]
+        ))
+        await store.open(sandbox: sbx)
+        _ = await store.refreshChangedFiles(sandboxName: sbx.name)
+        #expect(toast.toasts.count == 1)
+        if case .failed = store.workspaces[sbx.name]?.changedFilesLoadState {} else {
+            Issue.record("Expected .failed, got \(String(describing: store.workspaces[sbx.name]?.changedFilesLoadState))")
+        }
+    }
+
+    @Test func openFile_deletedChangedFile_opensPlaceholderTab() async {
+        let (store, provider, _) = await makeStore()
+        let sbx = sandbox()
+        let file = URL(fileURLWithPath: "/ws/removed.swift")
+        await provider.seedDirectory(root)
+        await provider.seedChangedFile(ChangedFileEntry(
+            url: file, relativePath: "removed.swift", changeType: .deleted
+        ))
+        await store.open(sandbox: sbx)
+        // Ensure refresh completes synchronously before openFile.
+        _ = await store.refreshChangedFiles(sandboxName: sbx.name)
+        await store.openFile(sandboxName: sbx.name, path: file)
+        let tab = store.workspaces[sbx.name]?.tabs.first
+        #expect(tab?.status == .deleted)
+    }
+
+    @Test func changedFiles_badge_matchesRawValue() {
+        #expect(GitChangeType.modified.rawValue == "M")
+        #expect(GitChangeType.added.rawValue == "A")
+        #expect(GitChangeType.deleted.rawValue == "D")
+        #expect(GitChangeType.renamed.rawValue == "R")
+        #expect(GitChangeType.untracked.rawValue == "U")
+    }
+
+    @Test func parsePorcelain_readsStandardOutput() {
+        let sample = "M  src/app.swift\u{0}?? untracked.txt\u{0}"
+        let data = Data(sample.utf8)
+        let root = URL(fileURLWithPath: "/ws")
+        let entries = DefaultEditorDocumentProvider.parsePorcelain(data: data, root: root)
+        #expect(entries.count == 2)
+        #expect(entries.map(\.relativePath) == ["src/app.swift", "untracked.txt"])
+        #expect(entries[0].changeType == .modified)
+        #expect(entries[1].changeType == .untracked)
+    }
+}
+
 // MARK: - Layout + pane visibility
 
 @MainActor

@@ -52,6 +52,7 @@ enum TabStatus: Sendable, Equatable {
     case readOnly
     case binary
     case tooLarge(size: Int64)
+    case deleted
     case saving
     case savedFlash
     case failed(String)
@@ -61,6 +62,17 @@ enum DirectoryLoadState: Sendable, Equatable {
     case notLoaded
     case loading
     case loaded
+    case failed(String)
+}
+
+/// Load state for the per-sandbox changed-files list. Distinguishes a
+/// non-git-repository state (a placeholder, not a toast) from a transient
+/// provider failure (which produces a toast and keeps the prior list).
+enum ChangedFilesLoadState: Sendable, Equatable {
+    case notLoaded
+    case loading
+    case loaded
+    case notGitRepository
     case failed(String)
 }
 
@@ -97,10 +109,8 @@ struct SandboxWorkspaceState: Sendable {
     var workspaceRoot: URL
     var tabs: [EditorTab]
     var activeTabID: UUID?
-    var expandedDirs: Set<URL>
-    var directoryChildren: [URL: [FileEntry]]
-    var directoryLoadState: [URL: DirectoryLoadState]
-    var showHidden: Bool
+    var changedFiles: [ChangedFileEntry]
+    var changedFilesLoadState: ChangedFilesLoadState
     var layoutRatio: Double
     var paneVisibility: PaneVisibility
     var statSnapshots: [URL: FileStat]
@@ -111,10 +121,8 @@ struct SandboxWorkspaceState: Sendable {
         self.workspaceRoot = workspaceRoot
         self.tabs = []
         self.activeTabID = nil
-        self.expandedDirs = []
-        self.directoryChildren = [:]
-        self.directoryLoadState = [:]
-        self.showHidden = false
+        self.changedFiles = []
+        self.changedFilesLoadState = .notLoaded
         self.layoutRatio = 0.5
         self.paneVisibility = .both
         self.statSnapshots = [:]
@@ -130,7 +138,6 @@ struct SandboxWorkspaceState: Sendable {
     static let hardSizeCap: Int64 = 20 * 1024 * 1024
     static let softLineCap: Int = 50_000
     static let maxOpenTabs: Int = 20
-    static let ignorePatterns: Set<String> = [".git", "node_modules", ".DS_Store"]
     static let debounceMillis: UInt64 = 500
     static let pendingIndicatorMillis: UInt64 = 250
 
@@ -193,7 +200,7 @@ struct SandboxWorkspaceState: Sendable {
             workspaces[name] = state
             appLog(.info, "Editor", "workspace opened \(name)", detail: sandbox.workspace)
             if !sandbox.workspace.isEmpty {
-                Task { await self.refreshDirectory(sandboxName: name, path: URL(fileURLWithPath: sandbox.workspace)) }
+                Task { await self.refreshChangedFiles(sandboxName: name) }
             }
         } else if var state = workspaces[name] {
             // Re-entry: refresh workspace path in case sandbox moved.
@@ -250,80 +257,57 @@ struct SandboxWorkspaceState: Sendable {
         return .closed
     }
 
-    // MARK: - File tree
+    // MARK: - Changed files (git status)
 
-    func toggleDir(sandboxName: String, path: URL) {
-        guard var state = workspaces[sandboxName] else { return }
-        if state.expandedDirs.contains(path.standardizedFileURL) {
-            state.expandedDirs.remove(path.standardizedFileURL)
-            workspaces[sandboxName] = state
-            return
-        }
-        state.expandedDirs.insert(path.standardizedFileURL)
-        workspaces[sandboxName] = state
-        Task { await self.refreshDirectory(sandboxName: sandboxName, path: path) }
-    }
-
-    func setShowHidden(_ show: Bool, for sandboxName: String) {
-        guard var state = workspaces[sandboxName] else { return }
-        state.showHidden = show
-        workspaces[sandboxName] = state
-    }
-
+    /// Refreshes the changed-files list for `sandboxName` by asking the provider
+    /// to run `git status`. Non-git repos update load state to `.notGitRepository`
+    /// (the UI renders the `NotGitRepoPlaceholder`); git-unavailable and other
+    /// provider errors surface a toast and keep the prior list.
     @discardableResult
-    private func refreshDirectory(sandboxName: String, path: URL) async -> Bool {
+    func refreshChangedFiles(sandboxName: String) async -> Bool {
         guard let state = workspaces[sandboxName] else { return false }
-        let normalized = path.standardizedFileURL
-        // Validate scope.
+        let root = state.workspaceRoot
+        if state.isWorkspaceMissing { return false }
+        setChangedFilesLoadState(sandboxName: sandboxName, to: .loading)
         do {
-            _ = try EditorPath.validate(normalized, within: state.workspaceRoot)
-        } catch {
-            appLog(.warn, "Editor", "listDirectory out of scope \(normalized.path)")
-            return false
-        }
-        setDirLoadState(sandboxName: sandboxName, path: normalized, to: .loading)
-        do {
-            let entries = try await provider.listDirectory(at: normalized)
-            // Sort directories-first then alphabetical.
-            let sorted = entries.sorted { a, b in
-                if a.isDirectory != b.isDirectory { return a.isDirectory && !b.isDirectory }
-                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-            }
-            setDirChildren(sandboxName: sandboxName, path: normalized, children: sorted)
-            setDirLoadState(sandboxName: sandboxName, path: normalized, to: .loaded)
+            let entries = try await provider.listChangedFiles(in: root)
+            setChangedFiles(sandboxName: sandboxName, entries: entries)
+            setChangedFilesLoadState(sandboxName: sandboxName, to: .loaded)
             return true
         } catch {
             let nsErr = error as NSError
-            setDirLoadState(sandboxName: sandboxName, path: normalized, to: .failed(nsErr.localizedDescription))
-            toastManager.show("Editor: listDirectory failed — \(nsErr.localizedDescription) [\(nsErr.domain):\(nsErr.code)]")
-            appLog(.error, "Editor", "listDirectory failed \(normalized.path)", detail: nsErr.localizedDescription)
+            if nsErr.domain == EditorErrorDomain,
+               nsErr.code == EditorErrorCode.notGitRepository.rawValue {
+                setChangedFiles(sandboxName: sandboxName, entries: [])
+                setChangedFilesLoadState(sandboxName: sandboxName, to: .notGitRepository)
+                appLog(.info, "Editor", "workspace is not a git repository \(root.path)")
+                return false
+            }
+            setChangedFilesLoadState(sandboxName: sandboxName, to: .failed(nsErr.localizedDescription))
+            toastManager.show("Editor: listChangedFiles failed — \(nsErr.localizedDescription) [\(nsErr.domain):\(nsErr.code)]")
+            appLog(.error, "Editor", "listChangedFiles failed \(root.path)", detail: nsErr.localizedDescription)
             return false
         }
     }
 
-    private func setDirChildren(sandboxName: String, path: URL, children: [FileEntry]) {
+    /// Returns the changed-file entry (if any) for an absolute path in the
+    /// given sandbox. Used by `openFile` to honor deleted-file handling.
+    private func changedFileEntry(sandboxName: String, path: URL) -> ChangedFileEntry? {
+        guard let state = workspaces[sandboxName] else { return nil }
+        let normalized = path.standardizedFileURL
+        return state.changedFiles.first(where: { $0.url == normalized })
+    }
+
+    private func setChangedFiles(sandboxName: String, entries: [ChangedFileEntry]) {
         guard var state = workspaces[sandboxName] else { return }
-        state.directoryChildren[path.standardizedFileURL] = children
+        state.changedFiles = entries
         workspaces[sandboxName] = state
     }
 
-    private func setDirLoadState(sandboxName: String, path: URL, to value: DirectoryLoadState) {
+    private func setChangedFilesLoadState(sandboxName: String, to value: ChangedFilesLoadState) {
         guard var state = workspaces[sandboxName] else { return }
-        state.directoryLoadState[path.standardizedFileURL] = value
+        state.changedFilesLoadState = value
         workspaces[sandboxName] = state
-    }
-
-    /// Filters an immediate-children list through `showHidden` and the
-    /// built-in ignore patterns.
-    func visibleChildren(sandboxName: String, path: URL) -> [FileEntry] {
-        guard let state = workspaces[sandboxName] else { return [] }
-        let entries = state.directoryChildren[path.standardizedFileURL] ?? []
-        if state.showHidden { return entries }
-        return entries.filter { entry in
-            if entry.name.hasPrefix(".") && entry.name != ".env" { return false }
-            if Self.ignorePatterns.contains(entry.name) { return false }
-            return true
-        }
     }
 
     // MARK: - File open
@@ -345,6 +329,23 @@ struct SandboxWorkspaceState: Sendable {
         // 20-tab warning before opening another file.
         if state.tabs.count >= Self.maxOpenTabs {
             showTabLimitWarning = true
+            return
+        }
+        // Deleted-file placeholder: the changed-files list reports this path
+        // as deleted, so skip stat+readFile entirely.
+        if let entry = changedFileEntry(sandboxName: sandboxName, path: normalized),
+           entry.changeType == .deleted {
+            let placeholderID = UUID()
+            var tab = EditorTab(
+                id: placeholderID,
+                path: normalized,
+                status: .deleted,
+                contents: Data(),
+                savedFingerprint: Data()
+            )
+            tab.pendingIndicator = false
+            appendTab(sandboxName: sandboxName, tab: tab, activate: true)
+            appLog(.info, "Editor", "openFile deleted \(normalized.path)")
             return
         }
         // Insert placeholder "loading" tab so UI transitions within 150 ms.

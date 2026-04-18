@@ -25,24 +25,27 @@ The UI style takes its cue from cmux.com (workspace-scoped split panes, agent-fi
 5. While no sandbox session is selected, the Editor surface shall not be mounted and shall hold no file buffers in memory.
 6. When the user presses the existing "Dashboard" back button, the App shall tear down the Editor surface for that sandbox and prompt for unsaved-file confirmation as specified in Requirement 10.
 
-### Requirement 2: Workspace File Tree
-**Objective:** As a developer, I want a navigable tree of files and directories in the sandbox workspace, so that I can browse and open any file.
+### Requirement 2: Changed Files List (Git Diff)
+**Objective:** As a developer, I want a list of files with uncommitted changes in the sandbox workspace, so that I can focus on modified, added, or deleted files without browsing the entire directory tree.
 
 #### Acceptance Criteria
-1. The Editor shall render a collapsible tree view rooted at `Sandbox.workspace` on the leading edge of the editor pane.
-2. When the editor pane first mounts for a sandbox, the Editor shall enumerate the workspace root via `FileManager.contentsOfDirectory(at:...)` through the `EditorDocumentProvider` seam and render returned entries sorted directories-first then alphabetical.
-3. When the user clicks a directory row, the Editor shall toggle its expansion state and, on first expansion, enumerate its children lazily via `EditorDocumentProvider.listDirectory`.
-4. When the user clicks a file row, the Editor shall open it in a new tab per Requirement 3 or focus the existing tab if that file is already open.
-5. While a directory enumeration is in flight, the Editor shall display an inline spinner next to that directory row and disable its expansion toggle.
-6. Where the workspace contains entries matching standard ignore patterns (`.git`, `node_modules`, `.DS_Store`), the Editor shall hide them by default and expose a "Show hidden" toggle in the tree header.
-7. If a directory enumeration fails, the Editor shall display the error via a `ToastManager` notification and leave prior tree content intact.
-8. If `Sandbox.workspace` is empty or the directory does not exist on disk, the Editor shall render a "No workspace available" placeholder and disable file-open actions.
+1. The Editor shall render a changed-files panel on the leading edge of the editor pane showing only files reported by `git diff` and `git status` within `Sandbox.workspace`.
+2. When the editor pane first mounts for a sandbox, the Editor shall execute `git status --porcelain=v1` (or equivalent) against the workspace root via `EditorDocumentProvider.listChangedFiles(in:)` and render the resulting entries as a flat list sorted alphabetically by relative path.
+3. The Editor shall display a change-type badge next to each file row: **M** (modified), **A** (added/new), **D** (deleted), **R** (renamed), **U** (untracked), using tonal colors consistent with the design system.
+4. When the user clicks a changed-file row, the Editor shall open it in a new tab per Requirement 3 or focus the existing tab if that file is already open.
+5. When the user clicks a deleted-file row, the Editor shall display a "File deleted" placeholder in the editor pane instead of attempting to read the file.
+6. While the changed-files enumeration is in flight, the Editor shall display an inline spinner in the panel header and disable file-open actions.
+7. The Editor shall provide a "Refresh" button in the panel header that re-runs the changed-files query and updates the list, preserving any currently open tabs.
+8. If `Sandbox.workspace` is not a git repository (no `.git` directory), the Editor shall render a "Not a git repository" placeholder and disable file-open actions.
+9. If `Sandbox.workspace` is empty or the directory does not exist on disk, the Editor shall render a "No workspace available" placeholder and disable file-open actions.
+10. If the changed-files query fails (git not found, permission error), the Editor shall display the error via a `ToastManager` notification and leave the panel in its prior state.
+11. When the user saves a file via Requirement 5, the Editor shall not automatically re-run the changed-files query; the list updates only on explicit user refresh or on re-mount.
 
 ### Requirement 3: File Read and Open
-**Objective:** As a developer, I want to open a file from the tree and see its contents in a text buffer, so that I can inspect or edit it.
+**Objective:** As a developer, I want to open a file from the changed files list and see its contents in a text buffer, so that I can inspect or edit it.
 
 #### Acceptance Criteria
-1. When the user activates a file node, the Editor shall read the file directly from the host filesystem via `EditorDocumentProvider.readFile(path:)` (backed by `Data(contentsOf:)` against the absolute host path under `Sandbox.workspace`) and open the decoded UTF-8 contents in a new tab.
+1. When the user activates a changed-file row, the Editor shall read the file directly from the host filesystem via `EditorDocumentProvider.readFile(path:)` (backed by `Data(contentsOf:)` against the absolute host path under `Sandbox.workspace`) and open the decoded UTF-8 contents in a new tab.
 2. While a file read is in progress, the Editor shall show a skeleton placeholder in the editor pane and disable editing for that tab.
 3. When the read completes, the Editor shall display the buffer using `Font.code(13)` on `Color.surfaceLowest` background with line numbers in a gutter.
 4. If the file exceeds the large-file threshold defined in Requirement 11, the Editor shall open it in read-only preview mode and display a banner explaining the restriction.
@@ -144,9 +147,9 @@ The UI style takes its cue from cmux.com (workspace-scoped split panes, agent-fi
 **Objective:** As a developer, I want the editor to look and feel like the rest of sbx-ui, so that it integrates visually and behaviorally with existing surfaces.
 
 #### Acceptance Criteria
-1. The Editor shall use `Color.surfaceLowest` (#0E0E0E) for the buffer background, `Color.surfaceContainer` for the tree and tab bar, and `Color.surfaceContainerHigh` for hovered rows.
+1. The Editor shall use `Color.surfaceLowest` (#0E0E0E) for the buffer background, `Color.surfaceContainer` for the changed-files panel and tab bar, and `Color.surfaceContainerHigh` for hovered rows.
 2. The Editor shall use `Color.accent` (#ADC6FF) for focus rings, the active-tab underline, and dirty-state tab titles.
-3. The Editor shall use `Font.code(13)` for all buffer text, `Font.ui(12)` for tab labels and tree rows, and `Font.code(11)` for gutter line numbers.
+3. The Editor shall use `Font.code(13)` for all buffer text, `Font.ui(12)` for tab labels and changed-file rows, and `Font.code(11)` for gutter line numbers.
 4. The Editor shall use the 8pt corner radius from `DesignSystem/Constants.swift` for the find bar and any floating dropdowns and shall avoid 1px borders in favor of tonal surface shifts, matching the Technical Monolith system described in the sbx-ui spec.
 5. The Editor shall match the dark color scheme enforced by `.preferredColorScheme(.dark)` in `ShellView` and shall not render any light-mode-only assets.
 
@@ -154,7 +157,7 @@ The UI style takes its cue from cmux.com (workspace-scoped split panes, agent-fi
 **Objective:** As a developer, I want the editor architecture to accommodate future panes and capabilities (preview, diff, LSP, notebooks) without rewrites, so that subsequent Kiro specs can bolt in cleanly.
 
 #### Acceptance Criteria
-1. The App shall define `EditorDocumentProvider` as the protocol boundary through which the editor obtains file contents, decoupling `EditorStore` from the underlying I/O mechanism.
+1. The App shall define `EditorDocumentProvider` as the protocol boundary through which the editor obtains file contents and changed-file listings, decoupling `EditorStore` from the underlying I/O and VCS mechanism. The protocol shall include `listChangedFiles(in:)` returning change-type-annotated file entries.
 2. The App shall define an `EditorStore` as an `@Observable @MainActor` type, injected via `.environment()` in `sbx_uiApp.swift`, following the existing store pattern used by `SandboxStore`, `TerminalSessionStore`, and `PolicyStore`.
 3. The App shall provide a default `FileManager`-backed `EditorDocumentProvider` implementation and allow alternative providers (for example, a future remote-sandbox read/write provider, or a read-only archive provider) to be registered without changes to `EditorStore`.
 4. The Editor split-pane layout shall be implemented as an N-pane container that accepts arbitrary pane types (editor, terminal, future preview, future diff) so that additional panes can be added in later specs without restructuring `SessionPanelView`.
@@ -166,7 +169,7 @@ The UI style takes its cue from cmux.com (workspace-scoped split panes, agent-fi
 
 #### Acceptance Criteria
 1. The App shall provide Swift Testing unit tests in `sbx-uiTests/` for `EditorStore` covering tab open/close, dirty-state transitions, save success path, save failure path, unsaved-close guard, external-change detection, and large-file classification.
-2. The App shall provide XCUITest coverage in `sbx-uiUITests/` using `SBX_CLI_MOCK=1` and `tools/mock-sbx` that asserts opening a file from the tree, editing and saving a file, switching between tabs, and closing a dirty tab triggers the confirmation dialog.
+2. The App shall provide XCUITest coverage in `sbx-uiUITests/` using `SBX_CLI_MOCK=1` and `tools/mock-sbx` that asserts opening a file from the changed files list, editing and saving a file, switching between tabs, and closing a dirty tab triggers the confirmation dialog.
 3. The App shall isolate E2E test workspaces under a per-test temporary directory (pointed to by `Sandbox.workspace`) so that tests never read or mutate real user files outside the temp directory; no changes to `tools/mock-sbx` are required for file I/O, since the editor does not route through `sbx exec`.
 4. The App shall provide a `FakeEditorDocumentProvider` test fixture backed by an in-memory dictionary so that `EditorStore` unit tests do not touch the filesystem.
 5. When an E2E test simulates a sandbox transition from running to stopped mid-edit, it shall verify that the Editor unmounts with the `SessionPanelView`, buffers are preserved in `EditorStore`, and a subsequent re-entry restores the prior tab set and dirty state.

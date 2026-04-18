@@ -20,10 +20,15 @@ public actor FakeEditorDocumentProvider: EditorDocumentProvider {
     public var failWrite: NSError?
     public var failStat: NSError?
     public var failList: NSError?
+    public var failListChanged: NSError?
     public var readDelay: Duration?
     public var writeDelay: Duration?
     public var listDelay: Duration?
     public var statDelay: Duration?
+    public var listChangedDelay: Duration?
+
+    /// Seeded changed-files list returned by `listChangedFiles`.
+    private var changedFiles: [ChangedFileEntry] = []
 
     public init() {}
 
@@ -58,16 +63,30 @@ public actor FakeEditorDocumentProvider: EditorDocumentProvider {
         mtimes.removeValue(forKey: p)
     }
 
+    public func seedChangedFile(_ entry: ChangedFileEntry) {
+        changedFiles.append(entry)
+    }
+
+    public func seedChangedFiles(_ entries: [ChangedFileEntry]) {
+        changedFiles.append(contentsOf: entries)
+    }
+
+    public func resetChangedFiles() {
+        changedFiles.removeAll()
+    }
+
     // MARK: - Rigging setters (actor-isolated, callable from tests)
 
     public func setFailRead(_ error: NSError?) { failRead = error }
     public func setFailWrite(_ error: NSError?) { failWrite = error }
     public func setFailStat(_ error: NSError?) { failStat = error }
     public func setFailList(_ error: NSError?) { failList = error }
+    public func setFailListChanged(_ error: NSError?) { failListChanged = error }
     public func setReadDelay(_ delay: Duration?) { readDelay = delay }
     public func setWriteDelay(_ delay: Duration?) { writeDelay = delay }
     public func setListDelay(_ delay: Duration?) { listDelay = delay }
     public func setStatDelay(_ delay: Duration?) { statDelay = delay }
+    public func setListChangedDelay(_ delay: Duration?) { listChangedDelay = delay }
 
     // MARK: - Internal
 
@@ -110,6 +129,12 @@ public actor FakeEditorDocumentProvider: EditorDocumentProvider {
             ))
         }
         return entries
+    }
+
+    public func listChangedFiles(in workspaceRoot: URL) async throws -> [ChangedFileEntry] {
+        if let delay = listChangedDelay { try? await Task.sleep(for: delay) }
+        if let err = failListChanged { throw err }
+        return changedFiles.sorted { $0.relativePath < $1.relativePath }
     }
 
     public func readFile(at path: URL) async throws -> Data {

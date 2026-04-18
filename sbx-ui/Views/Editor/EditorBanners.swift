@@ -79,6 +79,45 @@ struct BinaryFilePlaceholder: View {
     }
 }
 
+struct NotGitRepoPlaceholder: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 28))
+                .foregroundStyle(.tertiary)
+            Text("Not a git repository")
+                .font(.ui(14, weight: .semibold))
+            Text("Run `git init` in this workspace to see changed files here.")
+                .font(.ui(12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.surfaceLowest)
+        .accessibilityIdentifier("editorNotGitRepoPlaceholder")
+    }
+}
+
+struct DeletedFilePlaceholder: View {
+    let relativePath: String
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "trash.slash")
+                .font(.system(size: 28))
+                .foregroundStyle(Color.error)
+            Text("File deleted")
+                .font(.ui(14, weight: .semibold))
+            Text(relativePath)
+                .font(.code(11))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.surfaceLowest)
+        .accessibilityIdentifier("editorDeletedFilePlaceholder")
+    }
+}
+
 struct SandboxStatusBanner: View {
     let message: String
     let severity: Severity

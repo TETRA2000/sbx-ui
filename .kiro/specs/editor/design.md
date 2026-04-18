@@ -2,23 +2,26 @@
 
 ## Overview
 
-**Purpose**: The `editor` feature delivers an in-app, VSCode-style code-editing surface to sbx-ui users, letting them browse and modify files in a sandbox workspace without leaving the app or dropping into a terminal.
+**Purpose**: The `editor` feature delivers an in-app, VSCode-style code-editing surface to sbx-ui users, letting them view and modify uncommitted files in a sandbox workspace without leaving the app or dropping into a terminal. Instead of a full directory tree, the editor shows only files with git changes (modified, added, deleted, renamed, untracked), keeping the developer focused on what matters.
 
 **Users**: sbx-ui developers who today edit workspace files by shelling into `sbx exec <name> bash` or by opening the bind-mounted workspace in an external editor. The editor keeps them in the same window as the agent terminal, so they can watch the agent act on a file and intervene in real time.
 
-**Impact**: Introduces a new sandbox-scoped split-pane layout (`SandboxWorkspaceView`) wrapping the existing terminal view, adds an `EditorStore` plus a focused set of SwiftUI views under `Views/Editor/`, and introduces an `EditorDocumentProvider` seam backed by a `FileManager` implementation. **File I/O goes directly through the host filesystem** against `Sandbox.workspace`; no `SbxServiceProtocol` changes and no `tools/mock-sbx` changes are required. One small edit to `CreateProjectSheet.swift` adds an `SBX_CLI_MOCK_WORKSPACE` env var so E2E tests can point each run at an isolated fixture directory.
+**Impact**: Introduces a new sandbox-scoped split-pane layout (`SandboxWorkspaceView`) wrapping the existing terminal view, adds an `EditorStore` plus a focused set of SwiftUI views under `Views/Editor/`, and introduces an `EditorDocumentProvider` seam backed by a `FileManager` implementation with git-status integration via `Process` subprocess. **File I/O goes directly through the host filesystem** against `Sandbox.workspace`; changed-file enumeration runs `git status --porcelain=v1` as a host subprocess. No `SbxServiceProtocol` changes and no `tools/mock-sbx` changes are required. One small edit to `CreateProjectSheet.swift` adds an `SBX_CLI_MOCK_WORKSPACE` env var so E2E tests can point each run at an isolated fixture directory.
 
 ### Goals
 - Provide read, edit, and save for UTF-8 files in the sandbox workspace from within the app, reachable in one click from a running sandbox's session panel.
+- Show only files with uncommitted git changes (not the full directory tree), letting developers focus on modified, added, deleted, renamed, and untracked files.
 - Model the split-pane layout as an N-pane container so future features (preview, diff, logs) can slot in as additional pane types without restructuring `SessionPanelView`.
-- Introduce `EditorDocumentProvider` so unit tests run against an in-memory fake and E2E tests run against a per-test temp-dir workspace — no Docker required, and no additional mock plumbing.
+- Introduce `EditorDocumentProvider` with `listChangedFiles(in:)` so unit tests run against an in-memory fake and E2E tests run against a per-test temp-dir workspace — no Docker required, and no additional mock plumbing.
 - Hold the line on the Technical Monolith design system: zero new tokens, zero new font stacks, no light-mode assets.
 
 ### Non-Goals
 - Container-scoped file I/O via `sbx exec cat | tee | ls | stat`. The editor deliberately bypasses the container because it does not process untrusted prompts and the workspace is already a bind-mount the user edits with other host tools.
-- Full VSCode parity: no extensions, marketplace, debugger, LSP/IntelliSense, git UI, minimap, multi-cursor, project-wide find-and-replace, binary/image preview panes, drag-drop between tabs.
+- Full directory tree browsing. The editor intentionally shows only git-changed files per Requirement 2, not the complete workspace file system.
+- Full VSCode parity: no extensions, marketplace, debugger, LSP/IntelliSense, minimap, multi-cursor, project-wide find-and-replace, binary/image preview panes, drag-drop between tabs.
 - Editing files outside `Sandbox.workspace` (for example `/etc`, `/tmp`). The path-scope guard rejects such requests.
 - Auto-save. Saves are explicit per 5.6.
+- Auto-refresh of the changed-files list on save. The list updates only on explicit user refresh or re-mount per 2.11.
 - Persisting open tabs across app relaunch. Session-scoped only per 6.6.
 - Syntax highlighting in MVP. Modeled as feature-flagged optional capability (Requirement 7).
 - Real-time file-system watching. MVP uses poll-on-next-read for external-change detection per 10.4; `FSEventStream`-based watching is a follow-up spec.
@@ -33,14 +36,17 @@
 | 1.4 | Collapse each pane independently | SandboxWorkspaceView, EditorStore | EditorStore.setPaneVisibility | — |
 | 1.5 | No mount / no buffers when no session | ShellView gating, SandboxWorkspaceView | — | — |
 | 1.6 | Back button prompts when dirty | SandboxWorkspaceView, EditorStore | EditorStore.closeSandbox | Close-with-dirty flow |
-| 2.1 | Collapsible tree rooted at Sandbox.workspace | FileTreeView, EditorStore | EditorStore.rootNode | — |
-| 2.2 | listDirectory call, dir-first sort | EditorStore, EditorDocumentProvider | EditorDocumentProvider.listDirectory | Open-file flow |
-| 2.3 | Click dir toggles, lazy-loads children | FileTreeView, EditorStore | EditorStore.toggleDir | — |
-| 2.4 | Click file opens or focuses tab | FileTreeView, EditorStore | EditorStore.openFile | Open-file flow |
-| 2.5 | Inline spinner while dir enumeration in flight | FileTreeView | — | — |
-| 2.6 | Hidden entries filtered by default + toggle | EditorStore, FileTreeView | EditorStore.showHidden | — |
-| 2.7 | listDirectory failure → toast + preserve prior content | EditorStore, ToastManager | — | — |
-| 2.8 | Empty / missing workspace → placeholder view | EditorPanelView, EditorStore | — | — |
+| 2.1 | Changed-files panel on leading edge | ChangedFilesListView, EditorStore | EditorStore.changedFiles | — |
+| 2.2 | git status --porcelain=v1 via listChangedFiles | EditorStore, EditorDocumentProvider | EditorDocumentProvider.listChangedFiles | Open-sandbox flow |
+| 2.3 | Change-type badges M/A/D/R/U | ChangedFilesListView | ChangedFileEntry.changeType | — |
+| 2.4 | Click changed-file opens or focuses tab | ChangedFilesListView, EditorStore | EditorStore.openFile | Open-file flow |
+| 2.5 | Click deleted-file shows placeholder | ChangedFilesListView, EditorStore | — | — |
+| 2.6 | Inline spinner during enumeration | ChangedFilesListView | — | — |
+| 2.7 | Refresh button re-runs query | ChangedFilesListView, EditorStore | EditorStore.refreshChangedFiles | — |
+| 2.8 | Not a git repo → placeholder | ChangedFilesListView, EditorStore | — | — |
+| 2.9 | Empty/missing workspace → placeholder | EditorPanelView, EditorStore | — | — |
+| 2.10 | Query failure → toast, preserve prior state | EditorStore, ToastManager | — | — |
+| 2.11 | No auto-refresh on save | EditorStore | — | — |
 | 3.1 | readFile → UTF-8 buffer in new tab | EditorStore, EditorDocumentProvider | EditorDocumentProvider.readFile | Open-file flow |
 | 3.2 | Skeleton placeholder during read | EditorBufferView | — | — |
 | 3.3 | Buffer uses Font.code 13 + line-number gutter | EditorBufferView | — | — |
@@ -99,6 +105,7 @@
 | 14.2 | XCUITest E2E | EditorE2ETests | — | Save flow, Open-file flow |
 | 14.3 | Per-test temp-dir workspace, no mock-sbx change | CreateProjectSheet, EditorE2ETests | SBX_CLI_MOCK_WORKSPACE env var | — |
 | 14.4 | FakeEditorDocumentProvider for unit tests | FakeEditorDocumentProvider | EditorDocumentProvider | — |
+| 14.4 | FakeEditorDocumentProvider for unit tests | FakeEditorDocumentProvider | EditorDocumentProvider | — |
 | 14.5 | Sandbox-stop-mid-edit E2E | EditorE2ETests | — | Sandbox-stopped flow |
 | 14.6 | Deterministic per-test temp dirs | EditorE2ETests | — | — |
 
@@ -112,7 +119,7 @@ The editor reuses — rather than extends — this layering. `EditorStore` is a 
 
 ### Architecture Pattern & Boundary Map
 
-Selected pattern: **Option B from [research.md](research.md)** — new components with a provider seam. `SandboxWorkspaceView` wraps the existing terminal view and the new editor as sibling panes; `EditorStore` is a leaf store with no references to other stores; `EditorDocumentProvider` is a `Sendable` protocol with a `FileManager`-backed default and an in-memory fake for unit tests.
+Selected pattern: **Option B from [research.md](research.md)** — new components with a provider seam. `SandboxWorkspaceView` wraps the existing terminal view and the new editor as sibling panes; `EditorStore` is a leaf store with no references to other stores; `EditorDocumentProvider` is a `Sendable` protocol with a `FileManager`-backed default (including `git status` subprocess for changed-file enumeration) and an in-memory fake for unit tests.
 
 ```mermaid
 graph TB
@@ -120,7 +127,7 @@ graph TB
         ShellView --> SandboxWorkspaceView
         SandboxWorkspaceView --> EditorPanelView
         SandboxWorkspaceView --> TerminalViewWrapper
-        EditorPanelView --> FileTreeView
+        EditorPanelView --> ChangedFilesListView
         EditorPanelView --> EditorTabsView
         EditorPanelView --> EditorBufferView
         EditorPanelView --> EditorFindBar
@@ -149,6 +156,7 @@ graph TB
     StoreLayer --> ProviderLayer
 
     DefaultProvider -.FileManager.-> HostFS[Host filesystem bind-mounted workspace]
+    DefaultProvider -.Process git status.-> GitBinary[git CLI binary]
     FakeProvider -.in-memory.-> Dict[Dictionary fixture]
 
     subgraph AppLifecycle[App Lifecycle]
@@ -163,7 +171,8 @@ graph TB
 Key decisions (not restating the diagram):
 - **`SandboxWorkspaceView` owns the split-pane layout.** `SessionPanelView` stays focused on terminal-only usage for non-running selections and for callers that do not need the editor. The editor is mounted only when `SandboxWorkspaceView` is mounted (Requirement 1.5).
 - **`EditorStore` is a leaf.** It holds no reference to `SandboxStore` or `TerminalSessionStore`. `ShellView` drives `editorStore.syncSandboxStatus(sandboxes:)` from its existing `onChange(of: runningSandboxNames)` block.
-- **`EditorDocumentProvider` is the only data-layer seam.** `EditorStore` never touches `FileManager` or `SbxServiceProtocol` directly. Unit tests inject `FakeEditorDocumentProvider`; E2E tests run `DefaultEditorDocumentProvider` against per-test temp-dir workspaces.
+- **`EditorDocumentProvider` is the only data-layer seam.** `EditorStore` never touches `FileManager`, `Process`, or `SbxServiceProtocol` directly. The provider encapsulates both file I/O (via `FileManager`) and git-status enumeration (via `Process` subprocess). Unit tests inject `FakeEditorDocumentProvider`; E2E tests run `DefaultEditorDocumentProvider` against per-test temp-dir workspaces with `git init`.
+- **Changed-files list replaces the file tree.** The editor shows only git-changed files (Requirement 2), not a full directory tree. This eliminates the recursive tree expansion, hidden-file toggle, and ignore-pattern logic. The `ChangedFilesListView` is a flat list sorted alphabetically by relative path with change-type badges.
 
 ### Technology Stack
 
@@ -173,9 +182,10 @@ Key decisions (not restating the diagram):
 | UI — splitter | `HSplitView` + `GeometryReader` observing measured ratio | Two-pane split with draggable handle; drag-end commits ratio to `EditorStore.setLayoutRatio` | Fallback: `HStack` + `Divider` + `DragGesture` if `HSplitView` feedback loop proves unstable. |
 | State | SwiftUI `@Observable @MainActor` (Observation framework) | `EditorStore` per-app singleton injected via `.environment(...)` in `sbx_uiApp` | Identical pattern to `SandboxStore`, `TerminalSessionStore`, `KanbanStore`. |
 | File I/O | Foundation `FileManager`, `Data(contentsOf:)`, `Data.write(to:options: [.atomic])` | `DefaultEditorDocumentProvider` — mirrors `KanbanPersistence` | Native, byte-exact, no container transport. |
+| Git status | Foundation `Process` subprocess running `git status --porcelain=v1` | `DefaultEditorDocumentProvider.listChangedFiles(in:)` — parses porcelain output into `[ChangedFileEntry]` | Mirrors `CliExecutor` subprocess pattern. `currentDirectoryURL` set to workspace root. Handles missing git binary (exit code / error) gracefully per Requirement 2.10. |
 | Content fingerprint | `CryptoKit.SHA256` | Dirty-compare via pull-based debounced fingerprinting per Requirement 11.7 | Fingerprint is computed on load, on save, and on an idle debounce (~500 ms after last keystroke); keystrokes themselves carry no payload. Non-cryptographic faster hash (e.g., xxHash) may replace if benchmark warrants — decision deferred to implementation. |
 | App lifecycle hook | `NSApplicationDelegate.applicationShouldTerminate(_:)` via `@NSApplicationDelegateAdaptor` + `EditorStore.shared` accessor | Quit-with-dirty prompt (Requirement 10.7) | `AppDelegateAdapter` reads `EditorStore.shared.dirtyTabsSummary()` at termination time; the shared accessor mirrors the existing `LogStore.shared` lazy-singleton pattern ([LogStore.swift:63-71](sbx-ui/Stores/LogStore.swift:63)). |
-| Test fixtures | Swift Testing (`@Test`, `#expect`), XCTest/XCUITest, `NSTemporaryDirectory() + UUID()` per-run dirs | Store-level unit tests with `FakeEditorDocumentProvider`; E2E tests with `SBX_CLI_MOCK_WORKSPACE` env var | No mock-sbx changes. |
+| Test fixtures | Swift Testing (`@Test`, `#expect`), XCTest/XCUITest, `NSTemporaryDirectory() + UUID()` per-run dirs | Store-level unit tests with `FakeEditorDocumentProvider`; E2E tests with `SBX_CLI_MOCK_WORKSPACE` env var + `git init` in temp workspace | No mock-sbx changes. |
 | Logging | `LogStore.shared` + `appLog(_:_:_:detail:)` | Structured events for every file op (Requirement 13.6) | Surfaces in the existing `DebugLogView`. |
 
 ## System Flows
@@ -185,19 +195,21 @@ Key decisions (not restating the diagram):
 ```mermaid
 sequenceDiagram
     participant User
-    participant FileTreeView
+    participant ChangedFilesList as ChangedFilesListView
     participant EditorStore
     participant Provider as EditorDocumentProvider
     participant Buffer as EditorBufferView
-    User->>FileTreeView: Click file node
-    FileTreeView->>EditorStore: openFile(path)
+    User->>ChangedFilesList: Click changed-file row
+    ChangedFilesList->>EditorStore: openFile(path)
     EditorStore->>EditorStore: existing tab matches path?
     alt Existing tab
-        EditorStore-->>FileTreeView: activate existing tab
+        EditorStore-->>ChangedFilesList: activate existing tab
     else New tab
         EditorStore->>EditorStore: validate path scope
         alt Out of scope
             EditorStore-->>User: reject silently with log event
+        else Deleted file (changeType == .deleted)
+            EditorStore-->>Buffer: deleted-file placeholder
         else In scope
             EditorStore->>Provider: stat(path)
             Provider-->>EditorStore: FileStat size mtime
@@ -357,20 +369,20 @@ sequenceDiagram
 
 | Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|--------------|--------|--------------|------------------|-----------|
-| `EditorDocumentProvider` | Provider protocol (new) | `Sendable` seam for file I/O: `listDirectory`, `readFile`, `writeFile`, `stat` | 2.2, 3.1, 5.1, 10.4, 13.1, 13.3, 14.4 | Foundation, `EditorPath` (P0) | Service |
-| `DefaultEditorDocumentProvider` | Provider impl (new) | `FileManager`-backed impl; scope-guarded against `Sandbox.workspace` root; logs every op | 2.2, 3.1, 3.7, 5.1, 5.7, 10.4, 13.3, 13.6 | `EditorDocumentProvider` (P0), `FileManager` (P0), `LogStore` (P2) | Service |
-| `FakeEditorDocumentProvider` | Test fixture (new) | In-memory dictionary VFS for unit tests | 14.1, 14.4 | `EditorDocumentProvider` (P0) | Service |
+| `EditorDocumentProvider` | Provider protocol (new) | `Sendable` seam for file I/O and git-status enumeration: `listChangedFiles`, `listDirectory`, `readFile`, `writeFile`, `stat` | 2.2, 3.1, 5.1, 10.4, 13.1, 13.3, 14.4 | Foundation, `EditorPath` (P0) | Service |
+| `DefaultEditorDocumentProvider` | Provider impl (new) | `FileManager`-backed impl for file ops + `Process`-based `git status` for changed-file enumeration; scope-guarded against `Sandbox.workspace` root; logs every op | 2.2, 3.1, 3.7, 5.1, 5.7, 10.4, 13.3, 13.6 | `EditorDocumentProvider` (P0), `FileManager` (P0), `Process` (P0), `LogStore` (P2) | Service |
+| `FakeEditorDocumentProvider` | Test fixture (new) | In-memory dictionary VFS + seeded changed-files list for unit tests | 14.1, 14.4 | `EditorDocumentProvider` (P0) | Service |
 | `EditorPath` | Value type (new, Sendable) | Path normalization + scope validation helper | 3.7 | Foundation (P0) | Value |
-| `EditorStore` | Store (`@Observable @MainActor`, new) | Per-sandbox editor state, tabs, dirty tracking, save orchestration, sandbox-status reactivity | 1.3–1.6, 2.2–2.8, 3.1–3.7, 4.1–4.6, 5.1–5.7, 6.1–6.6, 8.*, 10.1–10.5, 11.1–11.5, 11.7, 13.2 | `EditorDocumentProvider` (P0), `ToastManager` (P1), `LogStore` (P2), `CryptoKit` (P0) | Service, State |
+| `EditorStore` | Store (`@Observable @MainActor`, new) | Per-sandbox editor state, changed-files list, tabs, dirty tracking, save orchestration, sandbox-status reactivity | 1.3–1.6, 2.2–2.11, 3.1–3.7, 4.1–4.6, 5.1–5.7, 6.1–6.6, 8.*, 10.1–10.5, 11.1–11.5, 11.7, 13.2 | `EditorDocumentProvider` (P0), `ToastManager` (P1), `LogStore` (P2), `CryptoKit` (P0) | Service, State |
 | `AppDelegateAdapter` | App lifecycle (new) | `NSApplicationDelegate` adapter for `applicationShouldTerminate(_:)` prompt | 10.7 | `EditorStore` (P0), `NSApplication` (P0 external) | Service |
 | `CreateProjectSheet` (modified) | Existing view | Honors `SBX_CLI_MOCK_WORKSPACE` env var when `SBX_CLI_MOCK=1` | 14.3 | `ProcessInfo` (P0) | — |
 | `SandboxWorkspaceView` | View (new) | N-pane container for editor + terminal, draggable splitter, collapse controls | 1.1, 1.2, 1.4, 9.1, 9.2, 9.5, 13.4 | `EditorStore` (P0), `TerminalSessionStore` (P0) | State |
-| `EditorPanelView` | View (new) | Editor-side content: tree + tabs + buffer + find bar + placeholders | 1.4, 2.*, 3.*, 8.*, 10.2 | `EditorStore` (P0) | State |
-| `FileTreeView` | View (summary-only) | Collapsible tree, lazy expansion, hidden toggle | 2.1–2.7 | `EditorStore` (P0) | State |
+| `EditorPanelView` | View (new) | Editor-side content: changed-files list + tabs + buffer + find bar + placeholders | 1.4, 2.*, 3.*, 8.*, 10.2 | `EditorStore` (P0) | State |
+| `ChangedFilesListView` | View (new) | Flat list of git-changed files with change-type badges (M/A/D/R/U), refresh button, loading spinner | 2.1–2.11 | `EditorStore` (P0) | State |
 | `EditorTabsView` | View (summary-only) | Tab bar with dirty glyph, save flash, overflow dropdown | 4.2, 5.3, 6.1–6.5 | `EditorStore` (P0) | State |
 | `EditorBufferView` | View (new) | Text-editing surface wrapping `CodeEditorView` | 3.2–3.6, 4.1, 4.4, 4.5, 7.*, 11.6 | `EditorStore` (P0), `CodeEditorView` (P0 external) | State |
 | `EditorFindBar` | View (summary-only) | Find-within-buffer UI | 8.1–8.7 | `EditorStore` (P0) | State |
-| `SandboxStatusBanner`, `EmptyWorkspacePlaceholder` | View (summary-only) | Banners for "Large file", "Binary", "No workspace available" | 2.8, 3.4, 3.5 | `EditorStore` (P0) | — |
+| `SandboxStatusBanner`, `EmptyWorkspacePlaceholder`, `NotGitRepoPlaceholder`, `DeletedFilePlaceholder` | View (summary-only) | Banners for "Large file", "Binary", "No workspace available", "Not a git repository", "File deleted" | 2.5, 2.8, 2.9, 3.4, 3.5 | `EditorStore` (P0) | — |
 | `ConfirmCloseDialog`, `ExternalChangeDialog` | View (summary-only) | Modal prompts for dirty-close and external-change | 10.1, 10.4 | `EditorStore` (P0) | State |
 
 ### Provider Layer
@@ -379,18 +391,19 @@ sequenceDiagram
 
 | Field | Detail |
 |-------|--------|
-| Intent | `Sendable` protocol that lets `EditorStore` read/list/stat/write files without knowing the backing store |
+| Intent | `Sendable` protocol that lets `EditorStore` read/list/stat/write files and enumerate git-changed files without knowing the backing store |
 | Requirements | 2.2, 3.1, 5.1, 10.4, 13.1, 13.3, 14.4 |
 
 **Responsibilities & Constraints**
 - Lives outside `SBXCore` (in `sbx-ui/Services/Editor/` — macOS-only; not needed by the Linux CLI).
 - `Sendable` protocol; implementations are either `struct` (default) or `actor` (fake, if shared mutable state is needed).
-- Methods are `async throws`; errors are raised as `NSError` (permission denied, file not found, disk full, I/O error) so `EditorStore` can surface `localizedDescription` directly (Requirement 10.6).
+- Methods are `async throws`; errors are raised as `NSError` (permission denied, file not found, disk full, I/O error, git not found) so `EditorStore` can surface `localizedDescription` directly (Requirement 10.6).
+- `listChangedFiles(in:)` runs `git status --porcelain=v1` as a subprocess and parses the output into `[ChangedFileEntry]`. Returns an empty array if the directory is not a git repository (caller distinguishes via `.git` directory check or provider can throw a specific error).
 
 **Dependencies**
 - Inbound: `EditorStore` (P0)
-- Outbound: Foundation `FileManager` (default impl, P0) or `Dictionary` (fake, P0)
-- External: Host filesystem (default) — no container round-trip
+- Outbound: Foundation `FileManager` (default impl, P0), Foundation `Process` (git subprocess, P0), or `Dictionary` (fake, P0)
+- External: Host filesystem (default) + `git` binary — no container round-trip
 
 **Contracts**: Service [x]
 
@@ -398,6 +411,7 @@ sequenceDiagram
 ```swift
 public protocol EditorDocumentProvider: Sendable {
     func listDirectory(at path: URL) async throws -> [FileEntry]
+    func listChangedFiles(in workspaceRoot: URL) async throws -> [ChangedFileEntry]
     func readFile(at path: URL) async throws -> Data
     func writeFile(at path: URL, contents: Data) async throws
     func stat(at path: URL) async throws -> FileStat
@@ -416,33 +430,54 @@ public struct FileStat: Sendable, Hashable {
     public let mtime: Date
     public let isDirectory: Bool
 }
+
+/// Represents a file with uncommitted changes detected by `git status`.
+public struct ChangedFileEntry: Sendable, Hashable, Identifiable {
+    public var id: String { relativePath }
+    public let url: URL               // absolute path under workspace root
+    public let relativePath: String   // path relative to workspace root
+    public let changeType: GitChangeType
+}
+
+/// Type of git change for a file.
+public enum GitChangeType: String, Sendable, Hashable, CaseIterable {
+    case modified = "M"
+    case added = "A"
+    case deleted = "D"
+    case renamed = "R"
+    case untracked = "U"
+}
 ```
-- **Preconditions**: `path` is absolute and validated by `EditorPath.validate(_:within:)` before invocation — implementations trust their caller.
-- **Postconditions**: `readFile` returns exact bytes at invocation time; `writeFile` atomically replaces the file contents; `listDirectory` returns entries excluding `.` and `..`; `stat` returns current (not cached) attributes.
-- **Invariants**: Errors are `NSError` with a populated `localizedDescription`; no implementation silently returns empty results on error.
+- **Preconditions**: For `listChangedFiles`, `workspaceRoot` is an absolute URL pointing to a directory. For other methods, `path` is absolute and validated by `EditorPath.validate(_:within:)` before invocation — implementations trust their caller.
+- **Postconditions**: `listChangedFiles` returns entries sorted alphabetically by `relativePath`. `readFile` returns exact bytes at invocation time; `writeFile` atomically replaces the file contents; `listDirectory` returns entries excluding `.` and `..`; `stat` returns current (not cached) attributes.
+- **Invariants**: Errors are `NSError` with a populated `localizedDescription`; no implementation silently returns empty results on error. If `git` is not installed or the directory is not a git repository, `listChangedFiles` throws an `NSError` that the store can distinguish.
 
 #### DefaultEditorDocumentProvider
 
 | Field | Detail |
 |-------|--------|
-| Intent | Stateless `FileManager`-backed implementation; trusts the store's scope guard; logs every op |
-| Requirements | 2.2, 3.1, 5.1, 5.7, 10.4, 13.3, 13.6 |
+| Intent | Stateless `FileManager`-backed implementation for file ops + `Process`-based `git status` for changed-file enumeration; trusts the store's scope guard; logs every op |
+| Requirements | 2.2, 2.3, 2.10, 3.1, 5.1, 5.7, 10.4, 13.3, 13.6 |
 
 **Responsibilities & Constraints**
 - `struct: Sendable`, `nonisolated` methods, **no stored state** — in particular no `workspaceRoot` at construction.
 - A single provider instance is injected into `EditorStore` at app startup (matches `KanbanPersistence`'s one-instance pattern) and reused across all sandboxes.
 - All scope validation lives in `EditorPath.validate(_:within:)` and is invoked by `EditorStore` before every provider call; the provider trusts the absolute `URL` it receives. This keeps R3.7 enforced at exactly one layer, removing the ambiguity that motivated validation round 2 Issue 2.
 - Uses `FileManager.default.contentsOfDirectory(at:includingPropertiesForKeys:)`, `Data(contentsOf:)`, `Data.write(to:options: [.atomic])`, and `FileManager.default.attributesOfItem(atPath:)`.
+- `listChangedFiles(in:)` spawns `Process` with `executableURL = /usr/bin/git` (or resolved via `PATH`), arguments `["status", "--porcelain=v1"]`, `currentDirectoryURL` set to `workspaceRoot`. Reads stdout, splits by newline, parses each line's 2-character status prefix into `GitChangeType` and the remainder into `relativePath`. Sorts entries alphabetically by `relativePath`.
+  - If the `git` binary is not found (e.g., `Process` launch throws), throws an `NSError` with domain `EditorError` and code indicating git unavailable (Requirement 2.10).
+  - If `workspaceRoot` is not a git repo (`git status` exits with code 128), throws an `NSError` so the store can show `NotGitRepoPlaceholder` (Requirement 2.9).
+  - Porcelain v1 format: `XY PATH` where X = index status, Y = working-tree status. The implementation maps: `M` (modified), `A` (added/new in index), `D` (deleted), `R` (renamed), `?` (untracked → `.untracked`). Both X and Y columns are checked; the more significant status wins.
 - Emits `appLog(.info, "Editor", "<op> <absolutePath>", detail: "<size bytes or count>")` on every successful op; `.error` on throw (Requirement 13.6).
 
 **Implementation Notes**
-- Integration: Modeled directly on [KanbanPersistence.swift](sbx-ui/Services/KanbanPersistence.swift) — same method style, same idioms, same atomic-write guarantee. The one construction-time parameter (`directory` in `KanbanPersistence`) is deliberately dropped for the editor because the workspace root is per-sandbox and the scope guard already owns it.
+- Integration: Modeled directly on [KanbanPersistence.swift](sbx-ui/Services/KanbanPersistence.swift) — same method style, same idioms, same atomic-write guarantee. The one construction-time parameter (`directory` in `KanbanPersistence`) is deliberately dropped for the editor because the workspace root is per-sandbox and the scope guard already owns it. The `git status` subprocess mirrors the `Process` usage in [CliExecutor.swift](sbx-ui/Services/CliExecutor.swift).
 - Validation: Every inbound `URL` is standardized via `.standardizedFileURL` immediately before a `FileManager` call. No `resolvingSymlinksInPath`.
-- Risks: `Data(contentsOf:)` buffers the full file into memory; bounded by Requirement 11.2's 20 MB hard cap (store enforces via `stat` probe before `readFile`).
+- Risks: `Data(contentsOf:)` buffers the full file into memory; bounded by Requirement 11.2's 20 MB hard cap (store enforces via `stat` probe before `readFile`). `git status` can be slow on very large repositories; the store calls it on `open(sandbox:)` and on explicit refresh only (not per file open).
 
 #### FakeEditorDocumentProvider
 
-`actor` (or `final class` + `@MainActor`) with `private var files: [String: Data]` keyed by absolute path. Mirrors the contract exactly so unit tests of `EditorStore` are indistinguishable from prod semantics. Produces deterministic `mtime` values for `stat` (e.g., `Date(timeIntervalSince1970:)` derived from a monotonic counter) so external-change tests can advance it explicitly.
+`actor` (or `final class` + `@MainActor`) with `private var files: [String: Data]` keyed by absolute path and `private var changedFiles: [ChangedFileEntry]` for seeding the changed-files list. Mirrors the contract exactly so unit tests of `EditorStore` are indistinguishable from prod semantics. Produces deterministic `mtime` values for `stat` (e.g., `Date(timeIntervalSince1970:)` derived from a monotonic counter) so external-change tests can advance it explicitly. Exposes `failListChanged: Bool` rigging so tests can simulate git-not-found or non-git-repo errors. `listChangedFiles(in:)` returns the seeded `changedFiles` array (or throws if `failListChanged` is set).
 
 #### EditorPath
 
@@ -468,8 +503,9 @@ public enum EditorPath {
 **Responsibilities & Constraints**
 - `@Observable @MainActor final class EditorStore`.
 - Holds no reference to other stores — reacts to sandbox status only through `ShellView.onChange(of: runningSandboxNames)` fanning into `syncSandboxStatus(sandboxes:)`.
-- Per-sandbox state keyed by sandbox name. Each sandbox has: file tree root, open tabs (ordered), active-tab id, split ratio, pane-visibility flags, expanded dirs, hidden toggle, last-known stat snapshots, per-tab `savedFingerprint`.
-- Scope guard: every `openFile`, `save`, `listDirectory` call validates path via `EditorPath.validate(_:within: sandbox.workspace)` before dispatching to the provider.
+- Per-sandbox state keyed by sandbox name. Each sandbox has: changed-files list, changed-files load state, open tabs (ordered), active-tab id, split ratio, pane-visibility flags, last-known stat snapshots, per-tab `savedFingerprint`.
+- Scope guard: every `openFile`, `save`, `listChangedFiles` call validates path via `EditorPath.validate(_:within: sandbox.workspace)` before dispatching to the provider.
+- `refreshChangedFiles(sandboxName:)` calls `provider.listChangedFiles(in:)` and updates the sandbox state. Called on `open(sandbox:)` and on explicit user refresh (Requirement 2.6). Errors are surfaced via `ToastManager` and the list remains empty (or the `NotGitRepoPlaceholder` is shown for non-git repos).
 - Dirty detection uses `CryptoKit.SHA256` fingerprints with a pull-based debounced pipeline: `savedFingerprint` is set on load and after save; `onBufferMutated` sets `tentativelyDirty` immediately (O(1) per keystroke), then a 500 ms idle debounce invokes the registered `pull: () -> Data` callback to read the current buffer and compute a fingerprint once per idle window. `save(…)` always pulls and fingerprints synchronously. Satisfies Requirements 4.3 and 11.7 without O(n) per-keystroke cost.
 
 **Dependencies**
@@ -496,9 +532,8 @@ final class EditorStore {
     func closeSandbox(_ sandboxName: String, force: Bool) async -> CloseResult
     func syncSandboxStatus(sandboxes: [Sandbox])
 
-    // File tree
-    func toggleDir(sandboxName: String, path: URL) async
-    func setShowHidden(_ show: Bool, for sandboxName: String)
+    // Changed files list
+    func refreshChangedFiles(sandboxName: String) async
 
     // Tabs
     func openFile(sandboxName: String, path: URL) async
@@ -543,7 +578,7 @@ enum EditorError: Error, Sendable, LocalizedError { case pathOutsideWorkspace(pa
 - **Invariants**: A tab is considered dirty iff `tentativelyDirty == true` **or** `fingerprint != savedFingerprint`. Dirty count (sum across sandboxes) monotonically tracks this predicate. `dirtyTabsSummary()` reconciles any `tentativelyDirty` tab synchronously by pulling its buffer and computing a fresh fingerprint before returning, so fast-quit, `saveAll`, and the close-with-dirty dialog never miss an in-flight edit that has not yet been fingerprinted by the idle debounce.
 
 ##### State Management
-- State model: `private var workspaces: [String: SandboxWorkspaceState]` keyed by sandbox name, where `SandboxWorkspaceState` holds `tabs: [UUID: EditorTab]`, tab ordering, `activeTabID`, tree state, layout ratio, pane visibility, `statSnapshots`, per-tab `savedFingerprint`, and per-tab `tentativelyDirty: Bool`. All value types or `@Observable`-owned.
+- State model: `private var workspaces: [String: SandboxWorkspaceState]` keyed by sandbox name, where `SandboxWorkspaceState` holds `tabs: [UUID: EditorTab]`, tab ordering, `activeTabID`, changed-files list (`[ChangedFileEntry]`), changed-files load state (`DirectoryLoadState`), layout ratio, pane visibility, `statSnapshots`, per-tab `savedFingerprint`, and per-tab `tentativelyDirty: Bool`. All value types or `@Observable`-owned.
 - Persistence & consistency: In-memory for app session (Requirement 6.6). No disk persistence. `syncSandboxStatus` preserves state for stopped sandboxes (enables Requirement 10.3 restore) and garbage-collects only for sandboxes fully removed from `SandboxStore.sandboxes`.
 - **Dirty detection pipeline (pull-based debounced fingerprint)** — addresses validation round 2 Issue 1 and Requirement 11.7:
   1. `EditorBufferView` calls `onBufferMutated(sandboxName:tabID:)` on every keystroke. No `Data` payload. Cost is O(1) per keystroke.
@@ -603,16 +638,16 @@ enum EditorError: Error, Sendable, LocalizedError { case pathOutsideWorkspace(pa
 - Validation: Observes `editorStore.paneVisibility(for: sandbox.name)` to switch layouts. UI enforces at least one visible pane.
 - Risks: `HSplitView` ratio observation via `GeometryReader` may report transient sizes during window resize; drag-end-only commit avoids the worst of it. Fallback is `HStack` + `Divider` + `DragGesture`.
 
-#### EditorPanelView, FileTreeView, EditorTabsView, EditorBufferView, EditorFindBar, SandboxStatusBanner, EmptyWorkspacePlaceholder, ConfirmCloseDialog, ExternalChangeDialog
+#### EditorPanelView, ChangedFilesListView, EditorTabsView, EditorBufferView, EditorFindBar, SandboxStatusBanner, EmptyWorkspacePlaceholder, NotGitRepoPlaceholder, DeletedFilePlaceholder, ConfirmCloseDialog, ExternalChangeDialog
 
 Summary-only. All are presentational SwiftUI views under `Views/Editor/`, each in its own `.swift` file, reading from `@Environment(EditorStore.self)` and invoking store methods on user input. Accessibility identifiers reserved for XCUITest (namespace `editor*` — no conflict with existing identifiers):
 
 - `editorPane-{sandbox}`, `terminalPane-{sandbox}`, `editorSplitter-{sandbox}`, `editorCollapseEditorButton`, `editorCollapseTerminalButton`
-- `fileTreeNode-{relativePath}`, `fileTreeHiddenToggle`
+- `changedFileRow-{relativePath}`, `changedFileRefresh`, `changedFileBadge-{relativePath}`
 - `editorTab-{relativePath}`, `editorTabCloseButton-{relativePath}`, `editorTabDirtyIndicator-{relativePath}`
 - `editorBuffer-{relativePath}`, `editorSaveButton`
 - `editorFindBar`, `editorFindQuery`, `editorFindNext`, `editorFindPrev`, `editorFindCounter`, `editorFindCaseToggle`, `editorFindWholeWordToggle`
-- `editorLargeFileBanner`, `editorBinaryBanner`, `editorEmptyWorkspacePlaceholder`
+- `editorLargeFileBanner`, `editorBinaryBanner`, `editorEmptyWorkspacePlaceholder`, `editorNotGitRepoPlaceholder`, `editorDeletedFilePlaceholder`
 - `editorConfirmCloseDialog`, `editorExternalChangeDialog`
 
 Implementation notes shared across these views:
@@ -637,9 +672,8 @@ classDiagram
         URL workspaceRoot
         Array tabs
         UUID activeTabID
-        TreeNode treeRoot
-        Set expandedDirs
-        Bool showHidden
+        Array~ChangedFileEntry~ changedFiles
+        DirectoryLoadState changedFilesLoadState
         Double layoutRatio
         PaneVisibility paneVisibility
         Dictionary statSnapshots
@@ -653,14 +687,23 @@ classDiagram
         Int scrollPosition
         Int cursorPosition
     }
-    class TreeNode {
-        FileEntry entry
-        Array children
-        LoadState loadState
+    class ChangedFileEntry {
+        URL url
+        String relativePath
+        GitChangeType changeType
+    }
+    class GitChangeType {
+        <<enumeration>>
+        modified
+        added
+        deleted
+        renamed
+        untracked
     }
     EditorStore "1" --> "many" SandboxWorkspaceState
     SandboxWorkspaceState "1" --> "many" EditorTab
-    SandboxWorkspaceState "1" --> "1" TreeNode
+    SandboxWorkspaceState "1" --> "many" ChangedFileEntry
+    ChangedFileEntry --> GitChangeType
 ```
 
 **Business rules & invariants**
@@ -675,7 +718,7 @@ In-memory SwiftUI-observable types. No database, no new on-disk files. Tab ident
 
 ### Data Contracts & Integration
 
-- **Provider data transfer**: `FileEntry` and `FileStat` are the only new types crossing `EditorDocumentProvider`. Both are `Sendable`/`Hashable`. Internal to the app — no external consumers.
+- **Provider data transfer**: `FileEntry`, `FileStat`, `ChangedFileEntry`, and `GitChangeType` are the new types crossing `EditorDocumentProvider`. All are `Sendable`/`Hashable`. Internal to the app — no external consumers.
 - **Plugin API (Requirement 13.5)**: Reserved for a follow-up spec. Placeholder methods `editor/openFile`, `editor/closeFile`, `editor/dirtyTabs`; permission names `editor.readState`, `editor.mutateState` (distinct from existing `file.read`/`file.write`).
 
 ## Error Handling
@@ -684,8 +727,9 @@ In-memory SwiftUI-observable types. No database, no new on-disk files. Tab ident
 
 Three error surfaces:
 1. **Filesystem errors** — raised as `NSError` by `FileManager` / `Data(contentsOf:)` / `Data.write(to:)`. `EditorStore` catches and routes to `ToastManager.show(message: "Editor: <op> failed — <localizedDescription> [\(error.domain):\(error.code)]", isError: true)` (Requirement 10.6).
-2. **Validation failures** — raised as `EditorError.pathOutsideWorkspace`, `.fileTooLarge`, `.binaryFile`, `.workspaceMissing`. Never surface to toast for scope violations (the UI should not allow them); binary and large-file fail inline in the buffer view.
-3. **User-recoverable conflicts** — external-change mismatches, unsaved-close attempts, quit-with-dirty. Presented as SwiftUI dialogs (`ConfirmCloseDialog`, `ExternalChangeDialog`) or `NSAlert` (`AppDelegateAdapter`). Users always have a non-destructive option.
+2. **Git errors** — raised as `NSError` by `Process` (git binary not found, exit code 128 for non-git repo). `EditorStore` catches: non-git-repo errors show `NotGitRepoPlaceholder` (Requirement 2.9); git-unavailable errors show a toast (Requirement 2.10).
+3. **Validation failures** — raised as `EditorError.pathOutsideWorkspace`, `.fileTooLarge`, `.binaryFile`, `.workspaceMissing`. Never surface to toast for scope violations (the UI should not allow them); binary and large-file fail inline in the buffer view.
+4. **User-recoverable conflicts** — external-change mismatches, unsaved-close attempts, quit-with-dirty. Presented as SwiftUI dialogs (`ConfirmCloseDialog`, `ExternalChangeDialog`) or `NSAlert` (`AppDelegateAdapter`). Users always have a non-destructive option.
 
 ### Error Categories and Responses
 
@@ -695,7 +739,7 @@ Three error surfaces:
 
 ### Monitoring
 
-- `LogStore.shared` receives `Editor`-category entries for every file op (`readFile path size bytes elapsed ms`, `writeFile path size bytes elapsed ms`, `listDirectory path N entries`, `stat path`) per Requirement 13.6. Emission happens inside `DefaultEditorDocumentProvider`.
+- `LogStore.shared` receives `Editor`-category entries for every file op (`readFile path size bytes elapsed ms`, `writeFile path size bytes elapsed ms`, `listDirectory path N entries`, `listChangedFiles workspace N entries`, `stat path`) per Requirement 13.6. Emission happens inside `DefaultEditorDocumentProvider`.
 - Failures are tagged `.error` with the `NSError` domain/code in the detail field.
 - No new external telemetry; existing unified-logging `os.Logger(subsystem: "com.sbx-ui", category: "App")` captures the stream.
 
@@ -718,22 +762,33 @@ Three error surfaces:
 13. `save_pullsSynchronouslyThroughPendingDebounce` — trigger save 10 ms after a mutation (debounce still pending) → save pulls buffer, computes fingerprint, writes, clears dirty. No race between save and debounce timer.
 14. `closeTab_cancelsPendingDebounce` — mutate, close tab before debounce fires, reopen same file → no stale fingerprint carried over.
 15. `dirtyTabsSummary_synchronouslyReconcilesTentativelyDirty` — mutate → 10 ms later (debounce still pending) call `dirtyTabsSummary()` → assert the tab appears in the result and `tentativelyDirty` is cleared with a fresh fingerprint. Covers R10.7's fast-quit path and guards against silent data loss within the 500 ms debounce window.
+16. `refreshChangedFiles_populatesListFromProvider` — `FakeEditorDocumentProvider` pre-seeded with changed files; `refreshChangedFiles` → assert `changedFiles` matches seeded entries sorted alphabetically (Requirement 2.1, 2.2).
+17. `refreshChangedFiles_nonGitRepo_showsPlaceholder` — `FakeEditorDocumentProvider` with `failListChanged = true` → `refreshChangedFiles` → assert `changedFilesLoadState` indicates non-git-repo error (Requirement 2.9).
+18. `refreshChangedFiles_gitUnavailable_showsToast` — `FakeEditorDocumentProvider` rigged with git-unavailable error → assert toast message shown (Requirement 2.10).
+19. `openFile_deletedFile_showsPlaceholder` — changed file with `changeType == .deleted` → `openFile` → tab shows deleted-file placeholder (Requirement 2.5).
+20. `changedFiles_badgeMatchesChangeType` — seed files with each `GitChangeType` → verify badge text matches (M/A/D/R/U) (Requirement 2.3).
 
 ### Integration Tests (Swift Testing, in the same file)
 
 1. `DefaultEditorDocumentProvider_roundTrip` — drive the real provider against a per-test temp dir; write then read asserts byte equality including no trailing newline added (Requirement 5.7).
 2. `DefaultEditorDocumentProvider_pathScope_standardizesAndValidates` — `validate("/root/../etc/passwd")` → throws.
 3. `DefaultEditorDocumentProvider_atomicWrite_survivesCrash` — write a file, simulate crash by cancelling mid-write (best-effort); original contents remain.
+4. `DefaultEditorDocumentProvider_listChangedFiles_parsesGitStatus` — create a temp git repo (`git init`, `git add`, modify a file, add an untracked file), call `listChangedFiles` → assert entries include modified and untracked files with correct `GitChangeType`.
+5. `DefaultEditorDocumentProvider_listChangedFiles_nonGitRepo` — call `listChangedFiles` on a non-git directory → throws appropriate error.
+6. `DefaultEditorDocumentProvider_listChangedFiles_sortedAlphabetically` — seed multiple changed files, assert returned list is sorted by `relativePath`.
 
 ### E2E / UI Tests (`sbx-uiUITests/`, XCUITest, `SBX_CLI_MOCK=1`)
 
-1. `editor_opensFileFromTree_andDisplaysContents` — seed temp-dir workspace via `SBX_CLI_MOCK_WORKSPACE`, create sandbox, click `fileTreeNode-README.md`, assert buffer text matches.
+1. `editor_opensFileFromChangedList_andDisplaysContents` — seed temp-dir workspace via `SBX_CLI_MOCK_WORKSPACE` with `git init` + modified file, create sandbox, click `changedFileRow-README.md`, assert buffer text matches.
 2. `editor_editAndSave_clearsDirtyIndicator` — open, type, Cmd+S, assert `editorTabDirtyIndicator-...` disappears and toast queue is empty.
 3. `editor_switchTabsPreservesCursor` — open two files, move cursor, switch and back, assert cursor position restored.
 4. `editor_closeDirtyTab_showsConfirmDialog` — edit without save, Cmd+W, assert `editorConfirmCloseDialog` appears.
 5. `editor_sandboxStopMidEdit_preservesAndRestores` — open + edit + stop sandbox → verify dashboard appears → restart sandbox → re-enter session → assert tabs restored with dirty state intact.
 6. `editor_backToDashboard_withDirty_promptsConfirm` — dirty tab → back → assert `editorConfirmCloseDialog`.
 7. `editor_emptyWorkspace_showsPlaceholder` — `SBX_CLI_MOCK_WORKSPACE` unset + sandbox has empty workspace → assert `editorEmptyWorkspacePlaceholder` visible and `editorSaveButton` absent.
+8. `editor_nonGitWorkspace_showsNotGitRepoPlaceholder` — workspace exists but has no `.git` directory → assert `editorNotGitRepoPlaceholder` visible with appropriate message (Requirement 2.9).
+9. `editor_changedFilesRefresh_updatesListAfterFileChange` — open sandbox, modify a file in the temp workspace, click `changedFileRefresh`, assert updated list shows new entry (Requirement 2.6).
+10. `editor_changedFilesBadge_displaysCorrectType` — seed workspace with modified and added files, assert `changedFileBadge-*` shows correct M/A labels (Requirement 2.3).
 
 ### Performance / Load (captured as assertions in unit tests)
 
@@ -743,12 +798,12 @@ Three error surfaces:
 
 ### Test Tooling
 
-- New base class `EditorUITestCase: XCTestCase` encapsulating the `SBX_CLI_MOCK_WORKSPACE` temp-dir seeding pattern; each test creates its workspace via `FileManager.default.createDirectory` + fixture-file writes before `app.launch()`, and tears down in `tearDownWithError`.
+- New base class `EditorUITestCase: XCTestCase` encapsulating the `SBX_CLI_MOCK_WORKSPACE` temp-dir seeding pattern; each test creates its workspace via `FileManager.default.createDirectory` + fixture-file writes + `git init` + `git add .` (via `Process`) before `app.launch()`, and tears down in `tearDownWithError`. This ensures `git status` returns meaningful changed-file entries for E2E tests.
 - No changes to `tools/mock-sbx` or `tools/mock-sbx-tests.sh`.
 
 ## Security Considerations
 
-- **Path scope enforcement**: `EditorStore` validates every `openFile` / `save` / `listDirectory` / `stat` path via `EditorPath.validate(_:within:)`. `..` segments are normalized via `.standardizedFileURL`; absolute paths outside the workspace are rejected with `EditorError.pathOutsideWorkspace`. The `DefaultEditorDocumentProvider` re-validates (defense in depth) before calling `FileManager`.
+- **Path scope enforcement**: `EditorStore` validates every `openFile` / `save` / `listDirectory` / `listChangedFiles` / `stat` path via `EditorPath.validate(_:within:)`. `..` segments are normalized via `.standardizedFileURL`; absolute paths outside the workspace are rejected with `EditorError.pathOutsideWorkspace`. The `DefaultEditorDocumentProvider` re-validates (defense in depth) before calling `FileManager`. The `listChangedFiles` method sets `currentDirectoryURL` to the workspace root; returned `ChangedFileEntry.url` values are resolved relative to that root — no absolute paths from git output are trusted without validation.
 - **Symlink handling**: Scope guard uses `.standardizedFileURL` only (does not follow symlinks via `resolvingSymlinksInPath`). A symlink inside the workspace that points outward is treated by its standardized path; if that path stays inside the workspace, access is allowed. Conservative; prevents accidental host-wide access via symlinked workspaces.
 - **Byte-exact writes**: `Data.write(to:options: [.atomic])` performs a temp-file-plus-rename, so partial writes cannot leave a truncated file on crash. No newline insertion, no encoding transforms (Requirement 5.7).
 - **Plugin API separation**: `editor.readState` / `editor.mutateState` permissions are distinct from existing `file.read`/`file.write` — plugins must re-declare to use editor APIs. The new permissions do not subsume host-path access.
@@ -776,7 +831,8 @@ Future optimization hooks (not implemented): range reads, `FSEventStream`-driven
 Binding conclusions from [research.md](research.md), restated here so design.md stands alone:
 
 - **Transport**: Direct host `FileManager` — no `sbx exec`, no mock-sbx changes. Rationale in [research.md](research.md) "File I/O transport".
-- **Reference implementation**: [KanbanPersistence.swift](sbx-ui/Services/KanbanPersistence.swift) is the exact pattern for `DefaultEditorDocumentProvider`. [PluginApiHandler.swift:259](sbx-ui/Plugins/PluginApiHandler.swift:259) `validatePathScope` is the reference for `EditorPath.validate`.
+- **Reference implementation**: [KanbanPersistence.swift](sbx-ui/Services/KanbanPersistence.swift) is the exact pattern for `DefaultEditorDocumentProvider`. [PluginApiHandler.swift:259](sbx-ui/Plugins/PluginApiHandler.swift:259) `validatePathScope` is the reference for `EditorPath.validate`. [CliExecutor.swift](sbx-ui/Services/CliExecutor.swift) is the pattern for `Process`-based subprocess execution used in `listChangedFiles`.
+- **Git status**: `git status --porcelain=v1` output is stable, machine-readable, and well-documented. Parsing is a simple line-by-line split with 2-character status prefix. `currentDirectoryURL` scoping ensures git runs in the correct workspace.
 - **Widget**: `CodeEditorView` (mchakravarty, Apache-2.0, TextKit 2). Fallback `NSTextView`-wrapped, single-file swap.
 - **Splitter**: `HSplitView` + `GeometryReader` with drag-end-only ratio commit. Fallback `HStack` + `DragGesture`.
 - **Fingerprint**: `CryptoKit.SHA256` for MVP; implementation phase may swap to a non-crypto faster hash if benchmarks demand.
