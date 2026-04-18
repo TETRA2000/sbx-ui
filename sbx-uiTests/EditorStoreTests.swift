@@ -414,8 +414,9 @@ struct EditorStoreChangedFilesTests {
             changeType: .added
         ))
         await store.open(sandbox: sbx)
-        // Wait briefly for open's refresh task to run.
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        // Await the refresh synchronously rather than racing against the
+        // fire-and-forget Task that `open(sandbox:)` kicks off.
+        _ = await store.refreshChangedFiles(sandboxName: sbx.name)
         let entries = store.workspaces[sbx.name]?.changedFiles ?? []
         #expect(entries.count == 2)
         #expect(entries.map(\.relativePath) == ["a.swift", "b.swift"])
