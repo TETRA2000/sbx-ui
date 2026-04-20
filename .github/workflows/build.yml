@@ -20,15 +20,15 @@ jobs:
           - channel: canary
             scheme: sbx-ui Canary
             config: Release (Canary)
-            app_name: sbx-ui Canary
+            app_name: SBX UI Canary
           - channel: beta
             scheme: sbx-ui Beta
             config: Release (Beta)
-            app_name: sbx-ui Beta
+            app_name: SBX UI Beta
           - channel: stable
             scheme: sbx-ui
             config: Release (Stable)
-            app_name: sbx-ui
+            app_name: SBX UI
 
     steps:
       - name: Checkout

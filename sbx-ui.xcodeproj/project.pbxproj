@@ -28,7 +28,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A96F2D9C2F80FFE4007495EA /* sbx-ui Canary.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "sbx-ui Canary.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A96F2D9C2F80FFE4007495EA /* SBX UI Canary.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "SBX UI Canary.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A96F2DAB2F80FFE5007495EA /* sbx-uiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "sbx-uiTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A96F2DB52F80FFE5007495EA /* sbx-uiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "sbx-uiUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C10000012F82000000000001 /* Canary.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Canary.xcconfig; sourceTree = "<group>"; };
@@ -94,7 +94,7 @@
 		A96F2D9D2F80FFE4007495EA /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A96F2D9C2F80FFE4007495EA /* sbx-ui Canary.app */,
+				A96F2D9C2F80FFE4007495EA /* SBX UI Canary.app */,
 				A96F2DAB2F80FFE5007495EA /* sbx-uiTests.xctest */,
 				A96F2DB52F80FFE5007495EA /* sbx-uiUITests.xctest */,
 			);
@@ -134,7 +134,7 @@
 				B10A00022F81000000000002 /* SwiftTerm */,
 			);
 			productName = "sbx-ui";
-			productReference = A96F2D9C2F80FFE4007495EA /* sbx-ui Canary.app */;
+			productReference = A96F2D9C2F80FFE4007495EA /* SBX UI Canary.app */;
 			productType = "com.apple.product-type.application";
 		};
 		A96F2DAA2F80FFE5007495EA /* sbx-uiTests */ = {

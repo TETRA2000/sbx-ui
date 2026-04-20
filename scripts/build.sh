@@ -29,9 +29,9 @@ declare -A CONFIGS=(
   [stable]="Release (Stable)"
 )
 declare -A APP_NAMES=(
-  [canary]="sbx-ui Canary"
-  [beta]="sbx-ui Beta"
-  [stable]="sbx-ui"
+  [canary]="SBX UI Canary"
+  [beta]="SBX UI Beta"
+  [stable]="SBX UI"
 )
 
 ALL_CHANNELS=(canary beta stable)
