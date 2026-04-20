@@ -63,11 +63,12 @@ final class CLIRunner: @unchecked Sendable {
     // MARK: - Path resolution
 
     /// Project root, derived from this file's location.
-    /// File is at `<root>/Tests/CLIE2ETests/CLIE2EHelpers.swift`.
+    /// File is at `<root>/cli/Tests/CLIE2ETests/CLIE2EHelpers.swift`.
     static var projectRoot: String {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // CLIE2ETests
             .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // cli
             .deletingLastPathComponent() // <root>
             .path
     }
@@ -77,8 +78,8 @@ final class CLIRunner: @unchecked Sendable {
     static func resolveBinary() throws -> String {
         let root = projectRoot
         let candidates = [
-            "\(root)/.build/debug/sbx-ui-cli",
-            "\(root)/.build/release/sbx-ui-cli",
+            "\(root)/cli/.build/debug/sbx-ui-cli",
+            "\(root)/cli/.build/release/sbx-ui-cli",
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path

@@ -176,6 +176,7 @@ import Foundation
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // SBXCoreTests/
             .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // cli/
             .deletingLastPathComponent()  // project root
         let toolsDir = projectRoot.appendingPathComponent("tools").path
 

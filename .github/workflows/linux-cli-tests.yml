@@ -3,28 +3,8 @@ name: Linux CLI Tests
 on:
   push:
     branches: [main]
-    paths:
-      - "Package.swift"
-      - "Package.resolved"
-      - "Sources/**"
-      - "Tests/**"
-      - "sbx-ui/Models/**"
-      - "sbx-ui/Services/**"
-      - "tools/mock-sbx"
-      - "tools/mock-sbx-tests.sh"
-      - ".github/workflows/linux-cli-tests.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "Package.swift"
-      - "Package.resolved"
-      - "Sources/**"
-      - "Tests/**"
-      - "sbx-ui/Models/**"
-      - "sbx-ui/Services/**"
-      - "tools/mock-sbx"
-      - "tools/mock-sbx-tests.sh"
-      - ".github/workflows/linux-cli-tests.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -56,10 +36,10 @@ jobs:
         run: bash tools/mock-sbx-tests.sh
 
       - name: Build
-        run: swift build
+        run: swift build --package-path cli
 
       - name: Test
-        run: swift test
+        run: swift test --package-path cli
 
       - name: Build release
-        run: swift build -c release
+        run: swift build --package-path cli -c release
