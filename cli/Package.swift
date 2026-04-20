@@ -14,15 +14,7 @@ let package = Package(
     targets: [
         .target(
             name: "SBXCore",
-            path: "sbx-ui",
-            exclude: [
-                "Views",
-                "DesignSystem",
-                "Stores",
-                "Plugins",
-                "sbx_uiApp.swift",
-                "Assets.xcassets",
-            ],
+            path: "SBXCore",
             sources: [
                 "Models/DomainTypes.swift",
                 "Models/ReleaseChannel.swift",

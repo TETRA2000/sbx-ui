@@ -77,11 +77,11 @@ Stores are the only reactive layer; services are `Sendable` protocol-based and C
 # macOS GUI build/test — prefer the Xcode MCP tools (BuildProject, RunAllTests)
 #                        over the xcodebuild CLI
 
-# Linux CLI
-swift build                  # build SBXCore + sbx-ui-cli (debug)
-swift build -c release       # optimized release build
-swift run sbx-ui-cli --help  # run the CLI
-swift test                   # run 25 SBXCore tests
+# Linux CLI (Package.swift lives under cli/ so Xcode doesn't auto-discover it)
+swift build --package-path cli                  # build SBXCore + sbx-ui-cli (debug)
+swift build --package-path cli -c release       # optimized release build
+swift run --package-path cli sbx-ui-cli --help  # run the CLI
+swift test --package-path cli                   # run 25 SBXCore tests
 
 # CLI mock
 bash tools/mock-sbx-tests.sh  # 32 bash tests for the mock itself

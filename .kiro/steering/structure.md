@@ -13,19 +13,20 @@
 
 ### macOS App — `sbx-ui/`
 **Location**: `sbx-ui/Stores/`, `sbx-ui/Views/`, `sbx-ui/DesignSystem/`, `sbx-ui/Plugins/`, `sbx-ui/sbx_uiApp.swift`
-**Purpose**: Everything that only runs on macOS. These directories are explicitly excluded from the SPM `SBXCore` target in `Package.swift`.
+**Purpose**: Everything that only runs on macOS. These directories are not part of the SPM `SBXCore` target (which only compiles `Models/` and `Services/` via symlinks from `cli/SBXCore/`).
 **Example**: `Stores/SandboxStore.swift` is `@MainActor @Observable`; `Views/Dashboard/SandboxCardView.swift` is SwiftUI.
 
-### Linux CLI — `Sources/sbx-ui-cli/`
-**Location**: `Sources/sbx-ui-cli/`
-**Purpose**: Swift ArgumentParser entry point and subcommand definitions that call into `SBXCore`. One file per command family.
+### Linux CLI — `cli/`
+**Location**: `cli/Package.swift`, `cli/Sources/sbx-ui-cli/`, `cli/SBXCore/` (symlinks), `cli/Tests/`
+**Purpose**: Everything the Linux CLI needs, isolated under `cli/` so Xcode's sibling auto-discovery doesn't pull SPM dependencies (notably `swift-argument-parser`) into the macOS workspace. Swift ArgumentParser entry point and subcommand definitions that call into `SBXCore`. One file per command family.
 **Example**: `CLI.swift` (`@main`), `Commands.swift` (lifecycle), `PolicyCommands.swift`, `PortsCommands.swift`, `EnvCommands.swift`, `Formatting.swift`.
 
 ### Tests
 **Location**:
 - `sbx-uiTests/` — Xcode unit tests (Swift Testing, in-memory stubs)
 - `sbx-uiUITests/` — Xcode UI/E2E tests (XCTest + XCUITest, real mock CLI)
-- `Tests/SBXCoreTests/` — SPM unit + integration tests (Swift Testing)
+- `cli/Tests/SBXCoreTests/` — SPM unit + integration tests (Swift Testing)
+- `cli/Tests/CLIE2ETests/` — SPM end-to-end tests against the compiled `sbx-ui-cli`
 - `tools/mock-sbx-tests.sh` — bash tests for the CLI mock itself
 
 **Purpose**: Stores and pure logic → unit tests with `StubSbxService` / `FailingSbxService`. Full user flows → UI tests launched with `SBX_CLI_MOCK=1`.

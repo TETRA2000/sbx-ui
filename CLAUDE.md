@@ -67,7 +67,7 @@ A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager provides the sam
 - **Service Layer** (`sbx-ui/Services/`): `SbxServiceProtocol` with `RealSbxService` implementation. `ServiceFactory` creates the service. For testing, the CLI mock (`tools/mock-sbx`) is used via PATH injection.
 - **Store Layer** (`sbx-ui/Stores/`): `@MainActor @Observable` classes — `SandboxStore`, `PolicyStore`, `SessionStore`, `SettingsStore`. Bridges between services and views. macOS only.
 - **View Layer** (`sbx-ui/Views/`): SwiftUI views organized by feature — Dashboard, Policies, Ports, Session, Error. macOS only.
-- **CLI Layer** (`Sources/sbx-ui-cli/`): Swift ArgumentParser commands that call SBXCore directly. Linux/cross-platform.
+- **CLI Layer** (`cli/Sources/sbx-ui-cli/`): Swift ArgumentParser commands that call SBXCore directly. Linux/cross-platform.
 - **Design System** (`sbx-ui/DesignSystem/`): Color/Font/Constants extensions for "The Technical Monolith" dark theme. macOS only.
 
 ### Key Build Settings (Xcode / macOS)
@@ -76,8 +76,8 @@ A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager provides the sam
 - SwiftTerm 1.13+ via SPM for terminal rendering
 
 ### SPM / Linux Build
-- `Package.swift` at project root defines `SBXCore` library + `sbx-ui-cli` executable
-- `SBXCore` includes only `Models/` and `Services/` from `sbx-ui/` (no Views, Stores, Plugins, DesignSystem)
+- `cli/Package.swift` defines `SBXCore` library + `sbx-ui-cli` executable. Lives under `cli/` (not repo root) so Xcode's sibling auto-discovery doesn't pull `swift-argument-parser` into the macOS workspace.
+- `SBXCore` target compiles `Models/` and `Services/` from `sbx-ui/` via symlinks at `cli/SBXCore/Models` → `../../sbx-ui/Models` and `cli/SBXCore/Services` → `../../sbx-ui/Services`. SPM needs the target path inside the package root, so symlinks keep one source of truth without violating that rule.
 - `SBX_SPM` compilation flag enables `LinuxShims.swift` (provides `appLog` stub for Linux)
 - `#if canImport(os)` guards `os.Logger` usage in `CliExecutor.swift` for Linux
 - All explicit inits on `Sendable` types must be `nonisolated` — the Xcode project uses `MainActor` default isolation, so omitting `nonisolated` breaks macOS builds
@@ -95,17 +95,18 @@ A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager provides the sam
 - Build and run (Cmd+R)
 
 #### Linux (SPM)
-- `swift build` — build SBXCore library + sbx-ui-cli executable
-- `swift build -c release` — optimized release build
-- `swift run sbx-ui-cli ls` — run CLI directly
-- `swift run sbx-ui-cli --help` — see all commands
+Run from the repo root with `--package-path cli`, or `cd cli` first.
+- `swift build --package-path cli` — build SBXCore library + sbx-ui-cli executable
+- `swift build --package-path cli -c release` — optimized release build
+- `swift run --package-path cli sbx-ui-cli ls` — run CLI directly
+- `swift run --package-path cli sbx-ui-cli --help` — see all commands
 
 ## Testing Guide
 
 ### Test Structure
 - **Unit tests**: `sbx-uiTests/sbx_uiTests.swift` — Swift Testing framework (`@Test`, `#expect`)
 - **UI/E2E tests**: `sbx-uiUITests/sbx_uiUITests.swift` — XCTest (`XCTestCase`, `XCTAssertTrue`)
-- **SPM tests**: `Tests/SBXCoreTests/SBXCoreTests.swift` — Swift Testing (25 tests: models, parsers, integration)
+- **SPM tests**: `cli/Tests/SBXCoreTests/SBXCoreTests.swift` — Swift Testing (25 tests: models, parsers, integration)
 - **CLI mock tests**: `tools/mock-sbx-tests.sh` — Bash test suite (32 tests)
 - All tests use the CLI mock (`tools/mock-sbx`) — no Docker required
 
@@ -116,7 +117,7 @@ A **Linux CLI** (`sbx-ui-cli`) built with Swift Package Manager provides the sam
 ### Running Tests
 - Xcode: Product → Test (Cmd+U) runs all 73 tests
 - Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
-- Linux/SPM: `swift test` runs all 25 SBXCore tests
+- Linux/SPM: `swift test --package-path cli` runs all 25 SBXCore tests
 - CLI mock: `bash tools/mock-sbx-tests.sh` runs 32 bash tests
 
 ### Writing Unit Tests

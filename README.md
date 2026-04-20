@@ -61,10 +61,10 @@ The mock CLI (`tools/mock-sbx`) emulates all `sbx` commands using file-based sta
 ```bash
 git clone https://github.com/TETRA2000/sbx-ui.git
 cd sbx-ui
-swift build -c release
-# Binary is at .build/release/sbx-ui-cli
+swift build --package-path cli -c release
+# Binary is at cli/.build/release/sbx-ui-cli
 # Optionally copy to PATH:
-cp .build/release/sbx-ui-cli /usr/local/bin/sbx-ui
+cp cli/.build/release/sbx-ui-cli /usr/local/bin/sbx-ui
 ```
 
 ### Linux CLI — Quick start
@@ -141,7 +141,7 @@ SwiftUI views organized by feature:
 - **Session** -- terminal panel, agent status bar
 - **Error** -- toast notifications, error states, debug log
 
-### CLI Layer (`Sources/sbx-ui-cli/`) — Linux
+### CLI Layer (`cli/Sources/sbx-ui-cli/`) — Linux
 
 Swift ArgumentParser commands that call `SBXCore` directly:
 
@@ -160,7 +160,11 @@ Swift ArgumentParser commands that call `SBXCore` directly:
 
 ```
 sbx-ui/
-  Package.swift                    # SPM manifest (SBXCore + sbx-ui-cli)
+  cli/
+    Package.swift                  # SPM manifest (SBXCore + sbx-ui-cli), placed here so Xcode doesn't auto-discover it
+    SBXCore/                       # Symlinks to ../../sbx-ui/{Models,Services}
+    Sources/sbx-ui-cli/            # Linux CLI sources
+    Tests/                         # SBXCoreTests + CLIE2ETests
   sbx-ui/
     sbx_uiApp.swift                # macOS app entry point
     Models/
@@ -289,14 +293,14 @@ All tests use the CLI mock (`tools/mock-sbx`). No Docker Desktop is required to 
 | Platform | Command | Tests |
 |----------|---------|-------|
 | macOS (Xcode) | Product -> Test (Cmd+U) | 73 unit + UI tests |
-| Linux (SPM) | `swift test` | 25 unit + integration tests |
+| Linux (SPM) | `swift test --package-path cli` | 25 unit + integration tests |
 | CLI mock | `bash tools/mock-sbx-tests.sh` | 32 bash tests |
 
 ### Test Structure
 
 - **Xcode unit tests** (`sbx-uiTests/sbx_uiTests.swift`) -- Swift Testing framework (`@Test`, `#expect`). Tests stores and service logic using `StubSbxService` and `FailingSbxService`.
 - **Xcode UI/E2E tests** (`sbx-uiUITests/sbx_uiUITests.swift`) -- XCTest framework (`XCTestCase`). Launches the app with `SBX_CLI_MOCK=1` and exercises full user flows via XCUITest.
-- **SPM tests** (`Tests/SBXCoreTests/SBXCoreTests.swift`) -- Swift Testing framework. Tests models, parsers, and service layer with mock-sbx integration on Linux.
+- **SPM tests** (`cli/Tests/SBXCoreTests/SBXCoreTests.swift`) -- Swift Testing framework. Tests models, parsers, and service layer with mock-sbx integration on Linux.
 - **CLI mock tests** (`tools/mock-sbx-tests.sh`) -- Bash test suite validating the mock CLI behavior against expected `sbx` CLI output formats.
 
 ### Key Testing Patterns
@@ -311,7 +315,7 @@ All tests use the CLI mock (`tools/mock-sbx`). No Docker Desktop is required to 
 | Workflow | Trigger | Runner | What it does |
 |----------|---------|--------|-------------|
 | **Tests** | push/PR to main | macOS | Xcode unit + UI tests |
-| **Linux CLI Tests** | push/PR to main (SPM/Services paths) | Ubuntu | `swift build` + `swift test` + release build |
+| **Linux CLI Tests** | push/PR to main (cli/** and shared Model/Service paths) | Ubuntu | `swift build --package-path cli` + `swift test --package-path cli` + release build |
 | **SDK Tests** | push/PR to main (sdk/ paths) | Ubuntu | TypeScript + Python SDK tests |
 | **Build** | push to main | macOS | Release archives for canary/beta/stable |
 

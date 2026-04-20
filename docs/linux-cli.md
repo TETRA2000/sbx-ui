@@ -10,14 +10,14 @@ Requires Swift 6.0+ on Linux (Ubuntu 22.04+).
 
 ```bash
 cd sbx-ui
-swift build -c release
-cp .build/release/sbx-ui-cli /usr/local/bin/sbx-ui
+swift build --package-path cli -c release
+cp cli/.build/release/sbx-ui-cli /usr/local/bin/sbx-ui
 ```
 
 ### Development mode
 
 ```bash
-swift run sbx-ui-cli ls
+swift run --package-path cli sbx-ui-cli ls
 ```
 
 ### Using the mock CLI
@@ -308,7 +308,7 @@ sbx-ui-cli (ArgumentParser commands)
 Tests run on Linux via Swift Testing (`@Test`, `#expect`):
 
 ```bash
-swift test
+swift test --package-path cli
 ```
 
 Two test targets cover the stack:
@@ -327,4 +327,4 @@ Two test targets cover the stack:
   env ls, env set, env rm, formatting & color (NO_COLOR / FORCE_COLOR),
   argument-parser errors, runtime errors, scenarios (full lifecycle, policy
   round-trip, env var mutations, sandbox isolation), and runner isolation.
-- Run just the E2E target with `swift test --filter CLIE2ETests`.
+- Run just the E2E target with `swift test --package-path cli --filter CLIE2ETests`.
