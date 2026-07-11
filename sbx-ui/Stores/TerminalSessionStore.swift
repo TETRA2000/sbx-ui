@@ -26,11 +26,13 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
         let args: [String]
         switch sessionType {
         case .agent:
-            args = ["-c", "sbx run \(quotedName)\(keepAlive)"]
+            // sbx v0.33.0+ deprecated the bare-positional resume form in
+            // favor of --name; see docs/sbx-cli-reference.md.
+            args = ["-c", "sbx run --name \(quotedName)\(keepAlive)"]
         case .shell:
             args = ["-c", "sbx exec -it \(quotedName) bash\(keepAlive)"]
         case .kanbanTask:
-            // Kanban tasks run through `sbx run <sandbox> -- '<prompt>'`.
+            // Kanban tasks run through `sbx run --name <sandbox> -- '<prompt>'`.
             // sbx forwards args after `--` to its default
             // `claude --dangerously-skip-permissions` launch, so this becomes
             // `claude --dangerously-skip-permissions '<prompt>'` — claude
@@ -39,7 +41,7 @@ struct RealTerminalProcessLauncher: TerminalProcessLauncher {
             // spawns its own fresh session.
             let trimmedPrompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let promptSegment = trimmedPrompt.isEmpty ? "" : " -- \(shellSingleQuote(trimmedPrompt))"
-            args = ["-c", "sbx run \(quotedName)\(promptSegment)\(keepAlive)"]
+            args = ["-c", "sbx run --name \(quotedName)\(promptSegment)\(keepAlive)"]
         }
         var env: [String] = []
         var hasTerm = false
