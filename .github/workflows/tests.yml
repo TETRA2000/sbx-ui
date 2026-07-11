@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Unit & UI Tests
+    name: Unit Tests
     runs-on: macos-26
 
     steps:
@@ -63,10 +63,13 @@ jobs:
             -destination 'platform=macOS' \
             -only-testing:sbx-uiTests
 
-      # - name: Run UI Tests
-      #   run: |
-      #     xcodebuild test-without-building \
-      #       -project sbx-ui.xcodeproj \
-      #       -scheme "sbx-ui Canary" \
-      #       -destination 'platform=macOS' \
-      #       -only-testing:sbx-uiUITests
+      # XCUITest (sbx-uiUITests) is intentionally not run on GitHub-hosted
+      # macOS runners: macos-26 runner minutes bill at a steep multiple of
+      # Linux minutes, and this suite (48 UI tests as of 2026-07) would run
+      # on every push/PR. Run it locally instead before merging UI-affecting
+      # changes:
+      #   xcodebuild test-without-building -project sbx-ui.xcodeproj \
+      #     -scheme "sbx-ui Canary" -destination 'platform=macOS' \
+      #     -only-testing:sbx-uiUITests
+      # (or Xcode: Product -> Test, sbx-uiUITests target). See
+      # docs/sbx-modernization-plan.md Workstream B1 for the rationale.

@@ -55,24 +55,26 @@ $SBX_MOCK_STATE_DIR/
 
 ## Implemented Commands
 
-All commands match the real `sbx` CLI v0.23.0 syntax (see `docs/sbx-cli-reference.md`):
+All commands match the real `sbx` CLI v0.34.0 syntax (see `docs/sbx-cli-reference.md`):
 
-- `sbx ls [--json]` — List sandboxes
+- `sbx ls [--json]` — List sandboxes (JSON includes a stable per-sandbox `id`, persisted across calls)
 - `sbx run <agent> <workspace> [--name <name>] [-- <agent_args>...]` — Create and attach
-- `sbx run <name> [-- <agent_args>...]` — Attach to existing sandbox
+- `sbx run <name> [-- <agent_args>...]` — Attach to existing sandbox (deprecated bare-positional form, still accepted)
+- `sbx run --name <name> [-- <agent_args>...]` — Attach to existing sandbox (current form)
 - `sbx stop <name>` — Stop sandbox, clear ports
 - `sbx rm [-f] <name>` — Remove sandbox
 - `sbx create [--name <name>] <agent> [<workspace>]` — Create without attaching
-- `sbx policy ls` — List policies (tabular)
-- `sbx policy allow network <resources>` — Add allow rule
-- `sbx policy deny network <resources>` — Add deny rule
-- `sbx policy rm network --resource <resource>` — Remove rule
+- `sbx policy ls [--include-inactive]` — List policies (tabular). The mock has no active/inactive rule concept, so `--include-inactive` is accepted but is a deliberate no-op — this is a simplification, not a bug.
+- `sbx policy allow network <resources>` — Add allow rule (global scope, no `--sandbox`/`-g` flag)
+- `sbx policy deny network <resources>` — Add deny rule (global scope)
+- `sbx policy rm network --resource <resource>` — Remove rule (global scope)
+- `sbx policy init <preset>` — Set default network policy preset (`allow-all`/`balanced`/`deny-all`); `sbx policy set-default <preset>` accepted as a silent alias
 - `sbx policy log [<sandbox>] --json` — Policy log (JSON)
 - `sbx ports <name> [--json]` — List ports
 - `sbx ports <name> --publish <host>:<sbx>` — Publish port
 - `sbx ports <name> --unpublish <host>:<sbx>` — Unpublish port
 - `sbx exec -it <name> bash` — Open shell in sandbox
-- `sbx version` — Show version
+- `sbx version [-D|--debug]` — Show version (single line by default, two-line client/server detail with `-D`)
 - `sbx help` — Show help
 
 ## Interactive Mode

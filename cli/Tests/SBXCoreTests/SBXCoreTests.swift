@@ -107,6 +107,15 @@ import Foundation
         #expect(SbxOutputParser.parsePolicyList("").isEmpty)
     }
 
+    @Test func parsePolicyListUnexpectedHeaderReturnsEmpty() {
+        #expect(SbxOutputParser.parsePolicyList("FOO   BAR   BAZ\nsome   row   data").isEmpty)
+    }
+
+    @Test func parsePolicyLogUnexpectedHeaderReturnsEmpty() {
+        let output = "Allowed requests:\nSANDBOX ONLY\nsome-row-data"
+        #expect(SbxOutputParser.parsePolicyLog(output).isEmpty)
+    }
+
     @Test func parseManagedEnvVars() {
         let content = """
             # user stuff
@@ -164,6 +173,52 @@ import Foundation
             existingContent: existing, managedVars: []
         )
         #expect(result.isEmpty)
+    }
+
+    @Test func parseVersionSingleLineDefault() {
+        let info = SbxOutputParser.parseVersion("v0.34.0\n")
+        #expect(info.client == "v0.34.0")
+        #expect(info.server == nil)
+    }
+
+    @Test func parseVersionDebugFormat() {
+        let info = SbxOutputParser.parseVersion("Client Version:  v0.34.0\nServer Version:  v0.34.0\n")
+        #expect(info.client == "v0.34.0")
+        #expect(info.server == "v0.34.0")
+    }
+
+    @Test func parseVersionDebugFormatServerUnavailable() {
+        let info = SbxOutputParser.parseVersion("Client Version:  v0.24.2\nServer Version:  Unavailable\n")
+        #expect(info.client == "v0.24.2")
+        #expect(info.server == "Unavailable")
+    }
+
+    @Test func parseVersionEmpty() {
+        let info = SbxOutputParser.parseVersion("")
+        #expect(info.client.isEmpty)
+    }
+}
+
+// MARK: - Compatibility Tests
+
+@Suite struct CompatibilityTests {
+    @Test func exactMatch() {
+        #expect(SbxCliCompatibility.assess("0.34.0") == .compatible)
+        #expect(SbxCliCompatibility.assess("v0.34.0") == .compatible)
+    }
+
+    @Test func older() {
+        #expect(SbxCliCompatibility.assess("0.23.0") == .olderThanVerified)
+    }
+
+    @Test func newer() {
+        #expect(SbxCliCompatibility.assess("0.35.0") == .newerThanVerified)
+        #expect(SbxCliCompatibility.assess("v0.99.0-mock (mock-sbx)") == .newerThanVerified)
+    }
+
+    @Test func unknown() {
+        #expect(SbxCliCompatibility.assess("not-a-version") == .unknown)
+        #expect(SbxCliCompatibility.assess("") == .unknown)
     }
 }
 
@@ -306,5 +361,75 @@ import Foundation
         #expect(vars.count == 1)
         #expect(vars[0].key == "MY_KEY")
         #expect(vars[0].value == "my_value")
+    }
+
+    @Test func versionAgainstMock() async throws {
+        let (svc, stateDir) = try makeTestService()
+        defer { cleanup(stateDir) }
+        let info = try await svc.version()
+        #expect(info.client.contains("mock"))
+    }
+}
+
+// MARK: - Service Argument Construction Tests (spy, not mock-sbx)
+//
+// StubSbxService/FailingSbxService (in sbx-uiTests) fully replace
+// SbxServiceProtocol, so they can't verify what CLI arguments RealSbxService
+// actually constructs. This spy sits one layer lower, at CliExecutorProtocol,
+// so it can assert on the real argument-construction logic (e.g. that --name
+// and --include-inactive are actually sent) without needing a real/mock sbx
+// binary.
+
+actor SpyCliExecutor: CliExecutorProtocol {
+    private(set) var calls: [(command: String, args: [String])] = []
+    private var stubbedResults: [String: CliResult] = [:]
+    private let defaultResult = CliResult(stdout: "", stderr: "", exitCode: 0)
+
+    func stub(argsKey: String, result: CliResult) {
+        stubbedResults[argsKey] = result
+    }
+
+    func exec(command: String, args: [String]) async throws -> CliResult {
+        calls.append((command, args))
+        return stubbedResults[args.joined(separator: " ")] ?? defaultResult
+    }
+
+    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
+        fatalError("unused by RealSbxService")
+    }
+}
+
+@Suite struct ServiceArgumentTests {
+    @Test func runResumeUsesNameFlag() async throws {
+        let spy = SpyCliExecutor()
+        let json = """
+            {"sandboxes":[{"id":"sbx_1","name":"foo","agent":"claude","status":"running","socket_path":"/tmp/x","workspaces":["/tmp/foo"]}]}
+            """
+        await spy.stub(argsKey: "ls --json", result: CliResult(stdout: json, stderr: "", exitCode: 0))
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.run(agent: "", workspace: "", opts: RunOptions(name: "foo"))
+        let calls = await spy.calls
+        #expect(calls.first?.args == ["run", "--name", "foo"])
+    }
+
+    @Test func policyListPassesIncludeInactive() async throws {
+        let spy = SpyCliExecutor()
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.policyList()
+        let calls = await spy.calls
+        #expect(calls.last?.args == ["policy", "ls", "--include-inactive"])
+    }
+
+    @Test func policyAllowDenyRemoveHaveNoScopeFlags() async throws {
+        let spy = SpyCliExecutor()
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.policyAllow(resources: "x.com")
+        _ = try await svc.policyDeny(resources: "y.com")
+        try await svc.policyRemove(resource: "x.com")
+        let calls = await spy.calls
+        #expect(calls.contains { $0.args == ["policy", "allow", "network", "x.com"] })
+        #expect(calls.contains { $0.args == ["policy", "deny", "network", "y.com"] })
+        #expect(calls.contains { $0.args == ["policy", "rm", "network", "--resource", "x.com"] })
+        #expect(!calls.contains { $0.args.contains("--sandbox") || $0.args.contains("--global") || $0.args.contains("-g") })
     }
 }

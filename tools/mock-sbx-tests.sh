@@ -85,6 +85,22 @@ test_version() {
   assert_contains "$out" "mock-sbx"
 }
 
+test_version_default_single_line() {
+  local out
+  out="$(sbx version)"
+  assert_not_contains "$out" "Client Version:"
+  local line_count
+  line_count="$(printf '%s' "$out" | wc -l)"
+  [[ "$line_count" -le 1 ]]
+}
+
+test_version_debug_detail() {
+  local out
+  out="$(sbx version -D)"
+  assert_contains "$out" "Client Version:"
+  assert_contains "$out" "Server Version:"
+}
+
 test_help() {
   local out
   out="$(sbx help)"
@@ -125,6 +141,21 @@ test_run_workspace_in_json() {
   local out
   out="$(sbx ls --json)"
   assert_contains "$out" '"/tmp/my-workspace"'
+}
+
+test_ls_json_includes_id() {
+  sbx run claude /tmp/proj --name id-test < /dev/null
+  local out
+  out="$(sbx ls --json)"
+  assert_contains "$out" '"id":"'
+}
+
+test_ls_json_id_stable_across_calls() {
+  sbx run claude /tmp/proj --name id-stable < /dev/null
+  local id1 id2
+  id1="$(sbx ls --json | grep -o '"id":"[^"]*"')"
+  id2="$(sbx ls --json | grep -o '"id":"[^"]*"')"
+  assert_eq "$id1" "$id2"
 }
 
 test_stop_updates_status() {
@@ -188,6 +219,16 @@ test_resume_stopped() {
   assert_contains "$out" '"status":"running"'
 }
 
+test_run_name_flag_resumes_existing() {
+  sbx run claude /tmp/proj --name name-flag-resume < /dev/null
+  sbx stop name-flag-resume
+  sbx run --name name-flag-resume < /dev/null
+  local out
+  out="$(sbx ls --json)"
+  assert_contains "$out" '"name":"name-flag-resume"'
+  assert_contains "$out" '"status":"running"'
+}
+
 # --- Policy Tests ---
 
 test_policy_defaults_seeded() {
@@ -229,6 +270,35 @@ test_policy_rm() {
   local out
   out="$(sbx policy ls)"
   assert_not_contains "$out" "remove-me.com"
+}
+
+test_policy_ls_include_inactive_accepted() {
+  local out
+  out="$(sbx policy ls --include-inactive)"
+  assert_contains "$out" "NAME"
+  assert_contains "$out" "api.anthropic.com"
+}
+
+test_policy_init_allow_all() {
+  local out
+  out="$(sbx policy init allow-all)"
+  assert_contains "$out" "allow-all"
+}
+
+test_policy_set_default_alias() {
+  local out
+  out="$(sbx policy set-default balanced)"
+  assert_contains "$out" "balanced"
+}
+
+test_policy_init_invalid_preset() {
+  local stderr
+  set +e
+  stderr="$(sbx policy init bogus 2>&1 1>/dev/null)"
+  local exit_code=$?
+  set -e
+  assert_eq "$exit_code" "1"
+  assert_contains "$stderr" "unknown preset"
 }
 
 test_policy_log_json() {
@@ -438,12 +508,16 @@ echo ""
 
 echo "Lifecycle:"
 run_test "version"                    test_version
+run_test "version default single line" test_version_default_single_line
+run_test "version debug detail"       test_version_debug_detail
 run_test "help"                       test_help
 run_test "ls empty"                   test_ls_empty
 run_test "run creates sandbox"        test_run_creates_sandbox
 run_test "run default name"           test_run_default_name
 run_test "run custom name"            test_run_custom_name
 run_test "run workspace in json"      test_run_workspace_in_json
+run_test "ls json includes id"        test_ls_json_includes_id
+run_test "ls json id stable"          test_ls_json_id_stable_across_calls
 run_test "stop updates status"        test_stop_updates_status
 run_test "stop clears ports"          test_stop_clears_ports
 run_test "stop not found"             test_stop_not_found
@@ -451,6 +525,7 @@ run_test "rm removes sandbox"         test_rm_removes_sandbox
 run_test "rm not found"               test_rm_not_found
 run_test "rm output message"          test_rm_output_message
 run_test "resume stopped"             test_resume_stopped
+run_test "run --name resumes existing" test_run_name_flag_resumes_existing
 
 echo ""
 echo "Policies:"
@@ -459,6 +534,10 @@ run_test "ls format"                  test_policy_ls_format
 run_test "allow"                      test_policy_allow
 run_test "deny"                       test_policy_deny
 run_test "rm"                         test_policy_rm
+run_test "ls --include-inactive"      test_policy_ls_include_inactive_accepted
+run_test "init allow-all"             test_policy_init_allow_all
+run_test "set-default alias"          test_policy_set_default_alias
+run_test "init invalid preset"        test_policy_init_invalid_preset
 run_test "log json"                   test_policy_log_json
 run_test "log no entries"             test_policy_log_no_entries
 

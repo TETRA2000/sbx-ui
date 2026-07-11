@@ -130,7 +130,9 @@ struct Run: AsyncParsableCommand {
                 let path = "\(dir)/sbx"
                 return FileManager.default.isExecutableFile(atPath: path) ? path : nil
             }.first ?? "sbx"
-        let args = ["sbx", "run", name]
+        // sbx v0.33.0+ deprecated the bare-positional resume form in favor
+        // of --name; see docs/sbx-cli-reference.md.
+        let args = ["sbx", "run", "--name", name]
         // Convert to C strings for execvp
         let cArgs = args.map { strdup($0) } + [nil]
         execvp(sbxPath, cArgs)

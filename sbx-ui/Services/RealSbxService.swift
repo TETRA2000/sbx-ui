@@ -33,8 +33,10 @@ public actor RealSbxService: SbxServiceProtocol {
         var args: [String]
 
         if agent.isEmpty, let name = opts?.name, !name.isEmpty {
-            // Resume mode: sbx run <name> (attaches to agent interactively)
-            args = ["run", name]
+            // Resume mode: sbx run --name <name> (attaches to agent interactively).
+            // sbx v0.33.0+ deprecated the bare-positional resume form in favor of
+            // --name; see docs/sbx-cli-reference.md.
+            args = ["run", "--name", name]
         } else {
             // Create mode: sbx create <agent> <workspace> [--name <name>]
             // Uses `create` (non-blocking) instead of `run` (which attaches interactively).
@@ -71,11 +73,15 @@ public actor RealSbxService: SbxServiceProtocol {
     // MARK: - Network Policies
 
     public func policyList() async throws -> [PolicyRule] {
-        let result = try await cli.exec(command: "sbx", args: ["policy", "ls"])
+        // --include-inactive preserves the pre-v0.32.0 full-visibility behavior:
+        // sbx v0.32.0+ hides inactive rules from `policy ls` by default.
+        let result = try await cli.exec(command: "sbx", args: ["policy", "ls", "--include-inactive"])
         try checkCli(result)
         return SbxOutputParser.parsePolicyList(result.stdout)
     }
 
+    // sbx v0.32.0+ defaults policy allow/deny/rm to global scope; no
+    // --sandbox flag is sent (nor supported) here. See docs/sbx-cli-reference.md.
     public func policyAllow(resources: String) async throws -> PolicyRule {
         let result = try await cli.exec(command: "sbx", args: ["policy", "allow", "network", resources])
         try checkCli(result)
@@ -212,6 +218,14 @@ public actor RealSbxService: SbxServiceProtocol {
 
     public func sendMessage(name: String, message: String) async throws {
         // Delegated to TerminalSessionStore in practice
+    }
+
+    // MARK: - Diagnostics
+
+    public func version() async throws -> SbxVersionInfo {
+        let result = try await cli.exec(command: "sbx", args: ["version"])
+        try checkCli(result)
+        return SbxOutputParser.parseVersion(result.stdout)
     }
 
     // MARK: - Private

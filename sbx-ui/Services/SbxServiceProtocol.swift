@@ -28,6 +28,9 @@ public protocol SbxServiceProtocol: Sendable {
 
     // Session messaging
     func sendMessage(name: String, message: String) async throws
+
+    // Diagnostics
+    func version() async throws -> SbxVersionInfo
 }
 
 public protocol CliExecutorProtocol: Sendable {
@@ -60,6 +63,11 @@ extension SbxLsResponse: Decodable {
 }
 
 struct SbxSandboxJson: Sendable {
+    // New in sbx v0.33.0: a stable per-sandbox id, distinct from name.
+    // Decoded but not yet used for entity identity — Sandbox.id is still
+    // keyed off name (see RealSbxService.list()). Optional/decodable-tolerant
+    // so older-shaped JSON (e.g. pre-A2 mock state) still decodes.
+    let id: String?
     let name: String
     let agent: String
     let status: String
@@ -70,12 +78,13 @@ struct SbxSandboxJson: Sendable {
 
 extension SbxSandboxJson: Decodable {
     enum CodingKeys: String, CodingKey {
-        case name, agent, status, ports
+        case id, name, agent, status, ports
         case socketPath = "socket_path"
         case workspaces
     }
     nonisolated init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         agent = try c.decode(String.self, forKey: .agent)
         status = try c.decode(String.self, forKey: .status)

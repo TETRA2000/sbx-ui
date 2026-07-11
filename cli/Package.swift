@@ -18,6 +18,7 @@ let package = Package(
             sources: [
                 "Models/DomainTypes.swift",
                 "Models/ReleaseChannel.swift",
+                "Models/SbxVersionInfo.swift",
                 "Services/SbxServiceProtocol.swift",
                 "Services/RealSbxService.swift",
                 "Services/CliExecutor.swift",

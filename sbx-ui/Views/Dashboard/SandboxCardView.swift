@@ -99,6 +99,7 @@ struct SandboxCardView: View {
                     }
                 }
             }
+            .accessibilityIdentifier("sandboxCardTapArea-\(sandbox.name)")
 
             // PORTS + ENV chips (outside tap gesture area)
             HStack(spacing: 6) {

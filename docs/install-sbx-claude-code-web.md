@@ -30,10 +30,10 @@ Then download it:
 
 ```bash
 curl -fsSL -o /tmp/docker-sbx.deb \
-  "https://github.com/docker/sbx-releases/releases/download/v0.24.2/DockerSandboxes-linux-amd64-ubuntu2404.deb"
+  "https://github.com/docker/sbx-releases/releases/download/v0.34.0/DockerSandboxes-linux-amd64-ubuntu2404.deb"
 ```
 
-> **Note**: Replace `v0.24.2` with the latest version from the API query above.
+> **Note**: Replace `v0.34.0` with the latest version from the API query above.
 
 ## Step 2: Install the Package
 
@@ -49,10 +49,16 @@ sudo apt-get install -y --no-install-recommends /tmp/docker-sbx.deb
 sbx version
 ```
 
-Expected output:
+Expected output (default, single-line as of v0.32.0):
 
 ```
-Client Version:  v0.24.2 ...
+v0.34.0
+```
+
+For full client/server detail, pass `-D`/`--debug`:
+
+```
+Client Version:  v0.34.0
 Server Version:  Unavailable
 ```
 
@@ -96,14 +102,16 @@ Set a default network policy for sandboxes:
 
 ```bash
 # Allow all outbound network access (most permissive)
-sbx policy set-default allow-all
+sbx policy init allow-all
 
 # Balanced — blocks known-dangerous destinations
-sbx policy set-default balanced
+sbx policy init balanced
 
 # Deny all outbound network access (most restrictive)
-sbx policy set-default deny-all
+sbx policy init deny-all
 ```
+
+(`sbx policy init` was renamed from `sbx policy set-default` in v0.32.0; `set-default` still works as an alias.)
 
 You can also manage fine-grained policies:
 
@@ -130,13 +138,15 @@ sbx create --branch=feature/login claude .
 sbx create claude . /path/to/docs:ro
 ```
 
-Supported agents: `claude`, `codex`, `copilot`, `docker-agent`, `gemini`, `kiro`, `opencode`, `shell`.
+Supported agents: `claude`, `codex`, `copilot`, `docker-agent`, `factory-ai`, `gemini`, `kiro`, `opencode`, `shell`.
 
 ## Step 7: Run an Agent in a Sandbox
 
 ```bash
-sbx run <sandbox-name>
+sbx run --name <sandbox-name>
 ```
+
+(As of v0.33.0, the bare-positional resume form `sbx run <sandbox-name>` is deprecated in favor of `--name`.)
 
 ## Common Commands Reference
 
@@ -145,7 +155,7 @@ sbx run <sandbox-name>
 | `sbx ls` | List all sandboxes |
 | `sbx ls --json` | List sandboxes in JSON format |
 | `sbx create claude .` | Create a Claude sandbox in current dir |
-| `sbx run <name>` | Attach to a sandbox agent |
+| `sbx run --name <name>` | Attach to a sandbox agent |
 | `sbx exec <name> <cmd>` | Execute a command inside a sandbox |
 | `sbx stop <name>` | Stop a sandbox without removing it |
 | `sbx rm <name>` | Remove a sandbox |

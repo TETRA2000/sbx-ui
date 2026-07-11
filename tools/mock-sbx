@@ -146,26 +146,35 @@ cmd_run() {
     esac
   done
 
+  # Attach to / resume an existing sandbox. Two equivalent forms as of
+  # v0.33.0+: the deprecated bare positional (`sbx run <name>`) and the
+  # replacement `sbx run --name <name>` with no other positional.
+  # RealSbxService now always sends the --name form for resume.
+  local attach_name=""
+  if [[ ${#args[@]} -eq 1 ]] && sandbox_exists "${args[0]}"; then
+    attach_name="${args[0]}"
+  elif [[ ${#args[@]} -eq 0 && -n "$name" ]] && sandbox_exists "$name"; then
+    attach_name="$name"
+  fi
+
+  if [[ -n "$attach_name" ]]; then
+    # Resume if stopped
+    local _status
+    _status="$(read_sandbox_field "$attach_name" "status")"
+    if [[ "$_status" == "stopped" ]]; then
+      local tmp="$STATE_DIR/sandboxes/$attach_name.json.tmp"
+      sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$attach_name.json" > "$tmp"
+      mv "$tmp" "$STATE_DIR/sandboxes/$attach_name.json"
+    fi
+    if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
+      interactive_mode "$attach_name" "${agent_args[@]}"
+    fi
+    return
+  fi
+
   if [[ ${#args[@]} -eq 0 ]]; then
     echo "Error: missing arguments for 'run'" >&2
     exit 1
-  fi
-
-  # Single arg: attach to existing sandbox
-  if [[ ${#args[@]} -eq 1 ]] && sandbox_exists "${args[0]}"; then
-    local _name="${args[0]}"
-    # Resume if stopped
-    local _status
-    _status="$(read_sandbox_field "$_name" "status")"
-    if [[ "$_status" == "stopped" ]]; then
-      local tmp="$STATE_DIR/sandboxes/$_name.json.tmp"
-      sed 's/"status":"stopped"/"status":"running"/' "$STATE_DIR/sandboxes/$_name.json" > "$tmp"
-      mv "$tmp" "$STATE_DIR/sandboxes/$_name.json"
-    fi
-    if [[ -t 0 || -n "${SBX_MOCK_FORCE_INTERACTIVE:-}" ]]; then
-      interactive_mode "$_name" "${agent_args[@]}"
-    fi
-    return
   fi
 
   agent="${args[0]}"
@@ -206,10 +215,11 @@ cmd_run() {
   fi
 
   # Create new sandbox
-  local ws_escaped
+  local ws_escaped sbx_id
   ws_escaped="$(json_escape "$workspace")"
-  printf '{"name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
-    "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
+  sbx_id="sbx_$(gen_uuid)"
+  printf '{"id":"%s","name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
+    "$sbx_id" "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
   printf '[]' > "$STATE_DIR/ports/$name.json"
 
   echo "✓ Created sandbox '$name'"
@@ -279,10 +289,11 @@ cmd_create() {
 
   validate_name "$name"
 
-  local ws_escaped
+  local ws_escaped sbx_id
   ws_escaped="$(json_escape "$workspace")"
-  printf '{"name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
-    "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
+  sbx_id="sbx_$(gen_uuid)"
+  printf '{"id":"%s","name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
+    "$sbx_id" "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
   printf '[]' > "$STATE_DIR/ports/$name.json"
 
   echo "✓ Created sandbox '$name'"
@@ -290,7 +301,7 @@ cmd_create() {
   echo "  Agent: $agent"
   echo ""
   echo "To connect to this sandbox, run:"
-  echo "  sbx run $name"
+  echo "  sbx run --name $name"
 }
 
 # --- Interactive Mode ---
@@ -372,16 +383,28 @@ cmd_policy() {
   local subcmd="${1:-}"
   shift || true
   case "$subcmd" in
-    ls|list) policy_ls "$@" ;;
-    allow)   policy_allow "$@" ;;
-    deny)    policy_deny "$@" ;;
-    rm)      policy_rm "$@" ;;
-    log)     policy_log "$@" ;;
-    *)       echo "Error: unknown policy command '$subcmd'" >&2; exit 1 ;;
+    ls|list)     policy_ls "$@" ;;
+    allow)       policy_allow "$@" ;;
+    deny)        policy_deny "$@" ;;
+    rm)          policy_rm "$@" ;;
+    log)         policy_log "$@" ;;
+    init)        policy_init "$@" ;;
+    set-default) policy_init "$@" ;; # silent alias — pre-v0.32.0 name, one transition release
+    *)           echo "Error: unknown policy command '$subcmd'" >&2; exit 1 ;;
   esac
 }
 
 policy_ls() {
+  # sbx policy ls [--type network] [--include-inactive]
+  # --include-inactive is accepted but a no-op: the mock has no
+  # active/inactive rule concept, so this is a deliberate simplification.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --include-inactive) shift ;;
+      --type) shift 2 ;;
+      *) shift ;;
+    esac
+  done
   printf '%-45s%-10s%-11s%s\n' "NAME" "TYPE" "DECISION" "RESOURCES"
   for f in "$STATE_DIR/policies/"*.json; do
     [[ -f "$f" ]] || continue
@@ -395,6 +418,19 @@ policy_ls() {
   done
 }
 
+policy_init() {
+  # sbx policy init <preset> (renamed from `set-default` in v0.32.0)
+  local preset="${1:-}"
+  case "$preset" in
+    allow-all|balanced|deny-all) ;;
+    "") echo "Error: missing preset (allow-all|balanced|deny-all)" >&2; exit 1 ;;
+    *)  echo "Error: unknown preset '$preset'" >&2; exit 1 ;;
+  esac
+  echo "Default network policy set to: $preset"
+}
+
+# sbx v0.32.0+: policy allow/deny/rm operate on the global policy set; no
+# --sandbox/-g/--global flag is sent or expected. Mirrors RealSbxService.
 policy_allow() {
   # sbx policy allow network <resources>
   [[ "${1:-}" == "network" ]] && shift
@@ -689,8 +725,20 @@ cmd_exec() {
 # --- Other Commands ---
 
 cmd_version() {
-  echo "Client Version:  v0.99.0-mock (mock-sbx)"
-  echo "Server Version:  v0.99.0-mock (mock-sbx)"
+  # sbx version [-D|--debug]
+  local debug=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -D|--debug) debug=true; shift ;;
+      *) shift ;;
+    esac
+  done
+  if $debug; then
+    echo "Client Version:  v0.99.0-mock (mock-sbx)"
+    echo "Server Version:  v0.99.0-mock (mock-sbx)"
+  else
+    echo "v0.99.0-mock (mock-sbx)"
+  fi
 }
 
 cmd_help() {
@@ -729,7 +777,7 @@ case "${1:-}" in
   policy)       shift; cmd_policy "$@" ;;
   ports)        shift; cmd_ports "$@" ;;
   exec)         shift; cmd_exec "$@" ;;
-  version)      cmd_version ;;
+  version)      shift; cmd_version "$@" ;;
   help|--help|-h) cmd_help ;;
   "")           cmd_help ;;
   *)            echo "Error: unknown command '$1'" >&2; exit 1 ;;

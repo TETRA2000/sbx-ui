@@ -52,10 +52,10 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 ## Project Details
 
 ### Reference
-- **`docs/sbx-cli-reference.md`** — Verified sbx CLI v0.23.0 command syntax, output formats, JSON schemas, and error patterns
+- **`docs/sbx-cli-reference.md`** — Verified sbx CLI v0.34.0 command syntax, output formats, JSON schemas, and error patterns
 - **`docs/mock-sbx.md`** — Documentation for the bash CLI emulator used in integration testing
 - **`docs/linux-cli.md`** — Linux CLI (`sbx-ui-cli`) full command reference
-- **`tools/mock-sbx`** — Bash CLI emulator (32 tests in `tools/mock-sbx-tests.sh`)
+- **`tools/mock-sbx`** — Bash CLI emulator (47 tests in `tools/mock-sbx-tests.sh`)
 
 ### Overview
 sbx-ui is a macOS native desktop GUI (SwiftUI + Swift) that wraps the Docker Sandbox (`sbx`) CLI. It enables developers to manage sandbox lifecycles, network policies, port forwarding, and Claude Code agent sessions without terminal interaction.
@@ -106,8 +106,9 @@ Run from the repo root with `--package-path cli`, or `cd cli` first.
 ### Test Structure
 - **Unit tests**: `sbx-uiTests/sbx_uiTests.swift` — Swift Testing framework (`@Test`, `#expect`)
 - **UI/E2E tests**: `sbx-uiUITests/sbx_uiUITests.swift` — XCTest (`XCTestCase`, `XCTAssertTrue`)
-- **SPM tests**: `cli/Tests/SBXCoreTests/SBXCoreTests.swift` — Swift Testing (25 tests: models, parsers, integration)
-- **CLI mock tests**: `tools/mock-sbx-tests.sh` — Bash test suite (32 tests)
+- **SPM tests**: `cli/Tests/SBXCoreTests/SBXCoreTests.swift` — Swift Testing (39 tests: models, parsers, integration, service argument construction)
+- **SPM CLI E2E tests**: `cli/Tests/CLIE2ETests/` — Swift Testing (80 tests; spawns the compiled `sbx-ui-cli` binary as a subprocess)
+- **CLI mock tests**: `tools/mock-sbx-tests.sh` — Bash test suite (47 tests)
 - All tests use the CLI mock (`tools/mock-sbx`) — no Docker required
 
 ### Test Strategy
@@ -115,10 +116,10 @@ Run from the repo root with `--package-path cli`, or `cd cli` first.
 - Run the full suite to confirm no regressions before considering work done
 
 ### Running Tests
-- Xcode: Product → Test (Cmd+U) runs all 73 tests
+- Xcode: Product → Test (Cmd+U) runs all 370 tests (322 unit + 48 UI)
 - Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
-- Linux/SPM: `swift test --package-path cli` runs all 25 SBXCore tests
-- CLI mock: `bash tools/mock-sbx-tests.sh` runs 32 bash tests
+- Linux/SPM: `swift test --package-path cli` runs all 119 SBXCore + CLIE2E tests
+- CLI mock: `bash tools/mock-sbx-tests.sh` runs 47 bash tests
 
 ### Writing Unit Tests
 

@@ -46,6 +46,16 @@ public enum SbxOutputParser {
         }
     }
 
+    // MARK: - Diagnostics
+
+    /// Best-effort diagnostic breadcrumb for unexpected CLI output shapes.
+    /// Deliberately not `appLog` (MainActor-isolated on macOS) — this stays
+    /// synchronous so parsePolicyList/parsePolicyLog don't need to become async.
+    private nonisolated static func logUnexpectedFormat(_ context: String, header: String) {
+        let line = "[WARN] [SbxOutputParser] unexpected header shape in \(context): \(header)\n"
+        FileHandle.standardError.write(Data(line.utf8))
+    }
+
     // MARK: - Policy List (tabular — no JSON option available)
 
     nonisolated public static func parsePolicyList(_ stdout: String) -> [PolicyRule] {
@@ -59,6 +69,7 @@ public enum SbxOutputParser {
               let typeRange = findColumnRange(header: header, column: "TYPE"),
               let decisionRange = findColumnRange(header: header, column: "DECISION"),
               let resourcesRange = findColumnRange(header: header, column: "RESOURCES") else {
+            logUnexpectedFormat("parsePolicyList", header: header)
             return []
         }
 
@@ -82,7 +93,8 @@ public enum SbxOutputParser {
     nonisolated public static func parsePolicyLog(_ stdout: String) -> [PolicyLogEntry] {
         var results: [PolicyLogEntry] = []
         var currentSection: String? // "allowed" or "blocked"
-        var currentHeader: String?
+        typealias ColumnRange = (start: Int, end: Int)
+        var currentRanges: (sandbox: ColumnRange, host: ColumnRange, proxy: ColumnRange, rule: ColumnRange, count: ColumnRange)?
 
         for line in stdout.components(separatedBy: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -90,37 +102,37 @@ public enum SbxOutputParser {
 
             if trimmed.hasPrefix("Allowed requests:") {
                 currentSection = "allowed"
-                currentHeader = nil
+                currentRanges = nil
                 continue
             }
             if trimmed.hasPrefix("Blocked requests:") {
                 currentSection = "blocked"
-                currentHeader = nil
+                currentRanges = nil
                 continue
             }
 
-            // Detect header row
+            // Detect header row and resolve column positions once, at header time.
             if trimmed.hasPrefix("SANDBOX") {
-                currentHeader = line
+                if let sandboxRange = findColumnRange(header: line, column: "SANDBOX"),
+                   let hostRange = findColumnRange(header: line, column: "HOST"),
+                   let proxyRange = findColumnRange(header: line, column: "PROXY"),
+                   let ruleRange = findColumnRange(header: line, column: "RULE"),
+                   let countRange = findColumnRange(header: line, column: "COUNT") {
+                    currentRanges = (sandboxRange, hostRange, proxyRange, ruleRange, countRange)
+                } else {
+                    logUnexpectedFormat("parsePolicyLog", header: line)
+                    currentRanges = nil
+                }
                 continue
             }
 
-            guard let section = currentSection, let header = currentHeader else { continue }
+            guard let section = currentSection, let ranges = currentRanges else { continue }
 
-            // Parse data row using column positions from header
-            guard let sandboxRange = findColumnRange(header: header, column: "SANDBOX"),
-                  let hostRange = findColumnRange(header: header, column: "HOST"),
-                  let proxyRange = findColumnRange(header: header, column: "PROXY"),
-                  let ruleRange = findColumnRange(header: header, column: "RULE"),
-                  let countRange = findColumnRange(header: header, column: "COUNT") else {
-                continue
-            }
-
-            let sandbox = extractColumn(line: line, range: sandboxRange).trimmingCharacters(in: .whitespaces)
-            let host = extractColumn(line: line, range: hostRange).trimmingCharacters(in: .whitespaces)
-            let proxy = extractColumn(line: line, range: proxyRange).trimmingCharacters(in: .whitespaces)
-            let rule = extractColumn(line: line, range: ruleRange).trimmingCharacters(in: .whitespaces)
-            let countStr = extractColumn(line: line, range: countRange).trimmingCharacters(in: .whitespaces)
+            let sandbox = extractColumn(line: line, range: ranges.sandbox).trimmingCharacters(in: .whitespaces)
+            let host = extractColumn(line: line, range: ranges.host).trimmingCharacters(in: .whitespaces)
+            let proxy = extractColumn(line: line, range: ranges.proxy).trimmingCharacters(in: .whitespaces)
+            let rule = extractColumn(line: line, range: ranges.rule).trimmingCharacters(in: .whitespaces)
+            let countStr = extractColumn(line: line, range: ranges.count).trimmingCharacters(in: .whitespaces)
 
             guard !sandbox.isEmpty else { continue }
 
@@ -151,6 +163,27 @@ public enum SbxOutputParser {
             }
             return PortMapping(hostPort: hostPort, sandboxPort: sbxPort, protocolType: "tcp")
         }
+    }
+
+    // MARK: - Version (sbx version)
+
+    /// Parses `sbx version` output. Handles both the simplified single-line
+    /// default (v0.32.0+, e.g. "v0.34.0") and the `-D`/`--debug` two-line
+    /// "Client Version:"/"Server Version:" detail format.
+    nonisolated public static func parseVersion(_ stdout: String) -> SbxVersionInfo {
+        let lines = stdout.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return SbxVersionInfo(client: "", server: nil, raw: stdout) }
+
+        if let clientLine = lines.first(where: { $0.hasPrefix("Client Version:") }) {
+            let client = clientLine.replacingOccurrences(of: "Client Version:", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            let server = lines.first(where: { $0.hasPrefix("Server Version:") })
+                .map { $0.replacingOccurrences(of: "Server Version:", with: "").trimmingCharacters(in: .whitespaces) }
+            return SbxVersionInfo(client: client, server: server, raw: stdout)
+        }
+        return SbxVersionInfo(client: lines[0], server: nil, raw: stdout)
     }
 
     // MARK: - Environment Variables (/etc/sandbox-persistent.sh)

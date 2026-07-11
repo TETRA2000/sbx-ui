@@ -8,6 +8,7 @@ import XCTest
 class EditorUITestCase: XCTestCase {
     var app: XCUIApplication!
     var workspaceURL: URL!
+    var mockStateDir: String!
 
     private static let projectRoot: String = {
         URL(fileURLWithPath: #filePath)
@@ -27,6 +28,7 @@ class EditorUITestCase: XCTestCase {
         app.launchEnvironment["SBX_CLI_MOCK"] = "1"
 
         let stateDir = NSTemporaryDirectory() + "mock-sbx-\(UUID().uuidString)"
+        self.mockStateDir = stateDir
         app.launchEnvironment["SBX_MOCK_STATE_DIR"] = stateDir
 
         let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -86,6 +88,25 @@ class EditorUITestCase: XCTestCase {
         let exp = XCTNSPredicateExpectation(predicate: enabled, object: deployButton)
         XCTWaiter.wait(for: [exp], timeout: 5)
         deployButton.click()
+    }
+
+    /// Invokes the mock `sbx` binary directly against this test's state dir,
+    /// bypassing the app. Used to simulate an externally-triggered sandbox
+    /// status change so EditorStore.syncSandboxStatus's poll-driven preserve
+    /// path is exercised, not closeSandbox's confirm-before-close path.
+    @discardableResult
+    func runMockSbx(_ args: [String]) -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: Self.toolsDir).appendingPathComponent("sbx")
+        process.arguments = args
+        var env = ProcessInfo.processInfo.environment
+        env["SBX_MOCK_STATE_DIR"] = mockStateDir
+        process.environment = env
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try? process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
     }
 
     /// Path to a real git binary. `/usr/bin/git` is an xcrun shim which fails

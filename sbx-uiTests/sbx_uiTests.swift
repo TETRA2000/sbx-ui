@@ -50,6 +50,7 @@ actor FailingSbxService: SbxServiceProtocol {
     nonisolated func envVarSync(name: String, vars: [EnvVar]) async throws { throw SbxServiceError.cliError("test error") }
     nonisolated func exec(name: String, command: String, args: [String]) async throws -> CliResult { throw SbxServiceError.cliError("test error") }
     nonisolated func sendMessage(name: String, message: String) async throws { throw SbxServiceError.cliError("test error") }
+    nonisolated func version() async throws -> SbxVersionInfo { throw SbxServiceError.cliError("test error") }
 }
 
 /// Minimal in-memory stub for unit testing stores. No delays, no complex logic.
@@ -208,6 +209,10 @@ actor StubSbxService: SbxServiceProtocol {
         guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
         guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
         lastSentMessage = message
+    }
+
+    func version() async throws -> SbxVersionInfo {
+        SbxVersionInfo(client: "v0.34.0", server: "v0.34.0", raw: "v0.34.0")
     }
 }
 
