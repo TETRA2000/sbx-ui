@@ -88,10 +88,10 @@ test_version() {
 test_version_default_single_line() {
   local out
   out="$(sbx version)"
+  # Must be the final statement: run_test invokes this function as an `if`
+  # condition, which suspends errexit for the whole function body, so only
+  # the LAST command's exit status is checked.
   assert_not_contains "$out" "Client Version:"
-  local line_count
-  line_count="$(printf '%s' "$out" | wc -l)"
-  [[ "$line_count" -le 1 ]]
 }
 
 test_version_debug_detail() {
@@ -155,7 +155,9 @@ test_ls_json_id_stable_across_calls() {
   local id1 id2
   id1="$(sbx ls --json | grep -o '"id":"[^"]*"')"
   id2="$(sbx ls --json | grep -o '"id":"[^"]*"')"
-  assert_eq "$id1" "$id2"
+  # Guard first: if grep matched nothing, id1/id2 would both be "" and
+  # assert_eq would pass vacuously without ever checking id presence.
+  [[ -n "$id1" ]] && assert_eq "$id1" "$id2"
 }
 
 test_stop_updates_status() {

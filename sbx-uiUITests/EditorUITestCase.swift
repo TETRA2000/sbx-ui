@@ -102,9 +102,15 @@ class EditorUITestCase: XCTestCase {
         var env = ProcessInfo.processInfo.environment
         env["SBX_MOCK_STATE_DIR"] = mockStateDir
         process.environment = env
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = Pipe()
         process.standardError = Pipe()
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            NSLog("EditorUITestCase.runMockSbx launch failed for \(args): \(error)")
+            return -1
+        }
         process.waitUntilExit()
         return process.terminationStatus
     }

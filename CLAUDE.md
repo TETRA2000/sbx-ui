@@ -200,7 +200,7 @@ private func createSandbox(name: String) {
 ```
 
 ### Available Accessibility Identifiers
-- **Dashboard**: `newSandboxButton`, `sandboxCard-{name}`, `statusChip-{status}`, `stopButton-{name}`, `terminateButton-{name}`, `openShellButton-{name}`, `copyCommandButton-{name}`, `sessionBadge-{name}`, `sessionThumbnail-{name}`
+- **Dashboard**: `newSandboxButton`, `sandboxCard-{name}`, `sandboxCardTapArea-{name}`, `statusChip-{status}`, `stopButton-{name}`, `terminateButton-{name}`, `openShellButton-{name}`, `copyCommandButton-{name}`, `sessionBadge-{name}`, `sessionThumbnail-{name}`
 - **Create Sheet**: `browseButton`, `sandboxNameField`, `deployButton`, `envVarSectionToggle`, `createEnvKeyField`, `createEnvValueField`, `createAddEnvVarButton`
 - **Policies**: `addPolicyButton`, `removePolicy-{resources}`, `domainInput`, `decisionPicker`, `submitPolicyButton`, `logSandboxFilter`, `blockedOnlyToggle`
 - **Ports**: `addPortButton`, `hostPortField`, `sbxPortField`, `publishPortButton`, `unpublishPort-{hostPort}`

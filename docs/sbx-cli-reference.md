@@ -26,7 +26,7 @@ Ports format: `<host_ip>:<host_port>-><sandbox_port>/<protocol>`, comma-separate
 {
   "sandboxes": [
     {
-      "id": "sbx_a1b2c3d4",
+      "id": "sbx_a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "name": "test-ports",
       "agent": "claude",
       "status": "running",
@@ -74,7 +74,7 @@ sbx run claude -- --continue
 # Attach to an existing sandbox with an initial prompt (claude treats the
 # first positional as its initial prompt). sbx-ui uses this exact shape
 # for autonomous Kanban task execution:
-sbx run claude-markdown-jam -- "Implement feature X"
+sbx run --name claude-markdown-jam -- "Implement feature X"
 ```
 
 ### `sbx create` — Create without attaching

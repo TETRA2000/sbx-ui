@@ -66,6 +66,18 @@ json_escape() {
   printf '%s' "$s"
 }
 
+# Writes a freshly-created, running sandbox's JSON state + empty ports file.
+# Shared by cmd_run's create branch and cmd_create.
+write_sandbox_json() {
+  local name="$1" agent="$2" workspace="$3"
+  local ws_escaped sbx_id
+  ws_escaped="$(json_escape "$workspace")"
+  sbx_id="sbx_$(gen_uuid)"
+  printf '{"id":"%s","name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
+    "$sbx_id" "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
+  printf '[]' > "$STATE_DIR/ports/$name.json"
+}
+
 validate_name() {
   local name="$1"
   if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
@@ -172,6 +184,13 @@ cmd_run() {
     return
   fi
 
+  # --name was given but didn't resolve to an existing sandbox — this is a
+  # failed resume attempt, not a missing-arguments error.
+  if [[ ${#args[@]} -eq 0 && -n "$name" ]]; then
+    echo "Error: sandbox '$name' not found" >&2
+    exit 1
+  fi
+
   if [[ ${#args[@]} -eq 0 ]]; then
     echo "Error: missing arguments for 'run'" >&2
     exit 1
@@ -215,12 +234,7 @@ cmd_run() {
   fi
 
   # Create new sandbox
-  local ws_escaped sbx_id
-  ws_escaped="$(json_escape "$workspace")"
-  sbx_id="sbx_$(gen_uuid)"
-  printf '{"id":"%s","name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
-    "$sbx_id" "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
-  printf '[]' > "$STATE_DIR/ports/$name.json"
+  write_sandbox_json "$name" "$agent" "$workspace"
 
   echo "✓ Created sandbox '$name'"
   echo "  Workspace: $workspace (direct mount)"
@@ -289,12 +303,7 @@ cmd_create() {
 
   validate_name "$name"
 
-  local ws_escaped sbx_id
-  ws_escaped="$(json_escape "$workspace")"
-  sbx_id="sbx_$(gen_uuid)"
-  printf '{"id":"%s","name":"%s","agent":"%s","status":"running","socket_path":"/tmp/mock-sbx-socket","workspaces":["%s"]}' \
-    "$sbx_id" "$name" "$agent" "$ws_escaped" > "$STATE_DIR/sandboxes/$name.json"
-  printf '[]' > "$STATE_DIR/ports/$name.json"
+  write_sandbox_json "$name" "$agent" "$workspace"
 
   echo "✓ Created sandbox '$name'"
   echo "  Workspace: $workspace (direct mount)"
@@ -395,16 +404,10 @@ cmd_policy() {
 }
 
 policy_ls() {
-  # sbx policy ls [--type network] [--include-inactive]
-  # --include-inactive is accepted but a no-op: the mock has no
-  # active/inactive rule concept, so this is a deliberate simplification.
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --include-inactive) shift ;;
-      --type) shift 2 ;;
-      *) shift ;;
-    esac
-  done
+  # sbx policy ls [--include-inactive]
+  # --include-inactive (and any other flag) is accepted but ignored: the
+  # mock has no active/inactive rule concept, so this is a deliberate
+  # simplification, and nothing else in this function needs the args.
   printf '%-45s%-10s%-11s%s\n' "NAME" "TYPE" "DECISION" "RESOURCES"
   for f in "$STATE_DIR/policies/"*.json; do
     [[ -f "$f" ]] || continue

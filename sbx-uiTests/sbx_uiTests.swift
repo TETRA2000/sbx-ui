@@ -879,6 +879,41 @@ struct PolicyStoreLoadingStateTests {
     }
 }
 
+// MARK: - buildShellArgs Tests
+
+/// Regression coverage for the sbx v0.33.0+ --name resume migration on the
+/// app's actual interactive launch path (RealTerminalProcessLauncher). The
+/// mock CLI deliberately accepts both the deprecated bare-positional and
+/// --name forms, so nothing else in the suite would catch a reversion here.
+struct BuildShellArgsTests {
+    @Test func agentSessionUsesNameFlag() {
+        let args = buildShellArgs(sessionType: .agent, sandboxName: "my-sandbox", initialPrompt: nil, mockMode: false)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("sbx run --name"))
+        #expect(!script.contains("sbx run '"))
+    }
+
+    @Test func kanbanTaskSessionUsesNameFlag() {
+        let args = buildShellArgs(sessionType: .kanbanTask, sandboxName: "my-sandbox", initialPrompt: "do the thing", mockMode: false)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("sbx run --name"))
+        #expect(!script.contains("sbx run '"))
+        #expect(script.contains("do the thing"))
+    }
+
+    @Test func shellSessionUnaffected() {
+        let args = buildShellArgs(sessionType: .shell, sandboxName: "my-sandbox", initialPrompt: nil, mockMode: false)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("sbx exec -it"))
+    }
+
+    @Test func mockModeAppendsKeepAlive() {
+        let args = buildShellArgs(sessionType: .agent, sandboxName: "my-sandbox", initialPrompt: nil, mockMode: true)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("exec cat"))
+    }
+}
+
 // MARK: - TerminalSessionStore Tests
 
 struct TerminalSessionStoreTests {

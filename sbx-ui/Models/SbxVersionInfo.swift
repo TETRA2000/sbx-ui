@@ -20,7 +20,7 @@ public enum SbxCliCompatibilityStatus: String, Sendable {
 /// Compares a detected `sbx` CLI version against the version sbx-ui was
 /// last verified against. Informational only — never blocks an operation.
 public enum SbxCliCompatibility {
-    public static let verifiedVersion = "0.34.0"
+    nonisolated public static let verifiedVersion = "0.34.0"
 
     nonisolated public static func assess(_ rawVersion: String, verifiedVersion: String = verifiedVersion) -> SbxCliCompatibilityStatus {
         guard let detected = SemverLite(parsing: rawVersion),
@@ -33,7 +33,7 @@ public enum SbxCliCompatibility {
 private struct SemverLite: Comparable, Equatable {
     let major: Int, minor: Int, patch: Int
 
-    init?(parsing raw: String) {
+    nonisolated init?(parsing raw: String) {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.hasPrefix("v") { s.removeFirst() }
         if let dash = s.firstIndex(of: "-") { s = String(s[s.startIndex..<dash]) }
@@ -45,7 +45,7 @@ private struct SemverLite: Comparable, Equatable {
         patch = pa
     }
 
-    static func < (l: SemverLite, r: SemverLite) -> Bool {
+    nonisolated static func < (l: SemverLite, r: SemverLite) -> Bool {
         (l.major, l.minor, l.patch) < (r.major, r.minor, r.patch)
     }
 }

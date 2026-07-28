@@ -48,12 +48,22 @@ public enum SbxOutputParser {
 
     // MARK: - Diagnostics
 
-    /// Best-effort diagnostic breadcrumb for unexpected CLI output shapes.
-    /// Deliberately not `appLog` (MainActor-isolated on macOS) — this stays
-    /// synchronous so parsePolicyList/parsePolicyLog don't need to become async.
+    /// Diagnostic breadcrumb for unexpected CLI output shapes. The stderr
+    /// write is the reliable, synchronous signal (matters most for CLI/CI/
+    /// test contexts, which is where this actually runs — RealSbxService.
+    /// policyList() is the only production caller). The appLog call is
+    /// best-effort on top, for visibility in the macOS GUI's Log panel: it
+    /// reuses CliExecutor.swift's DispatchQueue.main.async bridge to reach
+    /// the MainActor-isolated appLog from this nonisolated, synchronous
+    /// context, but that bridge only reliably drains on a pumped run loop
+    /// (the GUI app), so it must not be the only channel — a short-lived
+    /// SPM/Linux/CLI process can exit before a dispatched block ever runs.
     private nonisolated static func logUnexpectedFormat(_ context: String, header: String) {
         let line = "[WARN] [SbxOutputParser] unexpected header shape in \(context): \(header)\n"
         FileHandle.standardError.write(Data(line.utf8))
+        DispatchQueue.main.async {
+            appLog(.warn, "SbxOutputParser", "unexpected header shape in \(context)", detail: header)
+        }
     }
 
     // MARK: - Policy List (tabular — no JSON option available)
@@ -61,7 +71,16 @@ public enum SbxOutputParser {
     nonisolated public static func parsePolicyList(_ stdout: String) -> [PolicyRule] {
         // Filter empty lines (real CLI has blank lines between rules)
         let lines = stdout.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard lines.count > 1 else { return [] }
+
+        // A single line that IS a valid header (no rows) is the legitimate
+        // "no policy rules configured" case, not a format drift — only warn
+        // if that lone line does NOT look like a real header.
+        guard lines.count > 1 else {
+            if let onlyLine = lines.first, findColumnRange(header: onlyLine, column: "NAME") == nil {
+                logUnexpectedFormat("parsePolicyList", header: onlyLine)
+            }
+            return []
+        }
 
         let header = lines[0]
         // Real CLI uses "NAME" column header (not "ID")

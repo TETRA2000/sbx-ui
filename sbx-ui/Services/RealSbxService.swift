@@ -223,7 +223,9 @@ public actor RealSbxService: SbxServiceProtocol {
     // MARK: - Diagnostics
 
     public func version() async throws -> SbxVersionInfo {
-        let result = try await cli.exec(command: "sbx", args: ["version"])
+        // -D gets both client and server version in one call; parseVersion
+        // handles the single-line default too, so this is safe either way.
+        let result = try await cli.exec(command: "sbx", args: ["version", "-D"])
         try checkCli(result)
         return SbxOutputParser.parseVersion(result.stdout)
     }

@@ -242,7 +242,7 @@ Variables are persisted inside the sandbox via `/etc/sandbox-persistent.sh`. The
 9. Tasks with dependencies are marked "BLOCKED" until all upstream tasks complete, then auto-execute.
 
 Each task Start spawns a dedicated `SessionType.kanbanTask` terminal that
-runs `sbx run <sandbox> -- "<prompt>"`. `sbx run` appends the args after
+runs `sbx run --name <sandbox> -- "<prompt>"`. `sbx run` appends the args after
 `--` to its default `claude --dangerously-skip-permissions` invocation, and
 Claude Code's CLI treats the first positional as the
 [initial prompt for an interactive session](https://code.claude.com/docs/en/cli-reference),

@@ -62,6 +62,29 @@ import Foundation
         #expect(SandboxStatus(rawValue: "creating") == .creating)
     }
 
+    @Test func sbxSandboxJsonDecodesWithoutId() throws {
+        // Pre-v0.33.0 real CLIs (and any stale mock state predating this
+        // field) omit "id" entirely — id must decode as nil, not fail.
+        let json = """
+            {"name":"foo","agent":"claude","status":"running"}
+            """
+        let data = Data(json.utf8)
+        let decoded = try JSONDecoder().decode(SbxSandboxJson.self, from: data)
+        #expect(decoded.id == nil)
+        #expect(decoded.name == "foo")
+        #expect(decoded.agent == "claude")
+        #expect(decoded.status == "running")
+    }
+
+    @Test func sbxSandboxJsonDecodesWithId() throws {
+        let json = """
+            {"id":"sbx_abc123","name":"foo","agent":"claude","status":"running"}
+            """
+        let data = Data(json.utf8)
+        let decoded = try JSONDecoder().decode(SbxSandboxJson.self, from: data)
+        #expect(decoded.id == "sbx_abc123")
+    }
+
     @Test func errorDescriptions() {
         let e1 = SbxServiceError.notFound("test-sb")
         #expect(e1.errorDescription?.contains("test-sb") == true)

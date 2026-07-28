@@ -92,9 +92,12 @@ final class EditorE2ETests: EditorUITestCase {
         XCTAssertEqual(runMockSbx(["stop", name]), 0, "external sbx stop should succeed")
 
         // Next SandboxStore poll detects "stopped", drops the stale session,
-        // and the app falls back to the dashboard with no crash.
-        let dashboard = app.staticTexts["DASHBOARD"]
-        XCTAssertTrue(dashboard.waitForExistence(timeout: 10), "should auto-return to dashboard with no crash")
+        // and the app falls back to the dashboard with no crash. "DASHBOARD"
+        // is a permanent sidebar label (visible even inside a session), so
+        // it can't signal this — assert the session-only backToDashboard
+        // button is gone instead.
+        let backButton = app.buttons["backToDashboard"]
+        XCTAssertTrue(backButton.waitForNonExistence(timeout: 10), "should auto-return to dashboard with no crash")
 
         // Resume: tapping a stopped card fires SandboxStore.resumeSandbox.
         // stopButton only renders once status == .running, so wait for it
