@@ -50,6 +50,7 @@ actor FailingSbxService: SbxServiceProtocol {
     nonisolated func envVarSync(name: String, vars: [EnvVar]) async throws { throw SbxServiceError.cliError("test error") }
     nonisolated func exec(name: String, command: String, args: [String]) async throws -> CliResult { throw SbxServiceError.cliError("test error") }
     nonisolated func sendMessage(name: String, message: String) async throws { throw SbxServiceError.cliError("test error") }
+    nonisolated func version() async throws -> SbxVersionInfo { throw SbxServiceError.cliError("test error") }
 }
 
 /// Minimal in-memory stub for unit testing stores. No delays, no complex logic.
@@ -208,6 +209,10 @@ actor StubSbxService: SbxServiceProtocol {
         guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
         guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
         lastSentMessage = message
+    }
+
+    func version() async throws -> SbxVersionInfo {
+        SbxVersionInfo(client: "v0.34.0", server: "v0.34.0", raw: "v0.34.0")
     }
 }
 
@@ -871,6 +876,41 @@ struct PolicyStoreLoadingStateTests {
         await store.fetchPolicies()
         let loading = await store.loading
         #expect(!loading)
+    }
+}
+
+// MARK: - buildShellArgs Tests
+
+/// Regression coverage for the sbx v0.33.0+ --name resume migration on the
+/// app's actual interactive launch path (RealTerminalProcessLauncher). The
+/// mock CLI deliberately accepts both the deprecated bare-positional and
+/// --name forms, so nothing else in the suite would catch a reversion here.
+struct BuildShellArgsTests {
+    @Test func agentSessionUsesNameFlag() {
+        let args = buildShellArgs(sessionType: .agent, sandboxName: "my-sandbox", initialPrompt: nil, mockMode: false)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("sbx run --name"))
+        #expect(!script.contains("sbx run '"))
+    }
+
+    @Test func kanbanTaskSessionUsesNameFlag() {
+        let args = buildShellArgs(sessionType: .kanbanTask, sandboxName: "my-sandbox", initialPrompt: "do the thing", mockMode: false)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("sbx run --name"))
+        #expect(!script.contains("sbx run '"))
+        #expect(script.contains("do the thing"))
+    }
+
+    @Test func shellSessionUnaffected() {
+        let args = buildShellArgs(sessionType: .shell, sandboxName: "my-sandbox", initialPrompt: nil, mockMode: false)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("sbx exec -it"))
+    }
+
+    @Test func mockModeAppendsKeepAlive() {
+        let args = buildShellArgs(sessionType: .agent, sandboxName: "my-sandbox", initialPrompt: nil, mockMode: true)
+        let script = args.joined(separator: " ")
+        #expect(script.contains("exec cat"))
     }
 }
 

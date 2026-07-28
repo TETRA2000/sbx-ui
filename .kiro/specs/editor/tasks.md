@@ -196,7 +196,7 @@ Tasks are ordered for incremental delivery: foundational data layer first, then 
   - Verify that change-type badges display the correct labels for modified and added files.
   - _Requirements: 14.2_
 
-- [ ] 10.3 (P) XCUITest coverage for sandbox-stop preservation
+- [x] 10.3 (P) XCUITest coverage for sandbox-stop preservation
   - Open a file, edit it, stop the sandbox from the dashboard, confirm the dashboard becomes the current view with no crash, restart the sandbox, re-enter the session, and assert the prior tab set, active tab, and dirty state are restored.
   - _Requirements: 14.5_
 

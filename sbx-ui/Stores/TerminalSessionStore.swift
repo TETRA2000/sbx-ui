@@ -15,32 +15,41 @@ func shellSingleQuote(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
+/// Composes the `/bin/zsh -c <script>` args for a terminal session launch.
+/// Pulled out of `RealTerminalProcessLauncher.launch` so the exact command
+/// shape (in particular, that resume/attach always uses `sbx run --name`,
+/// not the deprecated bare-positional form) is independently unit-testable.
+func buildShellArgs(sessionType: SessionType, sandboxName: String, initialPrompt: String?, mockMode: Bool) -> [String] {
+    // In mock mode, `exec cat` keeps the PTY alive so UI tests can assert on session state.
+    // In real mode, the process exits when sbx finishes, triggering onProcessExit → disconnect.
+    let keepAlive = mockMode ? "; exec cat" : ""
+    let quotedName = shellSingleQuote(sandboxName)
+    switch sessionType {
+    case .agent:
+        // sbx v0.33.0+ deprecated the bare-positional resume form in
+        // favor of --name; see docs/sbx-cli-reference.md.
+        return ["-c", "sbx run --name \(quotedName)\(keepAlive)"]
+    case .shell:
+        return ["-c", "sbx exec -it \(quotedName) bash\(keepAlive)"]
+    case .kanbanTask:
+        // Kanban tasks run through `sbx run --name <sandbox> -- '<prompt>'`.
+        // sbx forwards args after `--` to its default
+        // `claude --dangerously-skip-permissions` launch, so this becomes
+        // `claude --dangerously-skip-permissions '<prompt>'` — claude
+        // consumes the prompt from argv at startup, which avoids the Ink
+        // TUI "bare \r not recognized as submit" problem. Each task
+        // spawns its own fresh session.
+        let trimmedPrompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let promptSegment = trimmedPrompt.isEmpty ? "" : " -- \(shellSingleQuote(trimmedPrompt))"
+        return ["-c", "sbx run --name \(quotedName)\(promptSegment)\(keepAlive)"]
+    }
+}
+
 struct RealTerminalProcessLauncher: TerminalProcessLauncher {
     func launch(on terminalView: FocusableTerminalView, sandboxName: String, sessionType: SessionType, initialPrompt: String?) {
         let shellPath = "/bin/zsh"
-        // In mock mode, `exec cat` keeps the PTY alive so UI tests can assert on session state.
-        // In real mode, the process exits when sbx finishes, triggering onProcessExit → disconnect.
         let mockMode = ProcessInfo.processInfo.environment["SBX_CLI_MOCK"] == "1"
-        let keepAlive = mockMode ? "; exec cat" : ""
-        let quotedName = shellSingleQuote(sandboxName)
-        let args: [String]
-        switch sessionType {
-        case .agent:
-            args = ["-c", "sbx run \(quotedName)\(keepAlive)"]
-        case .shell:
-            args = ["-c", "sbx exec -it \(quotedName) bash\(keepAlive)"]
-        case .kanbanTask:
-            // Kanban tasks run through `sbx run <sandbox> -- '<prompt>'`.
-            // sbx forwards args after `--` to its default
-            // `claude --dangerously-skip-permissions` launch, so this becomes
-            // `claude --dangerously-skip-permissions '<prompt>'` — claude
-            // consumes the prompt from argv at startup, which avoids the Ink
-            // TUI "bare \r not recognized as submit" problem. Each task
-            // spawns its own fresh session.
-            let trimmedPrompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let promptSegment = trimmedPrompt.isEmpty ? "" : " -- \(shellSingleQuote(trimmedPrompt))"
-            args = ["-c", "sbx run \(quotedName)\(promptSegment)\(keepAlive)"]
-        }
+        let args = buildShellArgs(sessionType: sessionType, sandboxName: sandboxName, initialPrompt: initialPrompt, mockMode: mockMode)
         var env: [String] = []
         var hasTerm = false
         var resolvedPath = ""

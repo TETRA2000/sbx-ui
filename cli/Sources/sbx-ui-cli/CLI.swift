@@ -19,6 +19,7 @@ struct SbxUI: AsyncParsableCommand {
             Ports.self,
             Env.self,
             Status.self,
+            Doctor.self,
         ],
         defaultSubcommand: Ls.self
     )

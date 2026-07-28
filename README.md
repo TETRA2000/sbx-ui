@@ -164,12 +164,23 @@ sbx-ui/
     Package.swift                  # SPM manifest (SBXCore + sbx-ui-cli), placed here so Xcode doesn't auto-discover it
     SBXCore/                       # Symlinks to ../../sbx-ui/{Models,Services}
     Sources/sbx-ui-cli/            # Linux CLI sources
-    Tests/                         # SBXCoreTests + CLIE2ETests
+      CLI.swift                    # @main entry point
+      Commands.swift               # Sandbox lifecycle commands
+      PolicyCommands.swift         # Network policy commands
+      PortsCommands.swift          # Port forwarding commands
+      EnvCommands.swift            # Environment variable commands
+      DoctorCommand.swift          # sbx CLI version compatibility check
+      Formatting.swift             # ANSI table output
+    Tests/
+      SBXCoreTests/
+        SBXCoreTests.swift        # SPM tests (models, parsers, integration)
+      CLIE2ETests/                # Subprocess E2E tests against the compiled sbx-ui-cli binary
   sbx-ui/
     sbx_uiApp.swift                # macOS app entry point
     Models/
       DomainTypes.swift            # Sandbox, PolicyRule, PortMapping, EnvVar, etc.
       KanbanTypes.swift            # KanbanTask, KanbanColumn, KanbanBoard
+      SbxVersionInfo.swift         # sbx CLI version/compatibility model
     Services/
       SbxServiceProtocol.swift     # Service protocol + JSON response types
       RealSbxService.swift         # CLI-backed implementation
@@ -182,26 +193,15 @@ sbx-ui/
     Views/                         # macOS-only SwiftUI views
     DesignSystem/                  # macOS-only theme
     Plugins/                       # Plugin system
-  Sources/
-    sbx-ui-cli/                    # Linux CLI executable
-      CLI.swift                    # @main entry point
-      Commands.swift               # Sandbox lifecycle commands
-      PolicyCommands.swift         # Network policy commands
-      PortsCommands.swift          # Port forwarding commands
-      EnvCommands.swift            # Environment variable commands
-      Formatting.swift             # ANSI table output
-  Tests/
-    SBXCoreTests/
-      SBXCoreTests.swift           # SPM tests (25 tests, Swift Testing)
   sbx-uiTests/
     sbx_uiTests.swift             # Xcode unit tests (Swift Testing)
   sbx-uiUITests/
     sbx_uiUITests.swift           # Xcode UI/E2E tests (XCTest)
   tools/
     mock-sbx                       # CLI mock (bash)
-    mock-sbx-tests.sh             # CLI mock test suite (32 tests)
+    mock-sbx-tests.sh             # CLI mock test suite (47 tests)
   docs/
-    sbx-cli-reference.md          # sbx CLI v0.23.0 reference
+    sbx-cli-reference.md          # sbx CLI v0.34.0 reference
     mock-sbx.md                   # CLI mock documentation
     kanban-design.md              # Kanban feature design document
     linux-cli.md                  # Linux CLI reference
@@ -242,7 +242,7 @@ Variables are persisted inside the sandbox via `/etc/sandbox-persistent.sh`. The
 9. Tasks with dependencies are marked "BLOCKED" until all upstream tasks complete, then auto-execute.
 
 Each task Start spawns a dedicated `SessionType.kanbanTask` terminal that
-runs `sbx run <sandbox> -- "<prompt>"`. `sbx run` appends the args after
+runs `sbx run --name <sandbox> -- "<prompt>"`. `sbx run` appends the args after
 `--` to its default `claude --dangerously-skip-permissions` invocation, and
 Claude Code's CLI treats the first positional as the
 [initial prompt for an interactive session](https://code.claude.com/docs/en/cli-reference),
@@ -292,15 +292,18 @@ All tests use the CLI mock (`tools/mock-sbx`). No Docker Desktop is required to 
 
 | Platform | Command | Tests |
 |----------|---------|-------|
-| macOS (Xcode) | Product -> Test (Cmd+U) | 73 unit + UI tests |
-| Linux (SPM) | `swift test --package-path cli` | 25 unit + integration tests |
-| CLI mock | `bash tools/mock-sbx-tests.sh` | 32 bash tests |
+| macOS (Xcode) | Product -> Test (Cmd+U) | 370 unit + UI tests (322 unit + 48 UI) |
+| Linux (SPM) | `swift test --package-path cli` | 119 unit + integration tests (39 SBXCoreTests + 80 CLIE2ETests) |
+| CLI mock | `bash tools/mock-sbx-tests.sh` | 47 bash tests |
+
+Counted via `grep -rc '@Test' <dir>/*.swift` / `grep -rc 'func test' <dir>/*.swift` / `grep -c '^run_test ' tools/mock-sbx-tests.sh` — recount after adding tests rather than trusting this table.
 
 ### Test Structure
 
 - **Xcode unit tests** (`sbx-uiTests/sbx_uiTests.swift`) -- Swift Testing framework (`@Test`, `#expect`). Tests stores and service logic using `StubSbxService` and `FailingSbxService`.
 - **Xcode UI/E2E tests** (`sbx-uiUITests/sbx_uiUITests.swift`) -- XCTest framework (`XCTestCase`). Launches the app with `SBX_CLI_MOCK=1` and exercises full user flows via XCUITest.
 - **SPM tests** (`cli/Tests/SBXCoreTests/SBXCoreTests.swift`) -- Swift Testing framework. Tests models, parsers, and service layer with mock-sbx integration on Linux.
+- **SPM CLI E2E tests** (`cli/Tests/CLIE2ETests/`) -- Swift Testing framework. Spawns the compiled `sbx-ui-cli` binary as a subprocess against mock-sbx and asserts on its stdout/exit code.
 - **CLI mock tests** (`tools/mock-sbx-tests.sh`) -- Bash test suite validating the mock CLI behavior against expected `sbx` CLI output formats.
 
 ### Key Testing Patterns
@@ -314,8 +317,8 @@ All tests use the CLI mock (`tools/mock-sbx`). No Docker Desktop is required to 
 
 | Workflow | Trigger | Runner | What it does |
 |----------|---------|--------|-------------|
-| **Tests** | push/PR to main | macOS | Xcode unit + UI tests |
-| **Linux CLI Tests** | push/PR to main (cli/** and shared Model/Service paths) | Ubuntu | `swift build --package-path cli` + `swift test --package-path cli` + release build |
+| **Tests** | push/PR to main | macOS | mock-sbx bash tests + Xcode unit tests (XCUITest is not run on CI — see `tests.yml`) |
+| **Linux CLI Tests** | push/PR to main (no path filter) | Ubuntu | `swift build --package-path cli` + `swift test --package-path cli` + release build |
 | **SDK Tests** | push/PR to main (sdk/ paths) | Ubuntu | TypeScript + Python SDK tests |
 | **Build** | push to main | macOS | Release archives for canary/beta/stable |
 

@@ -220,7 +220,7 @@ same approach used by [Cline Kanban](https://github.com/cline/kanban)
 The `--` form works equally well for existing sandboxes:
 
 ```sh
-sbx run claude-markdown-jam -- "Implement the new feature"
+sbx run --name claude-markdown-jam -- "Implement the new feature"
 ```
 
 **Implementation:** Kanban tasks use a dedicated `SessionType.kanbanTask`

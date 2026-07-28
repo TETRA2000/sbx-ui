@@ -24,7 +24,7 @@ struct HelpAndVersionTests {
         // All subcommands should be listed on the help screen.
         let subcommands = [
             "ls", "create", "stop", "rm", "run", "exec",
-            "policy", "ports", "env", "status",
+            "policy", "ports", "env", "status", "doctor",
         ]
         for sub in subcommands {
             #expect(result.stdout.contains(sub), "help should list '\(sub)'")
@@ -41,13 +41,35 @@ struct HelpAndVersionTests {
     }
 
     @Test(arguments: [
-        "ls", "create", "stop", "rm", "run", "exec", "status",
+        "ls", "create", "stop", "rm", "run", "exec", "status", "doctor",
     ])
     func subcommandHelp(sub: String) throws {
         let runner = try CLIRunner()
         let result = try runner.run([sub, "--help"])
         #expect(result.succeeded, "\(sub) --help failed: \(result.stderr)")
         #expect(result.stdout.contains("USAGE:"))
+    }
+
+    @Test func doctorAgainstMock() throws {
+        let runner = try CLIRunner()
+        let result = try runner.run(["doctor"])
+        #expect(result.succeeded)
+        #expect(result.stdout.contains("mock-sbx"))
+    }
+
+    @Test func doctorJson() throws {
+        let runner = try CLIRunner()
+        let result = try runner.run(["doctor", "--json"])
+        #expect(result.succeeded)
+        let parsed = try parseJSON(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let json = parsed as? [String: Any] else {
+            Issue.record("expected JSON object, got \(type(of: parsed))")
+            return
+        }
+        #expect(json["client_version"] != nil)
+        // mock-sbx reports "v0.99.0-mock (mock-sbx)", which is newer than
+        // sbx-ui's verifiedVersion under semver-lite comparison.
+        #expect(json["status"] as? String == "newerThanVerified")
     }
 
     @Test(arguments: [

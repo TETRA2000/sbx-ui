@@ -1,6 +1,8 @@
-# sbx CLI Reference (v0.23.0)
+# sbx CLI Reference (v0.34.0)
 
-Verified against real `sbx` CLI on 2026-04-04. This document captures the actual command syntax, output formats, and JSON schemas for all operations used by sbx-ui.
+Bumped from v0.23.0 to v0.34.0 on 2026-07-11 to track upstream `sbx` releases; pending re-verification against a real installed v0.34.0 binary (the v0.23.0 baseline was last independently verified 2026-04-04). This document captures the actual command syntax, output formats, and JSON schemas for all operations used by sbx-ui.
+
+> **Future**: v0.35.0-rc1 (in progress upstream) previews a `policy` tooling revamp — `policy ls --wide/--source/--decision` and new `policy inspect`/`policy check network` subcommands. Not yet stable; do not build against it.
 
 ## Sandbox Lifecycle
 
@@ -24,6 +26,7 @@ Ports format: `<host_ip>:<host_port>-><sandbox_port>/<protocol>`, comma-separate
 {
   "sandboxes": [
     {
+      "id": "sbx_a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "name": "test-ports",
       "agent": "claude",
       "status": "running",
@@ -39,6 +42,8 @@ Ports format: `<host_ip>:<host_port>-><sandbox_port>/<protocol>`, comma-separate
 
 Note: `ports` field is absent (not empty array) when no ports are published. `workspaces` is an array.
 
+Note: as of v0.33.0, sandboxes have a stable `id` field distinct from `name`. sbx-ui decodes it but does not yet use it for entity identity — `RealSbxService.list()` still keys `Sandbox.id` off `name`.
+
 ### `sbx run` — Run agent in sandbox
 ```
 sbx run [flags] SANDBOX | AGENT [PATH...] [-- AGENT_ARGS...]
@@ -49,6 +54,13 @@ Flags: `--name <name>`, `--branch <branch>`, `-m <memory>`, `-t <template>`, `--
 - Creates sandbox if it doesn't exist; attaches to existing one if it does
 - Default name: `<agent>-<workdir>` (e.g., `claude-myproject`)
 - Agents: claude, codex, copilot, docker-agent, factory-ai, gemini, kiro, opencode, shell
+
+**Deprecation (v0.33.0)**: attaching/resuming via bare positional (`sbx run <existing-sandbox-name>`) is deprecated in favor of `sbx run --name <existing-sandbox-name>` (no other positional). sbx-ui uses the `--name` form for all resume/attach calls.
+
+```sh
+# Resume an existing sandbox by name (current form; sbx-ui uses this)
+sbx run --name claude-myproject
+```
 
 Arguments after `--` are forwarded to the agent CLI, **appended to sbx's
 default launch command**. For claude this means they are appended to
@@ -62,7 +74,7 @@ sbx run claude -- --continue
 # Attach to an existing sandbox with an initial prompt (claude treats the
 # first positional as its initial prompt). sbx-ui uses this exact shape
 # for autonomous Kanban task execution:
-sbx run claude-markdown-jam -- "Implement feature X"
+sbx run --name claude-markdown-jam -- "Implement feature X"
 ```
 
 ### `sbx create` — Create without attaching
@@ -154,10 +166,12 @@ All policy commands use the `network` subcommand for the resource type.
 
 ### `sbx policy ls` — List policies
 ```
-sbx policy ls [--type network]
+sbx policy ls [--type network] [--include-inactive]
 ```
 
 Note: command is `ls` not `list`.
+
+Note: as of v0.32.0, inactive rules are hidden by default; pass `--include-inactive` to see all rules. sbx-ui always passes `--include-inactive` to preserve the pre-v0.32.0 full-visibility behavior.
 
 Table output:
 ```
@@ -170,6 +184,8 @@ local:6b0dfb29-a64e-48cc-8a3a-6e35a40704ba   network   deny       evil.example.c
 ```
 
 Note: Column header is `NAME` (not `ID`). Rules have blank line separators between them. Name format for user-added rules: `local:<uuid>`.
+
+As of v0.32.0, `policy allow/deny/rm` default to **global** scope (previously per-sandbox); the old `-g`/`--global` flag is deprecated since global is simply the behavior now. sbx-ui passes no scope flag to any of these three commands.
 
 ### `sbx policy allow network` — Add allow rule
 ```
@@ -192,6 +208,15 @@ sbx policy rm network --id <uuid>
 ```
 
 Output: `Policy removed: resources=<resource>`
+
+### `sbx policy init` — Set default network policy preset
+```
+sbx policy init <preset>
+```
+
+Presets: `allow-all` (most permissive), `balanced` (blocks known-dangerous destinations), `deny-all` (most restrictive).
+
+Note: renamed from `sbx policy set-default` in v0.32.0; `set-default` remains a silent alias for one transition release, then will be dropped.
 
 ### `sbx policy log` — View policy logs
 ```
@@ -241,6 +266,26 @@ Note: Output is grouped into "Allowed requests:" and "Blocked requests:" section
 }
 ```
 
+## Version Information
+
+### `sbx version` — Show version
+```
+sbx version [-D|--debug]
+```
+
+Default output (single line, as of v0.32.0):
+```
+v0.34.0
+```
+
+`-D`/`--debug` output (detail):
+```
+Client Version:  v0.34.0
+Server Version:  v0.34.0
+```
+
+`Server Version` may read `Unavailable` before `sbx login`/daemon start.
+
 ## Error Patterns
 
 | Scenario | stderr | Exit Code |
@@ -257,4 +302,4 @@ Observed: `running`, `stopped`. The `creating` and `removing` states are transie
 
 ## Available Agents
 
-claude, codex, copilot, docker-agent, gemini, kiro, opencode, shell
+claude, codex, copilot, docker-agent, factory-ai, gemini, kiro, opencode, shell

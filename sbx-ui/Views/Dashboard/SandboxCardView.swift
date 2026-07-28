@@ -99,6 +99,12 @@ struct SandboxCardView: View {
                     }
                 }
             }
+            // Plain VStacks aren't reliably found by XCUITest as their own
+            // element (see CLAUDE.md) — .accessibilityElement() makes this
+            // tap region a distinct, independently-queryable element nested
+            // inside the outer .accessibilityElement(children: .contain).
+            .accessibilityElement()
+            .accessibilityIdentifier("sandboxCardTapArea-\(sandbox.name)")
 
             // PORTS + ENV chips (outside tap gesture area)
             HStack(spacing: 6) {
