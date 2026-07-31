@@ -1,6 +1,6 @@
 import Foundation
 
-public protocol SbxServiceProtocol: Sendable {
+public nonisolated protocol SbxServiceProtocol: Sendable {
     // Lifecycle
     func list() async throws -> [Sandbox]
     func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox
@@ -33,7 +33,7 @@ public protocol SbxServiceProtocol: Sendable {
     func version() async throws -> SbxVersionInfo
 }
 
-public protocol CliExecutorProtocol: Sendable {
+public nonisolated protocol CliExecutorProtocol: Sendable {
     func exec(command: String, args: [String]) async throws -> CliResult
     func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T
 }
