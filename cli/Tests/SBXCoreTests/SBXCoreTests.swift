@@ -404,7 +404,7 @@ import Foundation
 // binary.
 
 actor SpyCliExecutor: CliExecutorProtocol {
-    private(set) var calls: [(command: String, args: [String])] = []
+    private(set) var calls: [(command: String, args: [String], timeout: Duration?)] = []
     private var stubbedResults: [String: CliResult] = [:]
     private let defaultResult = CliResult(stdout: "", stderr: "", exitCode: 0)
 
@@ -412,12 +412,12 @@ actor SpyCliExecutor: CliExecutorProtocol {
         stubbedResults[argsKey] = result
     }
 
-    func exec(command: String, args: [String]) async throws -> CliResult {
-        calls.append((command, args))
+    func exec(command: String, args: [String], timeout: Duration?) async throws -> CliResult {
+        calls.append((command, args, timeout))
         return stubbedResults[args.joined(separator: " ")] ?? defaultResult
     }
 
-    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
+    func execJson<T: Decodable & Sendable>(command: String, args: [String], timeout: Duration?) async throws -> T {
         fatalError("unused by RealSbxService")
     }
 }

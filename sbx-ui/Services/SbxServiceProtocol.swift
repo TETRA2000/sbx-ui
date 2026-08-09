@@ -34,8 +34,20 @@ public protocol SbxServiceProtocol: Sendable {
 }
 
 public protocol CliExecutorProtocol: Sendable {
-    func exec(command: String, args: [String]) async throws -> CliResult
-    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T
+    func exec(command: String, args: [String], timeout: Duration?) async throws -> CliResult
+    func execJson<T: Decodable & Sendable>(command: String, args: [String], timeout: Duration?) async throws -> T
+}
+
+extension CliExecutorProtocol {
+    /// Default timeout for every CLI call. The sole exception is the
+    /// `sbx run --name` interactive attach, which passes `nil` explicitly.
+    nonisolated public func exec(command: String, args: [String]) async throws -> CliResult {
+        try await exec(command: command, args: args, timeout: .seconds(30))
+    }
+
+    nonisolated public func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
+        try await execJson(command: command, args: args, timeout: .seconds(30))
+    }
 }
 
 public struct CliResult: Sendable {
