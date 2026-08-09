@@ -54,9 +54,15 @@ public struct CliResult: Sendable {
     public let stdout: String
     public let stderr: String
     public let exitCode: Int32
+    /// True when the underlying process output exceeded `ProcessRunner`'s
+    /// retention cap and the head was dropped. Callers that act on `stdout`
+    /// (e.g. plugins) must treat this as a hard failure rather than silently
+    /// consuming truncated output.
+    public let outputTruncated: Bool
 
-    nonisolated public init(stdout: String, stderr: String, exitCode: Int32) {
+    nonisolated public init(stdout: String, stderr: String, exitCode: Int32, outputTruncated: Bool = false) {
         self.stdout = stdout; self.stderr = stderr; self.exitCode = exitCode
+        self.outputTruncated = outputTruncated
     }
 }
 

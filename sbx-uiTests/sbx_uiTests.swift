@@ -61,6 +61,14 @@ actor StubSbxService: SbxServiceProtocol {
     private var envVars: [String: [EnvVar]] = [:]
     private var policyLogs: [PolicyLogEntry] = []
     private(set) var lastSentMessage: String?
+    /// When set, `exec` returns a truncated `CliResult` instead of the usual
+    /// mock output, so callers can be tested against the "output exceeded the
+    /// retention cap" path without a real `ProcessRunner`.
+    private var execTruncated = false
+
+    func setExecTruncated(_ value: Bool) {
+        execTruncated = value
+    }
 
     init() {
         let defaults = [
@@ -201,6 +209,9 @@ actor StubSbxService: SbxServiceProtocol {
     func exec(name: String, command: String, args: [String]) async throws -> CliResult {
         guard let sandbox = sandboxes[name] else { throw SbxServiceError.notFound(name) }
         guard sandbox.status == .running else { throw SbxServiceError.notRunning(name) }
+        if execTruncated {
+            return CliResult(stdout: "", stderr: "", exitCode: 0, outputTruncated: true)
+        }
         let output = "mock exec: \(command) \(args.joined(separator: " "))"
         return CliResult(stdout: output, stderr: "", exitCode: 0)
     }
@@ -2225,6 +2236,20 @@ struct PluginApiHandlerTests {
         let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
             params: ["name": .string("x"), "command": .string("ls")]))
         #expect(r.error?.code == JsonRpcErrorCode.permissionDenied)
+    }
+
+    /// `CliResult.outputTruncated` means the head of stdout was silently
+    /// dropped by `ProcessRunner`'s retention cap — the same corruption this
+    /// branch already refuses to hand to `listChangedFiles`. A plugin acting
+    /// on truncated stdout is exactly as unsafe, so this must surface as an
+    /// error rather than a success result with a lie inside it.
+    @Test func sandboxExec_truncatedOutputSurfacesAsError() async throws {
+        let (svc, h) = try await withSandbox()
+        await svc.setExecTruncated(true)
+        let r = await h.handle(request: JsonRpcRequest(id: .int(1), method: "sandbox/exec",
+            params: ["name": .string("test-sb"), "command": .string("cat"), "args": .array([.string("bigfile")])]))
+        #expect(r.result == nil)
+        #expect(r.error?.code == JsonRpcErrorCode.sandboxError)
     }
 
     // ──────────────────────────────────────────────────

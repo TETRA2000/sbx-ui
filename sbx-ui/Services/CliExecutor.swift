@@ -87,7 +87,7 @@ public struct CliExecutor: CliExecutorProtocol, Sendable {
 
         let stdout = String(data: output.stdout, encoding: .utf8) ?? ""
         let stderr = String(data: output.stderr, encoding: .utf8) ?? ""
-        let result = CliResult(stdout: stdout, stderr: stderr, exitCode: output.exitCode)
+        let result = CliResult(stdout: stdout, stderr: stderr, exitCode: output.exitCode, outputTruncated: output.outputTruncated)
 
         DispatchQueue.main.async {
             if result.exitCode != 0 {
