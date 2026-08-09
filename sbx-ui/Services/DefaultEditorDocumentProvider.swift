@@ -41,12 +41,9 @@ public struct DefaultEditorDocumentProvider: EditorDocumentProvider {
 
     nonisolated public func listChangedFiles(in workspaceRoot: URL) async throws -> [ChangedFileEntry] {
         let root = workspaceRoot.standardizedFileURL
-        let process = Process()
-        process.arguments = ["status", "--porcelain=v1", "-z"]
+
         // Resolve git via PATH; fall back to /usr/bin/git.
-        if let gitURL = Self.resolveGitBinary() {
-            process.executableURL = gitURL
-        } else {
+        guard let gitURL = Self.resolveGitBinary() else {
             await Self.log(.error, "listChangedFiles git not found", detail: root.path)
             throw NSError(
                 domain: EditorErrorDomain,
@@ -54,28 +51,35 @@ public struct DefaultEditorDocumentProvider: EditorDocumentProvider {
                 userInfo: [NSLocalizedDescriptionKey: EditorError.gitUnavailable.errorDescription ?? "git unavailable"]
             )
         }
-        process.currentDirectoryURL = root
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
 
+        let output: ProcessOutput
         do {
-            try process.run()
-        } catch {
-            await Self.log(.error, "listChangedFiles launch failed \(root.path)", detail: (error as NSError).localizedDescription)
-            throw NSError(
-                domain: EditorErrorDomain,
-                code: EditorErrorCode.gitUnavailable.rawValue,
-                userInfo: [NSLocalizedDescriptionKey: EditorError.gitUnavailable.errorDescription ?? "git unavailable"]
+            output = try await ProcessRunner.run(
+                executable: gitURL,
+                arguments: ["status", "--porcelain=v1", "-z"],
+                currentDirectory: root,
+                timeout: .seconds(30)
             )
+        } catch let error as ProcessRunnerError {
+            switch error {
+            case .launchFailed(let message):
+                await Self.log(.error, "listChangedFiles launch failed \(root.path)", detail: message)
+                throw NSError(
+                    domain: EditorErrorDomain,
+                    code: EditorErrorCode.gitUnavailable.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: EditorError.gitUnavailable.errorDescription ?? "git unavailable"]
+                )
+            case .timedOut(let duration):
+                await Self.log(.error, "listChangedFiles timed out \(root.path)", detail: "after \(duration)")
+                throw NSError(
+                    domain: EditorErrorDomain,
+                    code: EditorErrorCode.gitUnavailable.rawValue,
+                    userInfo: [NSLocalizedDescriptionKey: "git status timed out after \(duration)"]
+                )
+            }
         }
-        process.waitUntilExit()
 
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-
-        if process.terminationStatus == 128 {
+        if output.exitCode == 128 {
             await Self.log(.info, "listChangedFiles not a git repo \(root.path)")
             throw NSError(
                 domain: EditorErrorDomain,
@@ -83,17 +87,17 @@ public struct DefaultEditorDocumentProvider: EditorDocumentProvider {
                 userInfo: [NSLocalizedDescriptionKey: EditorError.notGitRepository.errorDescription ?? "not a git repo"]
             )
         }
-        if process.terminationStatus != 0 {
-            let msg = String(data: errData, encoding: .utf8) ?? "git status failed (exit \(process.terminationStatus))"
+        if output.exitCode != 0 {
+            let msg = String(data: output.stderr, encoding: .utf8) ?? "git status failed (exit \(output.exitCode))"
             await Self.log(.error, "listChangedFiles \(root.path)", detail: msg)
             throw NSError(
                 domain: EditorErrorDomain,
-                code: Int(process.terminationStatus),
+                code: Int(output.exitCode),
                 userInfo: [NSLocalizedDescriptionKey: msg]
             )
         }
 
-        let entries = Self.parsePorcelain(data: data, root: root)
+        let entries = Self.parsePorcelain(data: output.stdout, root: root)
         await Self.log(.info, "listChangedFiles \(root.path)", detail: "\(entries.count) entries")
         return entries
     }
