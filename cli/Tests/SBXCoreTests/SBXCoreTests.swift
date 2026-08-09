@@ -435,6 +435,36 @@ actor SpyCliExecutor: CliExecutorProtocol {
         #expect(calls.first?.args == ["run", "--name", "foo"])
     }
 
+    @Test func runResumePassesNilTimeout() async throws {
+        let spy = SpyCliExecutor()
+        let json = """
+            {"sandboxes":[{"id":"sbx_1","name":"foo","agent":"claude","status":"running","socket_path":"/tmp/x","workspaces":["/tmp/foo"]}]}
+            """
+        await spy.stub(argsKey: "ls --json", result: CliResult(stdout: json, stderr: "", exitCode: 0))
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.run(agent: "", workspace: "", opts: RunOptions(name: "foo"))
+        let calls = await spy.calls
+        // Bind first: `calls.first?.timeout` is Duration??, so comparing it to
+        // nil would also pass when no call was recorded at all.
+        let first = try #require(calls.first)
+        #expect(first.args == ["run", "--name", "foo"])
+        // The interactive attach must not be killed by the default timeout.
+        #expect(first.timeout == nil)
+    }
+
+    @Test func runCreateUsesDefaultTimeout() async throws {
+        let spy = SpyCliExecutor()
+        let json = """
+            {"sandboxes":[{"id":"sbx_1","name":"bar","agent":"claude","status":"running","socket_path":"/tmp/x","workspaces":["/tmp/bar"]}]}
+            """
+        await spy.stub(argsKey: "ls --json", result: CliResult(stdout: json, stderr: "", exitCode: 0))
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.run(agent: "claude", workspace: "/tmp/bar", opts: RunOptions(name: "bar"))
+        let calls = await spy.calls
+        let first = try #require(calls.first)
+        #expect(first.timeout == .seconds(30))
+    }
+
     @Test func policyListPassesIncludeInactive() async throws {
         let spy = SpyCliExecutor()
         let svc = RealSbxService(cli: spy)

@@ -31,12 +31,17 @@ public actor RealSbxService: SbxServiceProtocol {
 
     public func run(agent: String, workspace: String, opts: RunOptions?) async throws -> Sandbox {
         var args: [String]
+        let timeout: Duration?
 
         if agent.isEmpty, let name = opts?.name, !name.isEmpty {
             // Resume mode: sbx run --name <name> (attaches to agent interactively).
             // sbx v0.33.0+ deprecated the bare-positional resume form in favor of
             // --name; see docs/sbx-cli-reference.md.
             args = ["run", "--name", name]
+            // This attach is intentionally long-running: SandboxStore.resumeSandbox
+            // fires it without awaiting and clears the busy flag by polling. A
+            // timeout here would terminate the user's interactive session.
+            timeout = nil
         } else {
             // Create mode: sbx create <agent> <workspace> [--name <name>]
             // Uses `create` (non-blocking) instead of `run` (which attaches interactively).
@@ -48,8 +53,9 @@ public actor RealSbxService: SbxServiceProtocol {
                 }
                 args += ["--name", name]
             }
+            timeout = .seconds(30)
         }
-        let result = try await cli.exec(command: "sbx", args: args)
+        let result = try await cli.exec(command: "sbx", args: args, timeout: timeout)
         try checkCli(result)
         // Re-fetch to get the updated sandbox
         let sandboxes = try await list()
