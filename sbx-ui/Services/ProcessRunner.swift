@@ -315,28 +315,35 @@ nonisolated private final class RunSession: @unchecked Sendable {
         cont.resume(with: result)
     }
 
-    /// Only close a handle whose readability handler has already observed
-    /// EOF (and nilled its own `readabilityHandler` from inside itself, see
-    /// the handlers in `run`). Nilling `readabilityHandler` cancels the
-    /// dispatch source asynchronously — it does not wait for a block already
-    /// in flight inside `handle.availableData` to finish. On the
-    /// forced/drain-deadline paths (a grandchild still holding the pipe's
-    /// write end) that block can still be live, and a concurrent `close()`
-    /// races it: EBADF, or an `NSFileHandleOperationException` Swift cannot
-    /// catch. Leaving those handles alone here is safe — once the handler
-    /// eventually sees EOF it nils itself, and the underlying fd closes on
-    /// its own once nothing references the `FileHandle` (which owns it).
+    /// Never call `FileHandle.close()` from here — this method can run
+    /// synchronously *inside* a readability handler: `tryFinish` is invoked
+    /// from `markEOF`, which the handlers in `run` call before returning
+    /// (see the EOF branch there). On swift-corelibs-foundation, `close()`
+    /// does `queue.sync { … }` against the handle's own dispatch-source
+    /// queue to serialize with any in-flight readability event. Calling that
+    /// from inside the very event it would wait for means waiting on the
+    /// queue we are currently running on; libdispatch's deadlock detector
+    /// traps that as an illegal instruction
+    /// (`__DISPATCH_WAIT_FOR_QUEUE__`). That is exactly the SIGILL this
+    /// crashed Linux CI with — Darwin's Foundation happens to tolerate the
+    /// same self-wait, which is why every macOS suite passed.
+    ///
+    /// Instead, just drop every strong reference we hold: the two handle
+    /// ivars, and `process` (which — via `Process.standardOutput`/
+    /// `standardError` — is the only thing keeping the owning `Pipe`, and
+    /// therefore its `FileHandle`s, alive once we let go here). Once nothing
+    /// references a `FileHandle` anymore, its `deinit` closes the underlying
+    /// fd on its own, and deliberately *without* the synchronous queue wait
+    /// `close()` uses — swift-corelibs-foundation's `FileHandle.deinit` calls
+    /// `_immediatelyClose` directly for precisely this reentrancy reason.
+    /// That is safe regardless of whether this particular handle has already
+    /// observed EOF, so there is no need to special-case it here anymore.
     private func releaseHandles() {
         lock.lock()
-        let out = stdoutAtEOF ? stdoutHandle : nil
-        let err = stderrAtEOF ? stderrHandle : nil
         stdoutHandle = nil
         stderrHandle = nil
         process?.terminationHandler = nil
         process = nil
         lock.unlock()
-
-        try? out?.close()
-        try? err?.close()
     }
 }
