@@ -58,7 +58,8 @@ public struct DefaultEditorDocumentProvider: EditorDocumentProvider {
                 executable: gitURL,
                 arguments: ["status", "--porcelain=v1", "-z"],
                 currentDirectory: root,
-                timeout: .seconds(30)
+                timeout: .seconds(30),
+                maxOutputBytes: 64 * 1024 * 1024
             )
         } catch let error as ProcessRunnerError {
             switch error {
@@ -94,6 +95,14 @@ public struct DefaultEditorDocumentProvider: EditorDocumentProvider {
                 domain: EditorErrorDomain,
                 code: Int(output.exitCode),
                 userInfo: [NSLocalizedDescriptionKey: msg]
+            )
+        }
+        if output.outputTruncated {
+            await Self.log(.error, "listChangedFiles output truncated \(root.path)")
+            throw NSError(
+                domain: EditorErrorDomain,
+                code: EditorErrorCode.gitUnavailable.rawValue,
+                userInfo: [NSLocalizedDescriptionKey: "git status output exceeded the retention cap"]
             )
         }
 
