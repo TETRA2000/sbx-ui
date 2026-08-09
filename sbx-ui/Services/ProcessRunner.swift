@@ -135,7 +135,7 @@ public enum ProcessRunner {
 /// handler, the timeout timer and the cancellation handler — each of which
 /// runs on a different queue. All access is guarded by one lock, and the
 /// continuation is resumed exactly once.
-private final class RunSession: @unchecked Sendable {
+nonisolated private final class RunSession: @unchecked Sendable {
     private let lock = NSLock()
     private let maxBytes: Int
 
@@ -157,6 +157,7 @@ private final class RunSession: @unchecked Sendable {
     private var pendingFailure: Error?
     private var forced = false
     private var finished = false
+    private var killIssued = false
 
     init(maxBytes: Int) {
         self.maxBytes = maxBytes
@@ -231,35 +232,60 @@ private final class RunSession: @unchecked Sendable {
 
     /// Timeout or cancellation: kill the child, then resume with `error` once
     /// it has been reaped (or once the hard backstop fires).
+    ///
+    /// Recording the failure and issuing the kill are deliberately separate:
+    /// a cancel that lands before `attach(process:)` (i.e. before
+    /// `process.run()`) has no process to kill yet. `beginFailure` may be
+    /// called again later (once `run()` has launched the child) purely to
+    /// retry the kill — `pendingFailure` is already set by then, so only
+    /// `attemptKill()` needs to run again; nothing else here re-executes
+    /// thanks to `killIssued` / `finished` guards.
     func beginFailure(_ error: Error) {
         lock.lock()
-        let alreadyFailing = pendingFailure != nil || finished
-        if pendingFailure == nil { pendingFailure = error }
-        let proc = process
+        let isNewFailure = pendingFailure == nil
+        if isNewFailure { pendingFailure = error }
+        let alreadyFinished = finished
         lock.unlock()
 
-        guard !alreadyFailing else { return }
+        guard !alreadyFinished else { return }
 
-        if let proc, proc.isRunning {
-            proc.terminate()
-            let pid = proc.processIdentifier
-            DispatchQueue.global().asyncAfter(deadline: .now() + ProcessRunner.asSeconds(ProcessRunner.terminateGrace)) {
-                if proc.isRunning { kill(pid, SIGKILL) }
+        attemptKill()
+
+        if isNewFailure {
+            // Hard backstop: resume even if the child never reports exit.
+            let backstop = ProcessRunner.asSeconds(ProcessRunner.terminateGrace)
+                + ProcessRunner.asSeconds(ProcessRunner.drainGrace)
+            DispatchQueue.global().asyncAfter(deadline: .now() + backstop) { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                self.forced = true
+                self.lock.unlock()
+                self.tryFinish()
             }
         }
 
-        // Hard backstop: resume even if the child never reports exit.
-        let backstop = ProcessRunner.asSeconds(ProcessRunner.terminateGrace)
-            + ProcessRunner.asSeconds(ProcessRunner.drainGrace)
-        DispatchQueue.global().asyncAfter(deadline: .now() + backstop) { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            self.forced = true
-            self.lock.unlock()
-            self.tryFinish()
-        }
-
         tryFinish()
+    }
+
+    /// Sends SIGTERM (escalating to SIGKILL after `terminateGrace`) at most
+    /// once, and only once the child has actually been launched. Safe to
+    /// call repeatedly — a no-op once issued, and a no-op if the process
+    /// hasn't started running yet (nothing to kill; the caller is expected
+    /// to retry once it has).
+    private func attemptKill() {
+        lock.lock()
+        guard !killIssued, let proc = process, proc.isRunning else {
+            lock.unlock()
+            return
+        }
+        killIssued = true
+        lock.unlock()
+
+        proc.terminate()
+        let pid = proc.processIdentifier
+        DispatchQueue.global().asyncAfter(deadline: .now() + ProcessRunner.asSeconds(ProcessRunner.terminateGrace)) {
+            if proc.isRunning { kill(pid, SIGKILL) }
+        }
     }
 
     private func tryFinish() {
@@ -289,19 +315,26 @@ private final class RunSession: @unchecked Sendable {
         cont.resume(with: result)
     }
 
-    /// Clear the readability handlers BEFORE closing the descriptors — closing
-    /// a handle that still has a live dispatch source raises a bad-fd error.
+    /// Only close a handle whose readability handler has already observed
+    /// EOF (and nilled its own `readabilityHandler` from inside itself, see
+    /// the handlers in `run`). Nilling `readabilityHandler` cancels the
+    /// dispatch source asynchronously — it does not wait for a block already
+    /// in flight inside `handle.availableData` to finish. On the
+    /// forced/drain-deadline paths (a grandchild still holding the pipe's
+    /// write end) that block can still be live, and a concurrent `close()`
+    /// races it: EBADF, or an `NSFileHandleOperationException` Swift cannot
+    /// catch. Leaving those handles alone here is safe — once the handler
+    /// eventually sees EOF it nils itself, and the underlying fd closes on
+    /// its own once nothing references the `FileHandle` (which owns it).
     private func releaseHandles() {
         lock.lock()
-        let out = stdoutHandle
-        let err = stderrHandle
+        let out = stdoutAtEOF ? stdoutHandle : nil
+        let err = stderrAtEOF ? stderrHandle : nil
         stdoutHandle = nil
         stderrHandle = nil
         process?.terminationHandler = nil
         lock.unlock()
 
-        out?.readabilityHandler = nil
-        err?.readabilityHandler = nil
         try? out?.close()
         try? err?.close()
     }
