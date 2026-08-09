@@ -22,6 +22,7 @@ let package = Package(
                 "Services/SbxServiceProtocol.swift",
                 "Services/RealSbxService.swift",
                 "Services/CliExecutor.swift",
+                "Services/ProcessRunner.swift",
                 "Services/SbxOutputParser.swift",
                 "Services/ServiceFactory.swift",
                 "Services/LinuxShims.swift",
