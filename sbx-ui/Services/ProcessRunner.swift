@@ -333,6 +333,7 @@ nonisolated private final class RunSession: @unchecked Sendable {
         stdoutHandle = nil
         stderrHandle = nil
         process?.terminationHandler = nil
+        process = nil
         lock.unlock()
 
         try? out?.close()
