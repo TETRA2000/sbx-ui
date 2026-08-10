@@ -451,35 +451,65 @@ nonisolated private final class RunSession: @unchecked Sendable {
         cont.resume(with: result)
     }
 
-    /// Never call `FileHandle.close()` from here — this method can run
-    /// synchronously *inside* a readability handler: `tryFinish` is invoked
-    /// from `markEOF`, which the handlers in `run` call before returning
-    /// (see the EOF branch there). On swift-corelibs-foundation, `close()`
-    /// does `queue.sync { … }` against the handle's own dispatch-source
-    /// queue to serialize with any in-flight readability event. Calling that
-    /// from inside the very event it would wait for means waiting on the
-    /// queue we are currently running on; libdispatch's deadlock detector
-    /// traps that as an illegal instruction
-    /// (`__DISPATCH_WAIT_FOR_QUEUE__`). That is exactly the SIGILL this
-    /// crashed Linux CI with — Darwin's Foundation happens to tolerate the
-    /// same self-wait, which is why every macOS suite passed.
+    /// Releases everything the run held: our two read handles, and `process`
+    /// — which, via `Process.standardOutput`/`standardError`, is the only
+    /// thing keeping the owning `Pipe`s and therefore their `FileHandle`s
+    /// alive once we let go here. Clearing `process` is load-bearing on the
+    /// launch-failure path, where no readability handler ever fires and
+    /// leaving it set leaked six descriptors per failure.
     ///
-    /// Instead, just drop every strong reference we hold: the two handle
-    /// ivars, and `process` (which — via `Process.standardOutput`/
-    /// `standardError` — is the only thing keeping the owning `Pipe`, and
-    /// therefore its `FileHandle`s, alive once we let go here). Once nothing
-    /// references a `FileHandle` anymore, its `deinit` closes the underlying
-    /// fd on its own, and deliberately *without* the synchronous queue wait
-    /// `close()` uses — swift-corelibs-foundation's `FileHandle.deinit` calls
-    /// `_immediatelyClose` directly for precisely this reentrancy reason.
-    /// That is safe regardless of whether this particular handle has already
-    /// observed EOF, so there is no need to special-case it here anymore.
+    /// Two platform constraints pull in opposite directions here, and the
+    /// shape below is the only one that satisfies both. Read both before
+    /// changing anything.
+    ///
+    /// **Never call `FileHandle.close()` *synchronously* from here.** This
+    /// method can run inside a readability handler: `tryFinish` is invoked
+    /// from `markEOF`, which the handlers in `run` call before returning (see
+    /// the EOF branch there). On swift-corelibs-foundation, `close()` does
+    /// `queue.sync { … }` against the handle's own dispatch-source queue to
+    /// serialize with any in-flight readability event — so calling it from
+    /// inside the very event it waits for means waiting on the queue we are
+    /// already running on. libdispatch's deadlock detector traps that as an
+    /// illegal instruction (`__DISPATCH_WAIT_FOR_QUEUE__`), which is the
+    /// SIGILL that crashed Linux CI. Darwin's Foundation happens to tolerate
+    /// the same self-wait, which is why every macOS suite passed.
+    ///
+    /// **But dropping our references is not enough on Linux.** The
+    /// "ARC closes it for us" argument holds on Darwin, where the handles are
+    /// deallocated right here and `deinit` closes the fd. On Linux something
+    /// still retains the read-end handles at this point, `deinit` never runs,
+    /// and two pipe descriptors leaked per *successful* run — measured as
+    /// +40 fds over 20 runs, against 0 on macOS.
+    ///
+    /// So: close explicitly, but *asynchronously on a global queue*, which by
+    /// construction is never the handle's own queue and so cannot reproduce
+    /// the self-wait. One portable path rather than an `#if os(Linux)` fork:
+    /// macOS did not need it, but releasing the descriptor at a defined point
+    /// instead of whenever the last reference happens to drop is the better
+    /// behavior on both, and a single path is one thing to reason about.
+    ///
+    /// Only a handle whose EOF we have already observed is closed. That
+    /// handler nil'd itself before calling `markEOF` and cannot still be
+    /// running. A handle that never reached EOF — the forced/drain-deadline
+    /// path, where a grandchild still holds the write end — keeps its live
+    /// handler and is deliberately left alone (recorded in
+    /// `docs/process-exec-followups.md`); its fd is not worth racing a
+    /// callback that may be mid-flight.
     private func releaseHandles() {
         lock.lock()
+        let closable = [
+            stdoutAtEOF ? stdoutHandle : nil,
+            stderrAtEOF ? stderrHandle : nil,
+        ].compactMap { $0 }
         stdoutHandle = nil
         stderrHandle = nil
         process?.terminationHandler = nil
         process = nil
         lock.unlock()
+
+        guard !closable.isEmpty else { return }
+        DispatchQueue.global().async {
+            for handle in closable { try? handle.close() }
+        }
     }
 }

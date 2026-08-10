@@ -159,3 +159,16 @@ unavailable for that whole window too, so no restructuring around
 by a process dispatch source keyed on the direct child, so none of this shows
 up there. `ProcessRunner.startExitWatcher` works around it with a Linux-only
 `waitid` thread; anything else that waits on a `Process` has the same exposure.
+
+**`FileHandle` does not reliably close its descriptor when the last reference
+drops.** On Darwin, dropping every reference to a read-end `FileHandle` runs
+`deinit`, which closes the fd — the assumption commit `6529526` was built on.
+On Linux something still retains the handle after a run whose readability
+events fired, `deinit` never runs, and two pipe descriptors leak per
+*successful* run: measured as +40 pipe fds per 20 runs, sustained across every
+phase, while launch failures (where no readability event ever fires) leak
+nothing and macOS is 0 throughout. The fix is an explicit `close()`, but it
+must be dispatched **off** the handle's own queue — a synchronous `close()`
+reachable from inside a readability handler self-deadlocks and traps as SIGILL,
+which is precisely what `6529526` was fixing. See the `releaseHandles()` doc
+comment for the shape that satisfies both constraints at once.
