@@ -97,6 +97,10 @@ public enum ProcessRunner {
                     return
                 }
 
+                #if os(Linux)
+                Self.startExitWatcher(pid: process.processIdentifier, session: session)
+                #endif
+
                 // A cancel that landed before `run()` still has to kill the child.
                 if Task.isCancelled {
                     session.beginFailure(CancellationError())
@@ -183,6 +187,63 @@ public enum ProcessRunner {
         }
     }
 
+    #if os(Linux)
+    /// Reports the child's exit to `session` as soon as the kernel knows it,
+    /// independently of `Process.terminationHandler`.
+    ///
+    /// swift-corelibs-foundation does not learn a child's exit status from
+    /// `waitpid`. It watches a socketpair the child inherits and treats EOF on
+    /// it as "the child is gone" — but every *descendant* inherits that
+    /// descriptor too, so a backgrounded grandchild holds it open long after
+    /// the direct child is a zombie, and until it closes neither
+    /// `terminationHandler` nor `waitUntilExit()` fires. Measured on
+    /// `sh -c 'sleep 5 & printf hi'`: the direct child reaches state `Z`
+    /// within 0.1s, `waitid` reports its status at 0.0002s, and Foundation's
+    /// `terminationHandler` does not run until 5.018s.
+    ///
+    /// That is a production defect, not a slow test: on Linux any `sbx`
+    /// command leaving a background process holding stdout blocked until that
+    /// process exited — or until the 30s timeout turned a success into a
+    /// spurious `timedOut`.
+    ///
+    /// `WNOWAIT` asks the kernel for the status *without* reaping, so the
+    /// zombie stays waitable and Foundation's own machinery still completes
+    /// normally afterwards; `markExited` is idempotent, so whichever of the
+    /// two reports lands first wins and the other is a no-op.
+    ///
+    /// A dedicated `Thread` rather than `DispatchQueue.global().async`: this
+    /// blocks for the child's whole lifetime, and parking libdispatch workers
+    /// is how the pool gets starved under concurrent runs. The thread exits
+    /// the moment `waitid` returns, so nothing accumulates per run.
+    ///
+    /// Darwin needs none of this — its `Process` is backed by a process
+    /// dispatch source that fires on the direct child's exit no matter what
+    /// its descendants hold — hence the `#if os(Linux)` here and at the one
+    /// call site.
+    nonisolated fileprivate static func startExitWatcher(pid: pid_t, session: RunSession) {
+        let thread = Thread {
+            var info = siginfo_t()
+            while true {
+                if waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == 0 { break }
+                // `errno` is only meaningful once `waitid` has actually failed.
+                if errno == EINTR { continue }
+                // ECHILD means Foundation reaped the child before we asked, so
+                // its `terminationHandler` has already reported the status (or
+                // is about to). Any other failure is equally unreportable —
+                // leave it to that path rather than inventing an exit code.
+                return
+            }
+            // Matches what `Process.terminationStatus` would report: the exit
+            // code for a normal exit (`CLD_EXITED`), the signal number for a
+            // death by signal (`CLD_KILLED`/`CLD_DUMPED`, which Foundation
+            // surfaces as `terminationReason == .uncaughtSignal`).
+            session.markExited(code: info._sifields._sigchld.si_status)
+        }
+        thread.name = "ProcessRunner.exitWatcher"
+        thread.start()
+    }
+    #endif
+
     nonisolated static func asSeconds(_ duration: Duration) -> Double {
         let c = duration.components
         return Double(c.seconds) + Double(c.attoseconds) / 1e18
@@ -261,8 +322,25 @@ nonisolated private final class RunSession: @unchecked Sendable {
         tryFinish()
     }
 
+    /// Idempotent by design: on Linux the exit is reported twice, by
+    /// `ProcessRunner.startExitWatcher`'s `waitid` thread and by Foundation's
+    /// `terminationHandler`, and both fire on every run. The first report wins
+    /// outright and the second returns here having changed nothing.
+    ///
+    /// All three of the things a second report could otherwise do are ruled
+    /// out by the early return, under the same lock that publishes `exited`:
+    /// it cannot overwrite `exitCode`, it cannot schedule a second drain
+    /// deadline (which would extend the post-exit grace by however far apart
+    /// the two reports are — three whole seconds in the grandchild case), and
+    /// it cannot drive another `tryFinish`. Resuming the continuation twice
+    /// was already impossible one level down, where `tryFinish` latches
+    /// `finished` under the lock before handing back a resumption.
     func markExited(code: Int32) {
         lock.lock()
+        guard !exited else {
+            lock.unlock()
+            return
+        }
         exited = true
         exitCode = code
         lock.unlock()

@@ -137,3 +137,25 @@ Failures span create-sandbox flows, env/port sheets, background-session
 badge/sidebar, session reattach and switching, and the terminal thumbnail. At
 least one looks environmental rather than logical (`Not hittable: Button` on a
 Kanban play button). Diagnosing them is independent of the deadlock work.
+
+## Platform divergences worth knowing (Linux)
+
+Two Linux behaviors cost significant debugging time and are invisible from
+macOS. Neither is documented anywhere obvious, and both bite anyone touching
+`ProcessRunner` next.
+
+**corelibs `Process` learns a child's exit from a socketpair that every
+descendant inherits — not from `waitpid`.** `terminationHandler` and
+`waitUntilExit()` therefore do not fire until the last *descendant* holding
+that inherited descriptor exits, even though the direct child is long since a
+zombie. Measured on `sh -c 'sleep 5 & printf hi'`: the direct child reaches
+`/proc` state `Z` within 0.1s and `waitid(P_PID, …, WEXITED | WNOWAIT)` reports
+its status at 0.0002s, but `terminationHandler` does not run until 5.018s.
+Redirecting the grandchild's stdio away from our pipes changes nothing; a
+grandchild that holds our pipes but closes every *other* inherited fd reports
+at 0.0045s, which is what isolated the socketpair. The exit *status* is
+unavailable for that whole window too, so no restructuring around
+`Foundation.Process` can complete the run earlier. Darwin's `Process` is backed
+by a process dispatch source keyed on the direct child, so none of this shows
+up there. `ProcessRunner.startExitWatcher` works around it with a Linux-only
+`waitid` thread; anything else that waits on a `Process` has the same exposure.
