@@ -79,24 +79,12 @@ public enum ProcessRunner {
                     stderr: stderrPipe.fileHandleForReading
                 )
 
-                stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                    let data = handle.availableData
-                    if data.isEmpty {
-                        handle.readabilityHandler = nil
-                        session.markEOF(isStdout: true)
-                    } else {
-                        session.append(data, isStdout: true)
-                    }
-                }
-                stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                    let data = handle.availableData
-                    if data.isEmpty {
-                        handle.readabilityHandler = nil
-                        session.markEOF(isStdout: false)
-                    } else {
-                        session.append(data, isStdout: false)
-                    }
-                }
+                stdoutPipe.fileHandleForReading.readabilityHandler = Self.drainingHandler(
+                    for: stdoutPipe.fileHandleForReading, session: session, isStdout: true
+                )
+                stderrPipe.fileHandleForReading.readabilityHandler = Self.drainingHandler(
+                    for: stderrPipe.fileHandleForReading, session: session, isStdout: false
+                )
 
                 process.terminationHandler = { proc in
                     session.markExited(code: proc.terminationStatus)
@@ -122,6 +110,76 @@ public enum ProcessRunner {
             }
         } onCancel: {
             session.beginFailure(CancellationError())
+        }
+    }
+
+    /// Size of a single `read(2)`; matches the default pipe capacity so a full
+    /// pipe is normally emptied in one syscall.
+    nonisolated static let readChunkSize: Int = 64 * 1024
+
+    /// Switches `handle` to non-blocking and returns a readability handler that
+    /// drains it to `EAGAIN` on every event.
+    ///
+    /// Draining fully — rather than taking a single `availableData` per event —
+    /// is load-bearing on Linux, and the reason this is not the obvious
+    /// one-read-per-callback loop:
+    ///
+    /// * swift-corelibs-foundation's `FileHandle.availableData` reads at most
+    ///   8KB from a pipe, so one call per event cannot keep up with a child
+    ///   that writes faster than we are woken.
+    /// * libdispatch's Linux (epoll) read source is edge-triggered: it fires on
+    ///   the *transition* to readable, not while data merely remains buffered.
+    ///   Leaving bytes behind is therefore permanent — once the writer stops
+    ///   producing new data there is no further edge, the handler is never
+    ///   called again, and no EOF is ever delivered either.
+    ///
+    /// Together those silently truncated output: a `cat` of 1MB reliably
+    /// stranded ~40KB in the pipe forever, and the run only completed via the
+    /// post-exit drain deadline, with short data and no error. Darwin's kqueue
+    /// read source is level-triggered, which is why every macOS suite passed.
+    ///
+    /// Using raw `read(2)` rather than `availableData` also removes an
+    /// ambiguity: on a non-blocking descriptor `availableData` reports EAGAIN
+    /// as empty `Data`, indistinguishable from EOF. `read` returning 0 is
+    /// unambiguously EOF; `EAGAIN` just means "drained for now".
+    nonisolated fileprivate static func drainingHandler(
+        for handle: FileHandle,
+        session: RunSession,
+        isStdout: Bool
+    ) -> @Sendable (FileHandle) -> Void {
+        let flags = fcntl(handle.fileDescriptor, F_GETFL)
+        if flags != -1 { _ = fcntl(handle.fileDescriptor, F_SETFL, flags | O_NONBLOCK) }
+
+        return { handle in
+            // Allocated per event rather than captured: the closure escapes,
+            // and a shared mutable buffer would need its own synchronisation.
+            var buffer = [UInt8](repeating: 0, count: ProcessRunner.readChunkSize)
+            while true {
+                let count = buffer.withUnsafeMutableBytes {
+                    read(handle.fileDescriptor, $0.baseAddress, $0.count)
+                }
+                if count > 0 {
+                    session.append(Data(buffer.prefix(count)), isStdout: isStdout)
+                    continue
+                }
+                if count == 0 {
+                    handle.readabilityHandler = nil
+                    session.markEOF(isStdout: isStdout)
+                    return
+                }
+                switch errno {
+                case EINTR:
+                    continue
+                case EAGAIN, EWOULDBLOCK:
+                    return  // Drained; the next write wakes us again.
+                default:
+                    // Nothing further will be readable from this descriptor —
+                    // treat it as EOF so the run can still complete.
+                    handle.readabilityHandler = nil
+                    session.markEOF(isStdout: isStdout)
+                    return
+                }
+            }
         }
     }
 
