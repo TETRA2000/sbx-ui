@@ -161,14 +161,43 @@ up there. `ProcessRunner.startExitWatcher` works around it with a Linux-only
 `waitid` thread; anything else that waits on a `Process` has the same exposure.
 
 **`FileHandle` does not reliably close its descriptor when the last reference
-drops.** On Darwin, dropping every reference to a read-end `FileHandle` runs
-`deinit`, which closes the fd — the assumption commit `6529526` was built on.
-On Linux something still retains the handle after a run whose readability
-events fired, `deinit` never runs, and two pipe descriptors leak per
-*successful* run: measured as +40 pipe fds per 20 runs, sustained across every
-phase, while launch failures (where no readability event ever fires) leak
-nothing and macOS is 0 throughout. The fix is an explicit `close()`, but it
-must be dispatched **off** the handle's own queue — a synchronous `close()`
-reachable from inside a readability handler self-deadlocks and traps as SIGILL,
-which is precisely what `6529526` was fixing. See the `releaseHandles()` doc
-comment for the shape that satisfies both constraints at once.
+drops, and on Linux there is no race-free way to close it from
+`releaseHandles()` either.** On Darwin, dropping every reference to a
+read-end `FileHandle` runs `deinit`, which closes the fd — the assumption
+commit `6529526` was built on. On Linux something still retains the handle
+after a run whose readability events fired, `deinit` never runs, and two pipe
+descriptors leak per *successful* run: measured as +40 pipe fds per 20 runs,
+sustained across every phase, while launch failures (where no readability
+event ever fires) leak nothing and macOS is 0 throughout.
+
+Two attempts at an explicit `close()` in `releaseHandles()` have each crashed
+Linux CI a different way:
+- **Synchronous**, called straight from `releaseHandles()` — `tryFinish` runs
+  inside a readability handler (via `markEOF`), and swift-corelibs-foundation's
+  `close()` does `queue.sync` against the handle's own dispatch-source queue.
+  That is a self-wait; libdispatch's deadlock detector traps it as SIGILL.
+  `6529526` fixed this by dropping the `close()` call entirely.
+- **Asynchronous**, dispatched to `DispatchQueue.global()` to dodge the
+  self-wait (`b954743`) — avoids the SIGILL, but `readabilityHandler = nil`
+  only *requests* cancellation of the underlying dispatch source; libdispatch
+  tears it down asynchronously, on its own schedule. Closing the fd from
+  another thread while that teardown is still in flight is a use-after-free.
+  Crashed Linux CI with `Bad pointer dereference` (`Program crashed`) inside
+  `_dispatch_event_loop_drain`, reached from the async close block — reverted
+  the same day it landed.
+
+Both failure modes are recorded in the `releaseHandles()` doc comment so a
+third attempt does not repeat either one. As it stands, the fd is left to
+ARC, which does not reclaim it on Linux — an accepted leak. Practical impact
+is low: the only Linux consumer is the short-lived `sbx-ui-cli`, which exits
+(closing every fd with it) at the end of each invocation, so the leak cannot
+accumulate within a process lifetime.
+
+The fix that would actually close the race is to stop routing the read side
+through `FileHandle.readabilityHandler` and instead own an explicit
+`DispatchSource.makeReadSource(fileDescriptor:)` per pipe. That gives a
+`setCancelHandler`, which runs only after the source has fully stopped
+delivering events — the one point guaranteed race-free to close the fd. This
+is a larger change than a one-line fix (it means taking over raw-fd reads and
+buffering instead of `FileHandle.availableData`), which is why it is recorded
+here rather than attempted inline.

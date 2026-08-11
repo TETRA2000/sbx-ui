@@ -458,58 +458,46 @@ nonisolated private final class RunSession: @unchecked Sendable {
     /// launch-failure path, where no readability handler ever fires and
     /// leaving it set leaked six descriptors per failure.
     ///
-    /// Two platform constraints pull in opposite directions here, and the
-    /// shape below is the only one that satisfies both. Read both before
-    /// changing anything.
+    /// Deliberately closes nothing else. Two attempts at an explicit
+    /// `close()` here have each crashed Linux CI a different way; both are
+    /// recorded so a third attempt does not repeat either one.
     ///
-    /// **Never call `FileHandle.close()` *synchronously* from here.** This
-    /// method can run inside a readability handler: `tryFinish` is invoked
-    /// from `markEOF`, which the handlers in `run` call before returning (see
-    /// the EOF branch there). On swift-corelibs-foundation, `close()` does
-    /// `queue.sync { … }` against the handle's own dispatch-source queue to
-    /// serialize with any in-flight readability event — so calling it from
-    /// inside the very event it waits for means waiting on the queue we are
-    /// already running on. libdispatch's deadlock detector traps that as an
-    /// illegal instruction (`__DISPATCH_WAIT_FOR_QUEUE__`), which is the
-    /// SIGILL that crashed Linux CI. Darwin's Foundation happens to tolerate
-    /// the same self-wait, which is why every macOS suite passed.
+    /// **Synchronous close self-deadlocks — SIGILL.** This method can run
+    /// inside a readability handler: `tryFinish` is invoked from `markEOF`,
+    /// which the handlers in `run` call before returning (see the EOF branch
+    /// there). On swift-corelibs-foundation, `close()` does `queue.sync { … }`
+    /// against the handle's own dispatch-source queue to serialize with any
+    /// in-flight readability event — calling it from inside the very event it
+    /// waits for means waiting on the queue we are already running on.
+    /// libdispatch's deadlock detector traps that as an illegal instruction
+    /// (`__DISPATCH_WAIT_FOR_QUEUE__`). Darwin's Foundation tolerates the
+    /// same self-wait, which is why macOS suites passed while Linux CI
+    /// crashed with SIGILL (fixed by `6529526`).
     ///
-    /// **But dropping our references is not enough on Linux.** The
-    /// "ARC closes it for us" argument holds on Darwin, where the handles are
-    /// deallocated right here and `deinit` closes the fd. On Linux something
-    /// still retains the read-end handles at this point, `deinit` never runs,
-    /// and two pipe descriptors leaked per *successful* run — measured as
-    /// +40 fds over 20 runs, against 0 on macOS.
+    /// **Asynchronous close races the still-cancelling dispatch source —
+    /// SIGSEGV.** Dispatching the close to `DispatchQueue.global()` avoids
+    /// the self-wait above (tried in `b954743`), but `readabilityHandler =
+    /// nil` only *requests* cancellation of the handle's underlying dispatch
+    /// source; libdispatch tears it down on its own schedule, asynchronously.
+    /// Closing the fd from another thread while that teardown is still in
+    /// flight is a use-after-free — Linux CI crashed with `Bad pointer
+    /// dereference` in `_dispatch_event_loop_drain`, on the thread running
+    /// the async close block.
     ///
-    /// So: close explicitly, but *asynchronously on a global queue*, which by
-    /// construction is never the handle's own queue and so cannot reproduce
-    /// the self-wait. One portable path rather than an `#if os(Linux)` fork:
-    /// macOS did not need it, but releasing the descriptor at a defined point
-    /// instead of whenever the last reference happens to drop is the better
-    /// behavior on both, and a single path is one thing to reason about.
-    ///
-    /// Only a handle whose EOF we have already observed is closed. That
-    /// handler nil'd itself before calling `markEOF` and cannot still be
-    /// running. A handle that never reached EOF — the forced/drain-deadline
-    /// path, where a grandchild still holds the write end — keeps its live
-    /// handler and is deliberately left alone (recorded in
-    /// `docs/process-exec-followups.md`); its fd is not worth racing a
-    /// callback that may be mid-flight.
+    /// So the fd is left to ARC, which reclaims it immediately on Darwin
+    /// (dropping the last reference here runs `FileHandle.deinit`
+    /// synchronously) but not on Linux, where something keeps the read-end
+    /// handle alive past this point and `deinit` never runs — an accepted
+    /// leak of ~2 pipe fds per successful run. See
+    /// `docs/process-exec-followups.md` for the leak's full history and the
+    /// fix that would actually close the race: owning the read side with an
+    /// explicit `DispatchSource` instead of `FileHandle.readabilityHandler`.
     private func releaseHandles() {
         lock.lock()
-        let closable = [
-            stdoutAtEOF ? stdoutHandle : nil,
-            stderrAtEOF ? stderrHandle : nil,
-        ].compactMap { $0 }
         stdoutHandle = nil
         stderrHandle = nil
         process?.terminationHandler = nil
         process = nil
         lock.unlock()
-
-        guard !closable.isEmpty else { return }
-        DispatchQueue.global().async {
-            for handle in closable { try? handle.close() }
-        }
     }
 }
