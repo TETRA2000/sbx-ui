@@ -404,7 +404,7 @@ import Foundation
 // binary.
 
 actor SpyCliExecutor: CliExecutorProtocol {
-    private(set) var calls: [(command: String, args: [String])] = []
+    private(set) var calls: [(command: String, args: [String], timeout: Duration?)] = []
     private var stubbedResults: [String: CliResult] = [:]
     private let defaultResult = CliResult(stdout: "", stderr: "", exitCode: 0)
 
@@ -412,12 +412,12 @@ actor SpyCliExecutor: CliExecutorProtocol {
         stubbedResults[argsKey] = result
     }
 
-    func exec(command: String, args: [String]) async throws -> CliResult {
-        calls.append((command, args))
+    func exec(command: String, args: [String], timeout: Duration?) async throws -> CliResult {
+        calls.append((command, args, timeout))
         return stubbedResults[args.joined(separator: " ")] ?? defaultResult
     }
 
-    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
+    func execJson<T: Decodable & Sendable>(command: String, args: [String], timeout: Duration?) async throws -> T {
         fatalError("unused by RealSbxService")
     }
 }
@@ -433,6 +433,36 @@ actor SpyCliExecutor: CliExecutorProtocol {
         _ = try await svc.run(agent: "", workspace: "", opts: RunOptions(name: "foo"))
         let calls = await spy.calls
         #expect(calls.first?.args == ["run", "--name", "foo"])
+    }
+
+    @Test func runResumePassesNilTimeout() async throws {
+        let spy = SpyCliExecutor()
+        let json = """
+            {"sandboxes":[{"id":"sbx_1","name":"foo","agent":"claude","status":"running","socket_path":"/tmp/x","workspaces":["/tmp/foo"]}]}
+            """
+        await spy.stub(argsKey: "ls --json", result: CliResult(stdout: json, stderr: "", exitCode: 0))
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.run(agent: "", workspace: "", opts: RunOptions(name: "foo"))
+        let calls = await spy.calls
+        // Bind first: `calls.first?.timeout` is Duration??, so comparing it to
+        // nil would also pass when no call was recorded at all.
+        let first = try #require(calls.first)
+        #expect(first.args == ["run", "--name", "foo"])
+        // The interactive attach must not be killed by the default timeout.
+        #expect(first.timeout == nil)
+    }
+
+    @Test func runCreateUsesDefaultTimeout() async throws {
+        let spy = SpyCliExecutor()
+        let json = """
+            {"sandboxes":[{"id":"sbx_1","name":"bar","agent":"claude","status":"running","socket_path":"/tmp/x","workspaces":["/tmp/bar"]}]}
+            """
+        await spy.stub(argsKey: "ls --json", result: CliResult(stdout: json, stderr: "", exitCode: 0))
+        let svc = RealSbxService(cli: spy)
+        _ = try await svc.run(agent: "claude", workspace: "/tmp/bar", opts: RunOptions(name: "bar"))
+        let calls = await spy.calls
+        let first = try #require(calls.first)
+        #expect(first.timeout == .seconds(30))
     }
 
     @Test func policyListPassesIncludeInactive() async throws {

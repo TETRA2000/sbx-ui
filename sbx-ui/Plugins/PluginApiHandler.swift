@@ -120,6 +120,15 @@ actor PluginApiHandler {
         let args = params["args"]?.arrayValue?.compactMap(\.stringValue) ?? []
 
         let result = try await service.exec(name: name, command: command, args: args)
+        guard !result.outputTruncated else {
+            return .error(
+                id: id,
+                error: JsonRpcError(
+                    code: JsonRpcErrorCode.sandboxError,
+                    message: "Output exceeded the retention cap and was truncated; re-run with output redirected to a file instead of returning it inline"
+                )
+            )
+        }
         return .success(id: id, result: .object([
             "stdout": .string(result.stdout),
             "stderr": .string(result.stderr),

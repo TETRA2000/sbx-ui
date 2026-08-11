@@ -154,6 +154,7 @@ List all sandboxes.
 Execute a command in a sandbox.
 - **Params**: `{name: string, command: string, args?: string[]}`
 - **Result**: `{stdout: string, stderr: string, exitCode: number}`
+- Subject to a 30-second timeout and a 4MB retention cap on stdout and a separate 4MB cap on stderr. A command that runs longer or produces more output than that fails with a sandbox error (`-32002`) rather than returning truncated output.
 
 #### `sandbox/stop`
 Stop a sandbox.

@@ -34,17 +34,35 @@ public protocol SbxServiceProtocol: Sendable {
 }
 
 public protocol CliExecutorProtocol: Sendable {
-    func exec(command: String, args: [String]) async throws -> CliResult
-    func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T
+    func exec(command: String, args: [String], timeout: Duration?) async throws -> CliResult
+    func execJson<T: Decodable & Sendable>(command: String, args: [String], timeout: Duration?) async throws -> T
+}
+
+extension CliExecutorProtocol {
+    /// Default timeout for every CLI call. The sole exception is the
+    /// `sbx run --name` interactive attach, which passes `nil` explicitly.
+    nonisolated public func exec(command: String, args: [String]) async throws -> CliResult {
+        try await exec(command: command, args: args, timeout: .seconds(30))
+    }
+
+    nonisolated public func execJson<T: Decodable & Sendable>(command: String, args: [String]) async throws -> T {
+        try await execJson(command: command, args: args, timeout: .seconds(30))
+    }
 }
 
 public struct CliResult: Sendable {
     public let stdout: String
     public let stderr: String
     public let exitCode: Int32
+    /// True when the underlying process output exceeded `ProcessRunner`'s
+    /// retention cap and the head was dropped. Callers that act on `stdout`
+    /// (e.g. plugins) must treat this as a hard failure rather than silently
+    /// consuming truncated output.
+    public let outputTruncated: Bool
 
-    nonisolated public init(stdout: String, stderr: String, exitCode: Int32) {
+    nonisolated public init(stdout: String, stderr: String, exitCode: Int32, outputTruncated: Bool = false) {
         self.stdout = stdout; self.stderr = stderr; self.exitCode = exitCode
+        self.outputTruncated = outputTruncated
     }
 }
 

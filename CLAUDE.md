@@ -106,7 +106,7 @@ Run from the repo root with `--package-path cli`, or `cd cli` first.
 ### Test Structure
 - **Unit tests**: `sbx-uiTests/sbx_uiTests.swift` — Swift Testing framework (`@Test`, `#expect`)
 - **UI/E2E tests**: `sbx-uiUITests/sbx_uiUITests.swift` — XCTest (`XCTestCase`, `XCTAssertTrue`)
-- **SPM tests**: `cli/Tests/SBXCoreTests/SBXCoreTests.swift` — Swift Testing (39 tests: models, parsers, integration, service argument construction)
+- **SPM tests**: `cli/Tests/SBXCoreTests/SBXCoreTests.swift`, `ProcessRunnerTests.swift`, `CliExecutorTests.swift` — Swift Testing (58 tests: models, parsers, integration, service argument construction, process execution, CLI executor timeout/cancellation)
 - **SPM CLI E2E tests**: `cli/Tests/CLIE2ETests/` — Swift Testing (80 tests; spawns the compiled `sbx-ui-cli` binary as a subprocess)
 - **CLI mock tests**: `tools/mock-sbx-tests.sh` — Bash test suite (47 tests)
 - All tests use the CLI mock (`tools/mock-sbx`) — no Docker required
@@ -116,9 +116,9 @@ Run from the repo root with `--package-path cli`, or `cd cli` first.
 - Run the full suite to confirm no regressions before considering work done
 
 ### Running Tests
-- Xcode: Product → Test (Cmd+U) runs all 370 tests (322 unit + 48 UI)
+- Xcode: Product → Test (Cmd+U) runs 376 tests (328 unit + 48 UI); 19 of the UI tests are known-failing on `main` and not run by CI
 - Xcode MCP (preferred): `RunAllTests` or `RunSomeTests` with target/identifier
-- Linux/SPM: `swift test --package-path cli` runs all 119 SBXCore + CLIE2E tests
+- Linux/SPM: `swift test --package-path cli` runs all 138 SBXCore + CLIE2E tests
 - CLI mock: `bash tools/mock-sbx-tests.sh` runs 47 bash tests
 
 ### Writing Unit Tests

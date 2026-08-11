@@ -206,3 +206,66 @@ struct FakeProviderTests {
         }
     }
 }
+
+// MARK: - listChangedFiles Large Output Regression
+
+@Suite struct EditorProviderLargeOutputTests {
+
+    /// Builds a temp git repo whose `git status --porcelain=v1 -z` output
+    /// comfortably exceeds the ~64KB pipe buffer.
+    private func makeRepoWithManyChanges(fileCount: Int) throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("editor-bigstatus-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        // Long names so ~900 files clear 64KB of porcelain output.
+        let padding = String(repeating: "n", count: 100)
+        for i in 0..<fileCount {
+            let file = root.appendingPathComponent("file-\(padding)-\(i).txt")
+            try Data("x".utf8).write(to: file)
+        }
+
+        func git(_ args: [String]) throws {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            p.arguments = args
+            p.currentDirectoryURL = root
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            try p.run()
+            p.waitUntilExit()
+        }
+        try git(["init"])
+        // Staged additions list one porcelain record per file.
+        try git(["add", "-A"])
+
+        return root
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func listChangedFilesHandlesOutputBeyondPipeBuffer() async throws {
+        let fileCount = 900
+        let root = try makeRepoWithManyChanges(fileCount: fileCount)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let provider = DefaultEditorDocumentProvider()
+        let entries = try await provider.listChangedFiles(in: root)
+
+        #expect(entries.count == fileCount)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func listChangedFilesThrowsOutsideGitRepository() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("editor-nogit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        do {
+            _ = try await DefaultEditorDocumentProvider().listChangedFiles(in: root)
+            #expect(Bool(false), "Should have thrown")
+        } catch let error as NSError {
+            #expect(error.code == EditorErrorCode.notGitRepository.rawValue)
+        }
+    }
+}
